@@ -3,13 +3,21 @@
 ================================================================================
   Mục tiêu: thiết kế tầng entanglement + readout của VQC sao cho TỐT cho AGENT
   (output = assignment φ_k ∈ {direct, IRS_1..M} cho K user).
-  Trạng thái: ĐÃ CHỐT THIẾT KẾ — CHƯA IMPLEMENT (triển khai khi thấy phù hợp).
+  Trạng thái: ĐÃ CHỐT THIẾT KẾ — CHƯA IMPLEMENT.
   Nền: Common-Knowledge.txt (cơ chế), VQC pipeline (latent→post-NN).
-  Cập nhật lần cuối: 2026-05-29
+  Cập nhật lần cuối: 2026-05-31
 --------------------------------------------------------------------------------
-  ⚠️ SEQUENCING: đây là lever THỨ YẾU. Nút thắt hiện tại là critic mù (λ_D).
-     CHỈ A/B test thiết kế này SAU KHI critic hoạt động (explVar>0.5 với λ_D=1.5).
-     Không đổi khi critic còn mù → không đo được tác dụng. Validate Case 2 trước.
+  ✅ QUYẾT ĐỊNH (user 2026-05-31): SẼ IMPLEMENT readout này, lý do CẢ A LẪN B:
+     (A) đóng góp paper — readout hiện tại "không hợp lý"; (B) SCALING — Case-1 mượt vì đơn
+     giản (che vấn đề), Case-2 đã chật vật critic+PhaseMLP, Case-3 (K=20,M=4) nổ tung → cần
+     nền tốt hơn TRƯỚC SAU gì cũng cần. Code đã push git → revert được.
+  ⏳ THỜI ĐIỂM: ĐỢI SAU result_8 (PopArt) cho T3 verdict — KHÔNG implement giữa run.
+     result_8 = BASELINE (old-readout + PopArt) để A/B với new-readout.
+  ⚠️ SEQUENCING (vẫn giữ): chỉ A/B SAU KHI critic ổn (T3 PASS: explVar>0.5 ổn định). Nếu
+     result_8 T3 FAIL → fix critic trước, readout hoãn. Readout đổi KIẾN TRÚC → fresh run
+     (no weight transfer) → làm SỚM (ngay sau result_8) để PhaseMLP/ramps sau nằm trên arch
+     CUỐI, không phí rework trên readout cũ.
+  📋 KẾ HOẠCH KHI result_8 XONG (xem cuối file, mục KẾ HOẠCH TRIỂN KHAI).
 --------------------------------------------------------------------------------
 
 
@@ -184,4 +192,41 @@
    Q3. R1-c cluster + E2 brick-wall có giúp gom nhóm (Case 3) không?
    Q4. Chi phí compute thực tế (s/ep) tăng bao nhiêu so với readout cũ?
    Q5. Có dấu hiệu barren plateau (grad qc/λ giảm mạnh) khi tăng entanglement không?
+
+
+================================================================================
+  KẾ HOẠCH TRIỂN KHAI  (deferred — bắt đầu KHI result_8 xong, 2026-05-31)
+================================================================================
+  GATE: result_8 T3 verdict.
+    • T3 FAIL (critic vẫn wobble) → FIX CRITIC trước (non-stationarity lever), readout HOÃN.
+    • T3 PASS (explVar>0.5 ổn định) → tiến hành. result_8 ckpt = BASELINE A/B.
+
+  BƯỚC 1 — IMPLEMENT (theo Phần 6, thứ tự rủi-ro-thấp → cao; branch git riêng: vqc-readout):
+    1a. params.py: extra_cz_pairs (E1 full user×IRS) + brick-wall cfg (E2) + cờ readout-mode
+        + W_proj-mode. (Case 2: W_proj=IDENTITY, readout per-user.)
+    1b. RL/quantum_circuit.py: _obs_from_batch (R1-a Z_i + R1-b per-IRS ZZ + R1-c aggregate C_i
+        + R1-d Z_IRS) + _n_obs/configure_topology (Case2: o_hat=42) + _build_batch (áp E1+E2).
+    1c. RL/quantum_circuit.py: param_shift/spsa jacobian cho observable MỚI (R1-b/c/d) — RỦI RO
+        CAO NHẤT (gradient sai = đầu độc mọi thứ).
+    1d. RL/quantum_actor.py: classical bypass [B] (z_k_raw 2K vào post-NN) + N_QUANTUM mới +
+        post-NN input dim mới (Case2: 66) + backward path readout+bypass.
+
+  BƯỚC 2 — VERIFICATION HARNESS (BẮT BUỘC trước khi train — như POP-correctness |ΔV|=1e-15):
+    V1. Observable đúng: ⟨Z_i⟩, ⟨Z_iZ_j⟩ tính tay vs reference trên state nhỏ.
+    V2. ⭐ JACOBIAN đúng: finite-difference (numerical ∂⟨O⟩/∂θ) vs param-shift/SPSA cho R1-b/c/d.
+        Đây là rủi ro lớn nhất — sai jacobian = gradient sai = train vô nghĩa nhưng KHÔNG crash.
+    V3. Shape/dim khớp bảng Phần 5 (o_hat=42, post-NN input=66, output 30 cho Case 2).
+    V4. Backward path: gradient flow qua readout+bypass (gradcheck numerical).
+    V5. Barren-plateau baseline: log grad qc/λ NGAY khi thêm E1+E2 — có sụp không (Q5).
+    → viết verify_vqc_readout.py (1 lần, không train) — gate: mọi V pass mới train.
+
+  BƯỚC 3 — ISOLATED A/B (1 fresh run): new-readout+PopArt vs result_8 (old+PopArt), MỌI hyper giữ.
+    Đo: assignment chính xác? IRS-usage? QoS? s/ep (Q4)? barren (Q5)? + T1-T5 critic vẫn ổn?
+    ⚠ CAVEAT: lợi ích GIÁN TIẾP (readout→assignment tốt→PhaseMLP data) chỉ hiện khi PhaseMLP
+       ĐANG học. Giờ PhaseMLP idle → A/B chỉ đo lợi ích TRỰC TIẾP (routing→QoS). Đừng vội bác.
+
+  BƯỚC 4 — nếu readout thắng/giữ → STAGE PhaseMLP trên ARCH MỚI (counterfactual loss…) → ramps.
+            nếu readout thua + có bug → revert git (an toàn), build PhaseMLP trên old-readout.
+
+  GHI KẾT QUẢ: điền Phần 8 (bảng) + trả lời Q1-Q5 + cập nhật Training-Case-2 NHẬT KÝ RUN.
 ================================================================================

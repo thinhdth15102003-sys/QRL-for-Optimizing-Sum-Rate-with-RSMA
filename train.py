@@ -907,6 +907,16 @@ def _build_components(args):
         if os.path.isfile(os.path.join(resume_dir, 'critic_config.json')):
             critic = ClassicalCritic.from_dir(resume_dir, seed=args.seed)
             args._resumed_critic = True
+            # [Case2 PopArt bug-fix] On a curriculum-ramp resume (λ_D and R_LoS
+            # change → return SCALE shifts), the loaded PopArt stats (μ,σ) are
+            # STALE for the new ramp. With pa_initialized=True the warm-up only
+            # EMA-adapts them (β=0.1 → ~10 rollouts of mis-scaled critic → noisy
+            # advantages right when the ramp transition is most fragile). Force a
+            # re-snap: reset pa_initialized so the critic warm-up (which rolls the
+            # NEW policy in the NEW env) re-initialises μ,σ to the new return scale
+            # and re-fits the normalised head before any actor update.
+            if getattr(critic, 'popart', False):
+                critic.pa_initialized = False
 
     return cfg, env, actor, critic, phase_net, power_net, ck_net
 

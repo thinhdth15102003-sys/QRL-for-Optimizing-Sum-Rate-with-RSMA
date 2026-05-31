@@ -252,6 +252,29 @@ lambda_D = THEO SCHEDULE BÊN DƯỚI  # đừng bê thẳng 4.5 từ Case 1 —
       nhưng dùng PhaseMLP LIVE).
     SAU PhaseMLP → QoS (λ_D per-ramp) → sum-rate. Readout redesign: chỉ sau khi critic+pha ổn.
 
+    >>> VITAL ANALYSIS + LATENT RISKS (2026-05-31, result_8 ep311 pre-anneal) <<<
+    Q1 — "reward cao + IRS thấp": KHÔNG mâu thuẫn ưu tiên, là HỢP LÝ. Data: IRS/K ≈ Blk/K ≈ 6
+      → agent route ĐÚNG (blocked→IRS, non-block→direct). Probe đã chứng minh pha NGẪU NHIÊN →
+      IRS thua direct cho non-block → dùng direct = đúng. "Optimize IRS" ≠ ép IRS usage; nghĩa là
+      làm PHA TỐT → IRS đáng dùng → usage tự lên. ĐỪNG ép IRS (pha xấu → ép = reward tụt). Cái
+      thật phải lo = PhaseMLP IDLE (ent phẳng ~58%); IRS-không-tăng chỉ là TRIỆU CHỨNG.
+    Q2 — LATENT RISKS (init phase 0.2 nặng vì các hành vi khóa cứng ở ramp sau):
+      • ⭐ DIRECT-ATTRACTOR LOCK-IN [J]: 0.2 Direct=100% servable → agent đủ sống bằng direct,
+        KHÔNG học IRS → khóa "lazy direct". Ramp khó (0.3-0.5, direct yếu) → không có kỹ năng IRS
+        bù → SỤP. → kỹ-năng-IRS PHẢI học Ở 0.2 (= lý do PhaseMLP-stage ưu tiên cao).
+      • ⚠ BUG ĐÃ FIX (train.py:907): PopArt stats stale khi resume ramp. Resume LOAD critic →
+        nạp pa_μ,σ ramp cũ; pa_initialized=True → warm-up chỉ EMA(β0.1) đuổi chậm → critic sai
+        thang ~10 rollout đầu ramp mới (lúc fragile nhất). FIX: reset pa_initialized=False khi
+        resume → warm-up SNAP scale mới + re-fit head trước actor update.
+      • λ FROZEN [E]: encoding lượng tử không học (y/z~0.50, r=0.06) — khóa init, persistent.
+      • Easy-ramp trap: 0.2 quá dễ → không ÉP học IRS (cấu trúc; PhaseMLP-stage chống cái này).
+    Q3 — VQC đổi có gián tiếp giúp PhaseMLP? CÓ, 2 kênh: (a) assignment chính xác hơn (R1-b per-IRS
+      ZZ → route đúng blocked→IRS → PhaseMLP có data liên quan, gỡ data-starvation); (b) latent z_t
+      tốt hơn → input PhaseMLP tốt hơn. NHƯNG GATE: chicken-egg (route nhiều IRS chỉ giúp nếu pha
+      lên) + sequencing (readout bước 4). VQC KHÔNG sửa frozen-λ, KHÔNG trực tiếp tối ưu pha.
+      → fix pha TRỰC TIẾP hơn = counterfactual phase loss (học từ MỌI user). VQC readout = HỖ TRỢ
+      gián tiếp (đúng intent doc VQC-Readout-Design), không thay thế phase fix.
+
     Code hiện tại: train.py:1395 GAE-target. params: λ_D1.5 β0.001/anneal0.1 noise16 warmup24×50
       gae0.9 lr_critic3e-4 tau0.02 grad_clip_critic1000 checkpoint100. Best ckpt (QoS): chưa có (~52%).
     Smoke test artifact result_7/ (14 ep, --no-pretrain): xóa được — chỉ dùng để verify diag pipeline.

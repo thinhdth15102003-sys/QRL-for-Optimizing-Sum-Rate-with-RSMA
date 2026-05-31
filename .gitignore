@@ -1,0 +1,35 @@
+# ── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# ── Secrets (Telegram bot token) — NEVER push ───────────────────────────
+telegram_secrets.py
+
+# ── Local Claude config (KEEP .claude/skills/, drop local settings/state) ─
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/*.lock
+
+# ── Training run outputs (large / reproducible artifacts) ───────────────
+# Keeps results/oracle_sweep_*.txt/.csv + results/probe_*.txt/.json (evidence).
+results/result_*/
+results/Training-Case 1/
+results/claude_inbox.jsonl
+*.npz
+
+# ── LaTeX build intermediates (keep .tex/.bib/.pdf/images) ──────────────
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# ── Logs / OS cruft ─────────────────────────────────────────────────────
+*.log
+.DS_Store
+Thumbs.db

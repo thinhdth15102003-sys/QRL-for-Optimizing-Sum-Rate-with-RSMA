@@ -1,0 +1,415 @@
+================================================================================
+  TRAINING CASE 2  ·  K=10, M=2  ·  hyperparameter theo từng ramp R_LoS
+================================================================================
+  Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
+  Bài học gốc kế thừa từ Case 1 → Training-Case-1.txt.
+  File này: setup Case 2 (forward-looking) + những điểm cần chú ý. Bảng ramp để TRỐNG,
+  điền khi train thực tế.
+  Trạng thái: CHƯA TRAIN (chuẩn bị). Cập nhật lần cuối: 2026-05-29
+--------------------------------------------------------------------------------
+
+# ── CẤU HÌNH CASE 2 (params.py ACTIVE CASE) ─────────────────────────────────
+K=10, M=2, P_S_dBm=70, n_qubits=12, n_latent=24.   d_aff = K*(M+2)+2M = 44.
+
+# ── KIẾN TRÚC (hidden dims) — KHÁC Case 1 ───────────────────────────────────
+n_hidden_ae    = [128, 64]            # BẮT BUỘC (từ [32]): decoder dựng lại d_aff=44.
+n_hidden_ck    = [128, 128, 64, 32]   # nới lớp đầu (input 5K=50).
+n_hidden_power = [128, 128, 64]       # nới lớp đầu (input 2K+nlat=44).
+n_hidden_phase = [64, 128, 256, 128]  # giữ (hoặc 128,128,256,128 nếu phase đuối).
+n_hidden_post  = [256, 128]           # giữ (đã rộng).
+critic_hidden  = [512, 256, 128, 64]  # giữ (512 ≫ input 44).
+# NGUYÊN TẮC: KHÔNG thêm độ sâu broadly — chỉ nới bề rộng lớp đầu net input-theo-K.
+
+# ── HYPER ỔN ĐỊNH (kế thừa Case 1 — bake từ ep 1) ───────────────────────────
+gae_lambda=0.9
+critic_target_tau=0.02
+beta_entropy=0.001, beta_entropy_min=0.0003, beta_entropy_anneal_end=0.1
+n_rollout_episodes=12        # cân nhắc 16 (K=10 variance cao hơn).
+lr_decay_start=0.2, lr_min_frac=0.25
+reward_noise_avg=8           # cân nhắc 12 nếu reward quá nhiễu ở K=10.
+D_k_bps_hz=0.1, user_free_radius_frac=0.4
+
+# ── HYPER ĐIỀU CHỈNH RIÊNG CHO CASE 2 (nq=12, K=10) ─────────────────────────
+spsa_n_reps   = 8            # TĂNG từ 4: nq=12 → SPSA nhiễu hơn → λ dễ đóng băng [E].
+lr_actor_qc   = 1e-4         # cân nhắc 2e-4 nếu λ|max| đứng yên sau vài trăm ep.
+critic_warmup_episodes = 24  # TĂNG từ 16: state lớn hơn, variance cao hơn.
+critic_warmup_epochs   = 50
+
+lambda_D = THEO SCHEDULE BÊN DƯỚI  # đừng bê thẳng 4.5 từ Case 1 — calibrate per-ramp.
+
+
+================================================================================
+  SCHEDULE λ_D  (rút từ Case 1, điều chỉnh cho Case 2)
+================================================================================
+
+# ── BẢNG KHỞI ĐIỂM (theo pattern Case 1: λ_D ≈ 3 + 10·(R_LoS−0.3) cho R_LoS≥0.3) ──
+#   R_LoS  | λ_D khởi điểm
+#   -------+--------------
+#   0.2    | 3.0
+#   0.3    | 3.5
+#   0.4    | 4.0
+#   0.45   | 4.5
+#   0.5    | 4.5 – 5.0
+#
+# ⚠️ ĐÂY CHỈ LÀ KHỞI ĐIỂM. Case 2 KHÁC Case 1: P=70dBm (+20dB → link mạnh hơn nhiều
+#    → dễ phục vụ hơn) nhưng K=10 (tải nặng hơn), M=2. Net difficulty CHƯA BIẾT →
+#    PHẢI calibrate qua feasibility probe ở từng ramp.
+
+# ── QUY TRÌNH CALIBRATE MỖI RAMP (quan trọng hơn con số khởi điểm) ──────────────
+#   1. Chạy → đọc dòng feasibility probe: "Servable %" và "All-IRS QoS %".
+#   2. Nếu Servable < ~95% → ĐỪNG đẩy λ_D cao (phạt user bất khả thi, lỗi [I]); giữ vừa.
+#   3. So All-IRS baseline với Case 1 cùng R_LoS:
+#        - Case 2 CAO HƠN nhiều (dễ hơn nhờ P↑) → HẠ λ_D ~0.5–1 so với bảng trên.
+#        - Thấp hơn → giữ/tăng.
+#   4. Theo triệu chứng mà tinh chỉnh:
+#        - plateau [D] (reward phẳng, best không vượt)      → TĂNG λ_D
+#        - reward âm sâu ngay đầu / QoS trần thấp [I]        → GIẢM λ_D
+
+# ── KIM CHỈ NAM: nhắm λ_D theo All-IRS baseline (map từ Case 1) ─────────────────
+#   All-IRS QoS ≈ 70%  → λ_D ≈ 3.0
+#   All-IRS QoS ≈ 65%  → λ_D ≈ 3.5–4.0
+#   All-IRS QoS ≈ 60%  → λ_D ≈ 4.5
+#   (Case 1 ref: 0.2→70%, 0.3→63%, 0.4→60%, 0.45→59%, 0.5→59%, servable luôn 98.9%.)
+
+# ── LÝ THUYẾT: λ_D KHÔNG cần scale theo K ──────────────────────────────────────
+#   λ_D là trade-off PER-USER (QoS vs sum-rate biên). Penalty là Σ trên K user nhưng
+#   cân bằng per-user độc lập K; advantage được chuẩn hóa per-rollout. → schedule trên
+#   hợp lý cho K=10; chỉ calibrate theo ĐỘ KHÓ (probe), KHÔNG nhân theo số user.
+
+
+================================================================================
+  HYPER THEO TỪNG RAMP R_LoS  (điền khi train)
+================================================================================
+  Mẫu mỗi ramp:
+    R_LoS = X.X | resume từ: ____ | λ_D: ____ | episodes: ____
+      Feasibility: Servable __% | All-IRS __% | Direct __%
+      Kết quả: QoS đỉnh __% @ep__ | wc/Ck: __ | sự cố [A-I]: __
+      Checkpoint tốt nhất (theo QoS): ep_____
+      Bài học / hyper cần đổi: ____
+
+── R_LoS = 0.2 ──  (BẮT ĐẦU: fresh, AE-pretrain bật)
+    Feasibility (cố định): Servable 100% | Direct-only 100% (ΣRtot 1.72) | All-IRS 76.8% (ΣRtot 1.17)
+    → QoS TRIVIAL (Direct=100%); thử thách thật ở 0.2 = SUM-RATE + agent có HỌC OPTIMIZE IRS không.
+
+    [Lần 1] result_1 λ_D3.0 β0.002 fresh ep4000:
+       STUCK QoS 54-60% < Direct100%. critic MÙ explVar~0.1 [B], λ frozen [E], reward ~-400.
+       Nguyên nhân: λ_D=3.0 quá cao (Direct đã 100%) → qp(4.2)≫sumrate(1.5) → penalty-dominated
+       → critic cold-start ko fit. → FIX: hạ λ_D.  [→ Common-Knowledge [I-2]]
+
+    [Lần 2] result_1 λ_D1.5 β0.002 fresh ep4000 (~ep233):
+       λ_D↓ giúp reward bớt âm (-400→+44), qp 4.2→~1.0, QoS nhích 54→60%. NHƯNG:
+       - critic VẪN MÙ: explVar kẹt ~0.07, σV~0.3 (đoán hằng số) → λ_D KHÔNG đủ gỡ critic.
+       - PhaseMLP IDLE: ent ph phẳng ~41 (~62% max), KHÔNG giảm → KHÔNG học optimize IRS [F/J].
+       - ⚠ENTROPY-DOMINATED cả run (phase ent/pg~1.05) dù fresh (phase L_pg quá nhỏ).
+       Nguyên nhân kép: critic mù (ko tín hiệu) + entropy-domination (β ép phase random).
+       → FIX: hạ β (gỡ entropy-domination → policy bớt random → return ổn → critic fit → phase học).
+
+    [Lần 3] result_2 λ_D1.5 β0.001 anneal0.1 fresh ep4000 (~ep983) — KẾT QUẢ:
+       ✅ β-fix LÀM ĐÚNG: ⚠ENTROPY-DOMINATED TẮT (ent/pg ph 1.05→0.17-0.26); phase entropy
+          bắt đầu giảm chậm (40→35, vẫn ~53% max).
+       ❌ NHƯNG critic VẪN MÙ: explVar bounce 0-0.23, kẹt ~0.08, KHÔNG leo qua 0.5 — kể cả
+          sau β về sàn (ep400) tới ep983. QoS phẳng ~57-60%. λ frozen (r~0.08).
+       → KẾT LUẬN: H1 (entropy→critic mù) BỊ BÁC. Critic mù là H2 = critic KHÔNG FIT NỔI
+          return (variance cao + policy còn stochastic + TD(0)-target/GAE-eval mismatch).
+          Critic là V(s), ĐỘC LẬP readout → đổi readout KHÔNG cứu được critic.
+
+    [Lần 4] result_3 λ_D1.5 β0.001 + reward_noise_avg16 + critic warm-up FRESH (24×50)
+            fresh ep4000 (~ep133) — KẾT QUẢ:
+       ✅ MỘT PHẦN: warm-up explVar=0.79; train explVar lên ~0.4-0.6 (so result_2 chỉ 0.08)
+          → warm-up + noise_avg=16 gỡ MÙ một phần. Hướng đúng.
+       ❌ NHƯNG critic BẤT ỔN (under-damped): grad V drop 2475→721 rồi PLATEAU 600-1000
+          (KHÔNG giảm tiếp, còn nhích lên), explVar DAO ĐỘNG 0.14↔0.64 (không giữ >0.5),
+          QoS KẸT ~51%. → critic "đuổi" TD(0) target nhiễu, không settle → advantage nhiễu
+          → policy không cải thiện.
+       → KẾT LUẬN: warm-up+noise_avg đúng hướng nhưng critic cần ỔN ĐỊNH hơn. Root: TD(0)
+          target phương sai cao + mismatch (explVar đo vs GAE-return).
+
+    [Lần 5] result_4 λ_D1.5 β0.001 noise16 warmup + CRITIC TARGET=GAE-return (t['ret']).
+       Code: train.py:1395 td_target→ret. — KẾT QUẢ (CHẾT SỚM ep96, salvage ep1-96):
+       ✅ GAE-target GIẢM grad V: ~400-500 (vs result_3 TD0 plateau 700-1000), trend xuống nhẹ
+          → đúng dự đoán (target ít nhiễu). Tín hiệu TÍCH CỰC một phần.
+       🟡 explVar: 0.52-0.57 đầu (ổn hơn chút) rồi wobble 0.02-0.43. QoS vẫn ~51-53%.
+          → CHƯA KẾT LUẬN (chết ở ep96, chưa qua β-anneal ep400 / critic chưa settle).
+       💥 TREO ep96: userspace CPU-spin 6.4h, GPU idle, single job → KHÔNG phải code/GAE
+          (chạy 8 PPO update OK). Nhiều khả năng CUDA hang do GAME Windows tranh GPU lúc
+          launch (TDR — Windows reset GPU driver khi kernel quá hạn under contention). [H]
+       → GIỮ GAE-target (grad-giảm tích cực). Chạy lại trên GPU SẠCH (no game), qua ep400.
+
+    [Lần 6] result_5 GAE-target, GPU sạch, chạy tới ep1055 (qua ep400) — KẾT QUẢ:
+       🔴 GAE-target KHÔNG ổn định critic [B-2b]: explVar WOBBLE −0.46↔+0.69 (TB ~0.38,
+          KHÔNG giữ >0.5, có lúc ÂM); ‖∇‖V dao động RỘNG 300-1300 (không settle). Không
+          khá hơn result_3 đáng kể.
+       🔴 QoS THOÁI HÓA: 51→45-47% (đáy ~45% ep600-800); reward GIẢM -138→-271; R_tot
+          TĂNG 1.42→1.92. → QoS↓+R_tot↑+reward↓ = policy thoái hóa do advantage nhiễu
+          (critic loạn), KHÔNG phải tối ưu-cho-rate. best 169.9 (ep đầu), không bị vượt.
+       → KẾT LUẬN: GAE-target một mình KHÔNG đủ. Critic vẫn under-damped.
+
+    >>> ĐIỂM DỪNG (cho conversation mới) — CẬP NHẬT 2026-05-31 <<<
+    ĐÃ THỬ ở R_LoS=0.2 (result_1→5): λ_D 3.0→1.5 · β 0.002→0.001 · reward_noise_avg 8→16 +
+      critic warm-up FRESH · GAE-return target. → critic từ MÙ (explVar 0.08) thành
+      FUNCTIONAL-NHƯNG-LOẠN (explVar đạt 0.6-0.79 đôi lúc, không giữ). QoS chưa từng >60%.
+    ĐÃ ĐỔI params: lr_critic 5e-4 → 3e-4 (line params.py:202). Sẵn sàng cho result_6.
+
+    >>> DIAGNOSTIC PIPELINE (4 tiers, build 2026-05-31) — CHẠY TRƯỚC result_6 <<<
+    Mục đích: tách nguyên nhân critic loạn giữa ENV (aleatoric) / PIPELINE / THEORY.
+    Files đã thêm vào repo:
+      Tier 1  probe_critic_ceiling.py     · CSI/env_probe.py
+      Tier 2  RL/critic_diag.py           · train.py inserts (crit-diag block + JSONL)
+      Tier 0  train_oracle_critic.py
+      Tier 3  analyze_critic_run.py
+    Output: results/probe_critic_ceiling_*.txt · results/oracle_critic_*.txt
+            results/result_N/critic_diag.jsonl  · results/result_N/analysis_critic/
+
+    KẾT QUẢ PROBE BAN ĐẦU (--quick run, 2026-05-31):
+      ⭐ Ceiling explVar(V(s)) phụ thuộc POLICY:
+         random policy        → 0.16 (variance dominated by random actions)
+         result_5 ep_01000    → 0.81 (trained policy, action variance thấp hơn)
+      → Observed online explVar ~0.40 (result_5) so với ceiling 0.81 ở trained-policy:
+         GAP 0.41 → critic VẪN CÒN nhiều room. KHÔNG phải env-bound như nghĩ ban đầu.
+      → Per-source contribution (H-step return, trained policy):
+         policy stoch baseline (all env off): σ 1.98
+         channel_resample only:               σ 2.67  ← nguồn ENV lớn nhất
+         CSI κ only:                          σ 2.41
+         mobility only:                       σ 2.27
+         n0 only:                             σ 2.06  ← nhỏ nhất
+         (sample size n=10 R=8 quick mode — chạy full để tin cậy)
+
+    PHÁT HIỆN ĐẦU TỪ TIER 2 (smoke test, 14 ep — KHÔNG dùng làm dữ liệu thật):
+      ⚠ clipfrac = 100% — grad_clip_critic=1.0 đang cắt MỌI minibatch → đã fix ở result_7 (clip=1000)
+        NHƯNG clip KHÔNG phải nút thắt gốc (xem VERDICT bên dưới — H1 bị bác).
+      ⚠ Critic layers dead 46-63% (ReLU) — nhưng oracle cho thấy arch 512 vẫn fit tốt nhất → ko phải vấn đề.
+      ⚠ "17/44 dead state dims" = FALSE POSITIVE (ngưỡng tuyệt đối 1e-3 trên state scale ~1e-3).
+        Đã fix detector scale-aware → thực ra: 10 const-by-design (demand block D_k cố định) + 2 collapsed
+        (p_m=|g_SR|² scale ~1e-7). KHÔNG bệnh lý.
+      ⚠ bias |V-ret| swing → return scale drift → ĐÚNG, là đòn bẩy thật (oracle norm_tgt + PopArt result_8).
+
+    TRẠNG THÁI result_6 (đang chạy khi build pipeline): lr_critic=3e-4 ĐƠN LẺ
+      (grad_clip vẫn 1.0, reward_noise_avg16). KHỞI ĐỘNG TRƯỚC Tier-2 → KHÔNG có
+      critic_diag.jsonl. Tới ep305: explVar chạm 0.61 nhưng QoS kẹt 49%, reward μ -119,
+      best 175.6 không vượt 274 ep → CÙNG pattern stuck. → lr↓ đơn lẻ KHÔNG đủ (đúng
+      như Tier-2 dự đoán: clipfrac=100% chưa được fix).
+
+    >>> KẾT QUẢ result_6 + result_7 + ORACLE SWEEP (2026-05-31) — VERDICT <<<
+    result_6 (lr_critic 3e-4 ĐƠN LẺ, clip=1.0): stuck. explVar chạm 0.61 lúc đầu rồi
+      wobble, QoS 49%, best 175.6 unbeaten 274ep. → lr↓ đơn lẻ KHÔNG đủ.
+    result_7 (grad_clip 1.0→1000, Tier-2 on, dừng ep587):
+      ✅ CƠ HỌC ĐÚNG: clipfrac 100%→0.0% (preclip μ~200 < 1000 → clip thông hoàn toàn;
+         preclip tự co từ 400-1300 xuống ~200 vì critic fit được). Tín hiệu sớm tốt (ep11-29 explVar 0.6).
+      ❌ NHƯNG KHÔNG GIẢI QUYẾT: qua β-anneal, explVar SỤP lại wobble −0.37↔+0.62 (mean 0.29),
+         QoS kẹt 52% (R_tot↑1.50→1.61 = tối ưu rate, bỏ QoS), best 185 unbeaten 538ep [D].
+      → H1 (grad_clip là nút thắt) BỊ BÁC. clip=1.0 bind chỉ là TRIỆU CHỨNG, không phải bệnh.
+
+    ORACLE SWEEP (32 config arch×clip×norm, 20k samples clean noise=128, results/oracle_sweep_K10M2_R0.20.txt):
+      MARGINAL spread (= đòn bẩy): arch 0.104 ≫ norm_tgt 0.042 ≫ grad_clip 0.004.
+      • grad_clip spread 0.004 = VÔ NGHĨA → xác nhận ĐỘC LẬP H1 bị bác (clip không phải lever).
+      • arch: 512x256x128x64 (HIỆN TẠI) fit TỐT NHẤT (0.342 > 256x128 0.268 > 128x64 0.244)
+        → H2 (over-param) BÁC. ĐỪNG thu nhỏ critic.
+      • norm_tgt=True > False (+0.042) → ĐÒN BẨY THẬT. + live bias=−0.79 xác nhận return scale-drift.
+      • Ceiling oracle ~0.38 (random-policy data) — KHÁC Tier-1 trained-policy ceiling ~0.81.
+
+    ⭐ PHÁT HIỆN LỚN: QoS kẹt ~52% XUYÊN SUỐT result_5/6/7 BẤT KỂ trạng thái critic (kể cả lúc
+      explVar 0.6). → critic KHÔNG phải nút thắt chính của QoS. QoS kẹt vì agent route ~5/10 user
+      lên IRS PHA NGẪU NHIÊN (PhaseMLP idle ent~57% phẳng, λ frozen) → rớt. Đáng lẽ giữ non-block
+      trên direct + phục vụ block qua IRS-pha-tốt. → vấn đề PHA/HỌC, KHÔNG phải critic/penalty.
+
+    LEVER ĐÃ LOẠI (ĐỪNG lặp — có bằng chứng):
+      • λ_D↑ : result_1 λ_D=3 → qp4.2≫sumrate1.5 → penalty-dominated → critic MÙ [I-2]. KHÔNG tăng.
+      • grad_clip : oracle spread 0.004 + result_7 wobble → không phải lever. (giữ 1000, vô hại.)
+      • critic arch nhỏ lại : oracle → TO = tốt hơn. Giữ [512,256,128,64].
+      • readout redesign / frozen-λ : per VQC-Readout-Design SEQUENCING, chỉ A/B SAU khi critic ổn
+        (explVar>0.5 ổn định). Readout KHÔNG sửa frozen-λ (output vs encoding — khác phần mạch). Premature.
+
+    >>> CHIẾN LƯỢC ĐÃ CHỐT (user, 2026-05-31): S1 critic-first, bản TOÀN DIỆN. Thứ tự ưu tiên
+        ramp 0.2 = CRITIC → PhaseMLP (học optimize IRS) → KHÔNG-IDLE head (đb sau VQC) → QoS → SUM-RATE
+        (đã ghi Common-Knowledge Part5 #8 + skill). QoS KHÔNG ép ở 0.2 — trade bằng λ_D ramp sau.
+        PRETRAIN = phương án CUỐI CÙNG. Implement toàn diện thì OK; nếu phải approximate → kèm diagnose.
+
+    result_8 = FULL PopArt (toàn diện — van Hasselt 2016): critic dự đoán value CHUẨN HÓA (running
+      μ,σ của return); khi μ,σ update → RESCALE lớp cuối (W,b) bảo toàn output (phần "ART", chống
+      gián đoạn V); un-scale ở read cho GAE. Gỡ tận gốc scale-drift (bias −0.79), oracle-backed
+      (norm_tgt +0.042). Giữ arch512 clip1000 λ_D1.5 GAE-target.
+
+      ── PASS CRITERIA result_8 (T1-T5, đọc log theo đây) ──────────────────────────────
+      T1 grad-scale  : preclip‖∇‖V μ < ~20 (result_6/7 là 400-1300), clipfrac~0%   [crit-diag]
+      T2 bias        : |bias=μ(V−ret)| < 0.3 BỀN, không trend (result_7 trôi −0.79)  [crit-diag/analyzer]
+      T3 ⭐explVar    : post-ep400 mean>0.5 · std<0.15 · min>0.3 = STABLE (hết wobble) [analyzer ★T3]
+      T4 tracking    : PopArt track Δμ nhỏ so σ, σ bám ret_σ                          [crit-diag PopArt]
+      T5 POP correct : |ΔV|max < 1e-3 (toán đúng → ~1e-15; ĐÃ verify smoke 1.8e-15)   [crit-diag PopArt]
+      ĐỌC KẾT QUẢ:
+        T1+T2+T4+T5 PASS + T3 STABLE → ✅ gốc critic = scale-drift, PopArt gỡ → sang STAGE PhaseMLP.
+        T1+T2+T4+T5 PASS NHƯNG T3 WOBBLE → ❌ bác scale-drift; gốc = NON-STATIONARITY policy-drift
+          → lever mới: target-net cho value / GAE-λ thấp hơn / freeze-then-fit critic.
+        T5 ⚠BUG (|ΔV| lớn) → lỗi implement POP, fix trước khi kết luận.
+      Sau ~ep700: python analyze_critic_run.py results/result_8 → summary.txt tự verdict T3/T5.
+      ──────────────────────────────────────────────────────────────────────────────────
+
+    SAU result_8 (critic ổn) → STAGE PhaseMLP (học optimize IRS, KHÔNG pretrain trước):
+      thứ tự thử (data-flow trước, pretrain cuối): optimistic q-init → entropy-target q-head →
+      counterfactual phase loss (PhaseMLP học từ MỌI user, gỡ data-starvation) → forced-IRS warmup
+      → intrinsic alignment reward → (CUỐI) phase pretrain. Mỗi can thiệp KÈM diagnose: phase-quality
+      probe (|Σφ| đạt vs optimal N vs random √N; IRS-routed user có thắng direct không), phase entropy
+      trend, greedy-vs-sampled QoS. → cần thiết kế phase-quality probe (giống probe_irs_vs_direct
+      nhưng dùng PhaseMLP LIVE).
+    SAU PhaseMLP → QoS (λ_D per-ramp) → sum-rate. Readout redesign: chỉ sau khi critic+pha ổn.
+
+    Code hiện tại: train.py:1395 GAE-target. params: λ_D1.5 β0.001/anneal0.1 noise16 warmup24×50
+      gae0.9 lr_critic3e-4 tau0.02 grad_clip_critic1000 checkpoint100. Best ckpt (QoS): chưa có (~52%).
+    Smoke test artifact result_7/ (14 ep, --no-pretrain): xóa được — chỉ dùng để verify diag pipeline.
+
+── R_LoS = 0.3 ──  (resume từ checkpoint tốt nhất của 0.2)
+    λ_D khởi điểm: 3.5 | Feasibility: ____ | [điền]
+
+── R_LoS = 0.4 ──
+    λ_D khởi điểm: 4.0 | Feasibility: ____ | [điền]
+
+── R_LoS = 0.45 ──
+    λ_D khởi điểm: 4.5 | Feasibility: ____ | [điền]
+
+── R_LoS = 0.5 ──  (bước cuối, khó nhất)
+    λ_D khởi điểm: 4.5–5.0 | Feasibility: ____ | [điền]
+
+
+================================================================================
+  ROADMAP TĂNG IRS-USAGE  (mục tiêu: IRS/K ≥ ~2/3, không chỉ phục vụ user bị block)
+================================================================================
+  Bối cảnh: các run trước Blk/K~6-7/10 nhưng IRS/K chỉ ~6/10 đổ xuống (≈ random).
+  Mong muốn: agent GỘP user (kể cả có direct link) dùng IRS để LOAD-BALANCE giảm tải
+  group-0 (direct/common) → IRS/K cao hơn.
+
+  HIỂU ĐÚNG (đừng kỳ vọng nhầm):
+   - IRS-usage là PHƯƠNG TIỆN, không phải mục tiêu. Mục tiêu là reward (sum_rate+QoS).
+   - Readout làm assignment ĐÚNG HƠN (info), KHÔNG tự đẩy IRS lên. IRS-usage cao là
+     KẾT QUẢ của: IRS thật sự đáng dùng (pha tốt + benefit verified) + critic chạy +
+     load-balancing trả tiền (reward tăng). Ép IRS khi direct tốt hơn = DƯỚI TỐI ƯU.
+   - IRS thấp hiện tại HỢP LÝ khi pha ngẫu nhiên: IRS-random thua direct → agent chỉ
+     dùng IRS cho user bị block. Muốn IRS cao → IRS phải đáng dùng TRƯỚC.
+
+  CÁC BƯỚC (theo thứ tự — gate nhau):
+   1. ✅ VERIFY (làm được NGAY, không đụng training): probe pha-tối-ưu
+      → file: probe_irs_vs_direct.py (so |h_IRS|_opt vs |h_direct| per user, blocked/non).
+      → trả lời: IRS-aligned có THẮNG direct cho user NON-BLOCK không?
+        - Có → mục tiêu 2/3 IRS hợp lý/optimal → đi tiếp.
+        - Không → ép 2/3 là dưới tối ưu → xem lại mục tiêu hoặc đổi hệ (↑N, ↓G_U…).
+   2. Fix CRITIC (đang làm result_3) — agent mới học được load-balancing dài hạn.
+   3. PHA TỐT (phase pretrain/optimize) → IRS cho rate cao → agent có lý do route nhiều hơn.
+   4. READOUT redesign (VQC-Readout-Design.txt) → assignment đúng hơn (HỖ TRỢ, sau 2-3).
+   5. (Tùy chọn) ENCOURAGE-IRS: optimistic q-init / IRS-usage bonus → đẩy usage lên — CHỈ
+      nếu bước 1 xác nhận IRS đáng (nếu không = ép policy dưới tối ưu, yếu cho paper).
+
+  KẾT QUẢ PROBE (probe_irs_vs_direct.py, 2026-05-30, R_LoS=0.2):
+   Blk/K=71.5%. IRS-opt > direct: TẤT CẢ 87.9% (+34.6dB) | BLOCK 100% (+37.8dB) |
+   NON-BLOCK 57.4% (median +1.5dB, p25 −3.2, p75 +6.4).
+   → Mục tiêu 2/3 IRS: KHẢ THI (thậm chí bảo thủ — optimal ~88% IRS với pha tối ưu).
+   ⭐ INSIGHT then chốt: pha NGẪU NHIÊN làm IRS yếu ~14dB (|Σφ| N→√N).
+      - BLOCK: optimal +38dB → kể cả random (+24dB) vẫn thắng → agent ĐÃ dùng IRS (đúng).
+      - NON-BLOCK: optimal chỉ +1.5dB → random (−12.5dB) THUA direct → agent đúng khi giữ direct.
+      → IRS/K hiện ~6/10 (≈block count) là HỢP LÝ với pha xấu, KHÔNG phải lỗi.
+   → LEVER để đẩy IRS/K > 7 (route cả non-block) = CHẤT LƯỢNG PHA (pretrain/optimize PhaseMLP),
+     KHÔNG phải readout. Margin non-block +1.5dB chỉ hiện khi pha tối ưu. Thứ tự: critic→pha→(readout).
+
+
+================================================================================
+  HYPER CẦN CHÚ Ý Ở CASE 2  (dự đoán dựa trên Case 1, set thế nào → ra sao)
+================================================================================
+  - λ_D: PHẢI re-tune per-ramp qua feasibility (Case 1 dùng 3→4→4.5 nhưng K,M,P khác).
+    Thấp → plateau [D]; cao quá ở R_LoS lớn → reward âm/phạt user bất khả thi [I].
+  - λ lượng tử [E]: nq=12 → đóng băng TỆ HƠN Case 1. Theo dõi λ|max| sát; nếu đứng yên
+    → spsa_n_reps↑ thêm / lr_actor_qc↑. Đây là rủi ro lớn nhất khi scale qubit.
+  - PhaseMLP [F]: giờ 48 phần tử (2 IRS × 24) → khó gấp đôi Case 1. Theo dõi cờ
+    entropy-domination của phase (entropy ~gấp đôi). Nếu đuối → nới n_hidden_phase.
+  - IRS-select: 10 user × 3 lựa chọn (3¹⁰) — không gian gán lớn hơn nhiều → cần
+    curriculum + gae=0.9 + critic tốt để phối hợp.
+  - Compute: nq=12 → state 2¹²=4096 (16× nq=8) + SPSA nhiều rep → mỗi ep CHẬM hơn nhiều.
+    Chỉ 1 job GPU/lúc.
+
+  CHƯA TRANSFER ĐƯỢC trọng số Case 1 → Case 2 (shape khác). Train từ đầu ở R_LoS=0.2.
+
+
+================================================================================
+  Ý TƯỞNG ĐỂ XEM XÉT SAU  (chưa làm — quan sát fresh run λ_D=1.5 trước)
+================================================================================
+
+# ── (A) GỠ "DIRECT-ATTRACTOR / IRS chicken-and-egg" [J] — encourage agent dùng IRS ──
+# Nút thắt: phase head ĐÓI DATA (chỉ học từ user gán IRS). → ưu tiên cách TĂNG TẦN SUẤT
+# gán IRS (data flow), KHÔNG chỉ tăng giá trị IRS. Thứ tự ưu tiên:
+#
+#   Nhóm tăng DATA FLOW (targeted, đúng nút thắt — KHÔNG phải pretrain):
+#   1. ⭐ Optimistic init q-head: bias logit gán về IRS lúc init → agent thử IRS nhiều
+#        → phase có data → học alignment → sau đó chọn hợp lý. Rẻ, KHÔNG bóp méo reward.
+#   2. Entropy có mục tiêu trên q-head (tách khỏi phase/power), anneal chậm hơn → giữ
+#        IRS được thử. Coi chừng entropy-domination [C].
+#   3. Forced-IRS warmup: N ep đầu ép 1 phần user lên IRS rồi thả. Thô nhưng chắc data.
+#
+#   Nhóm tăng GIÁ TRỊ IRS (reward shaping — kém targeted hơn, dễ bóp méo optimum):
+#   4. Bonus dùng IRS có anneal về 0 (nên potential-based để bảo toàn optimum).
+#   5. Intrinsic alignment reward: thưởng |g_SR·Φ·g_RU| cho IRS active (≈ pretrain trá hình).
+#
+#   Kiến trúc: 6. Counterfactual phase loss (cho phase head học cả user gán direct).
+#
+#   Quy tắc: encourage (1-3) = "cho IRS được thử nhiều hơn"; pretrain = "cho IRS điểm
+#   xuất phát tốt". Bổ sung nhau. Thứ tự thử: quan sát fresh λ_D=1.5 → nếu drift về direct
+#   [J] thì #1+#2 → nếu pha vẫn không học (data đủ nhưng PG quá chậm ở 48-element) → pretrain.
+#   LƯU Ý: tất cả chỉ ăn khi critic hoạt động (λ_D đã fix) + IRS thật sự tốt khi được thử.
+
+# ── (B) SỬA λ LƯỢNG TỬ FROZEN [E] — param-shift vs SPSA (PHỤ, cho paper) ──
+#   CAVEAT quan trọng: KHÔNG đổi đại sang param-shift. Với DATA RE-UPLOADING, encoding
+#   angle α (→λ) xuất hiện ở NHIỀU lớp (shared param). Param-shift 2-term naive (code hiện
+#   tại shift α ở mọi vị trí cùng lúc) → KHÔNG chính xác (biased) cho param lặp.
+#   Ngược đời: SPSA loạn biến α trực tiếp → đo ĐÚNG tổng đạo hàm (unbiased, chỉ nhiễu)
+#   → SPSA THỰC RA ĐÚNG HƠN cho encoding re-uploaded.
+#   → Muốn param-shift đúng phải multi-term (shift TỪNG lần lặp rồi cộng = 2·#lần·nq eval).
+#   Hướng gỡ frozen đúng: (i) chạy diagnostic "λgrad r" (đã thêm vào train.py) — nếu r≈0
+#   do NOISE → tăng spsa_n_reps cho encoding / multi-term param-shift; nếu r≈0 do TRIỆT TIÊU
+#   CẤU TRÚC (grad λ ∝ mean batch của (·z_enc), z_enc layer-norm zero-mean → tự triệt tiêu)
+#   → param-shift KHÔNG cứu được, phải sửa normalization/lr_lam. → CHỜ diagnostic rồi mới chọn.
+
+
+================================================================================
+  NHẬT KÝ RUN (Case 2)  —  điền khi có run đầu tiên
+================================================================================
+  (R_LoS=0.2, các lần thử ở ramp đầu — fix critic mù dai dẳng)
+  L1 (result_1): λ_D3.0 β0.002 fresh → STUCK QoS54%, critic mù explVar~0.1 [B/I-2]; λ_D quá cao. FIX: hạ λ_D.
+  L2 (result_1): λ_D1.5 β0.002 fresh → reward bớt âm, QoS~60%, critic VẪN mù (explVar0.07) +
+        PhaseMLP IDLE + ⚠entropy-dom. FIX: hạ β.
+  L3 (result_2): λ_D1.5 β0.001 fresh ep983 → β-fix gỡ entropy-dom (cờ tắt, phase 40→35) NHƯNG
+        critic VẪN mù (explVar~0.08). → H1 BÁC; critic mù = H2 (fit/return-variance), độc lập readout.
+  L4 (result_3): λ_D1.5 β0.001 + reward_noise_avg16 + warm-up FRESH → explVar lên ~0.4-0.6
+        (vs 0.08, MỘT PHẦN ăn) NHƯNG critic BẤT ỔN: grad V plateau 700-1000 (ko giảm), explVar
+        wobble 0.14-0.64, QoS kẹt 51%. → cần critic ỔN ĐỊNH hơn (root: TD(0) target nhiễu).
+  L5 (result_4): + CRITIC TARGET=GAE-return (td_target→ret) → grad V GIẢM ~400-500 (vs 700-1000,
+        tích cực) NHƯNG TREO ep96 (CUDA hang do game Windows tranh GPU/TDR [H]) → inconclusive.
+        GIỮ GAE-target, chạy lại GPU sạch.
+  L6 (result_5): GAE-target, GPU sạch, ep1055 → GAE KHÔNG ổn định critic: explVar wobble
+        −0.46↔0.69 (ko giữ >0.5), grad V 300-1300 loạn. QoS THOÁI HÓA 51→47% + reward -138→-271.
+        → GAE một mình ko đủ. NEXT: lr_critic 5e-4→3e-4. Nếu vẫn loạn → RETHINK (xem ĐIỂM DỪNG).
+  L7 (result_6): lr_critic 3e-4 ĐƠN LẺ (grad_clip vẫn 1.0), GAE-target, fresh, đọc @ep~305 →
+        lr↓ KHÔNG fix [B-2b]: explVar wobble 0.21↔0.66 (mean~0.45, ko giữ >0.5), grad V plateau
+        400-1300 (ko giảm, clip 1.0 cắt ~99.7%) — Y HỆT result_5. QoS kẹt 49-52% (DƯỚI Direct100%
+        & All-IRS76.8%; R_tot1.50<Direct1.72 → thua baseline cả 2 trục). PhaseMLP IDLE (ent ph
+        phẳng ~58% max), λ frozen [E]. best175.6 unbeaten 274ep [D]. → grad_clip=1.0 là thủ phạm
+        gốc (Tier-2 clipfrac~100%), lr ko chạm tới. NEXT: grad_clip_critic 1.0→5.0 + Tier-2 on → result_7.
+  DIAG (2026-05-31, KHÔNG phải run train): build 4-tier critic-diagnostic pipeline + chạy
+        probe sơ bộ. KẾT QUẢ THAY ĐỔI CHẨN ĐOÁN:
+        - Ceiling explVar(V(s)): random-policy 0.16 NHƯNG trained-policy (result_5 ckpt) 0.81.
+          → observed ~0.40 CÁCH ceiling 0.41 → critic KHÔNG env-bound, còn nhiều room (bác giả
+            thuyết "đã sát trần aleatoric" của phân tích trước).
+        - Tier-2 trên smoke-test phát hiện: clipfrac=100% (grad_clip_critic=1.0 cắt mọi minibatch,
+          preclip 30-210) [II-2]; critic ReLU dead 46-63%; EV xấu dần theo σ² (q1 0.36→q4 0.19,
+          n0 hại critic ở step nhiễu); bias |V-ret| drift mạnh (scale drift [Nhóm A]).
+        → NEXT (override "chỉ lr_critic"): grad_clip_critic 1.0→5.0 KÈM lr_critic↓ (cùng nhóm [B]).
+  L8 (result_7): grad_clip 1.0→1000 (one-var vs result_6), Tier-2 on, dừng ep587 →
+        clipfrac 100%→0.0% (clip thông, preclip tự co 400-1300→~200) NHƯNG explVar VẪN wobble
+        −0.37↔+0.62 (mean0.29), QoS kẹt 52%, R_tot↑1.50→1.61 (bỏ QoS), best185 unbeaten538ep [D].
+        → H1 (grad_clip=nút thắt) BỊ BÁC: clip bind chỉ là TRIỆU CHỨNG. Critic moderate-noisy
+        (beats baseline 96-100%) nhưng KHÔNG phải nút thắt QoS (QoS kẹt 52% bất kể explVar).
+  ORACLE (2026-05-31, sweep 32 config clean data): MARGINAL spread arch 0.104 ≫ norm_tgt 0.042
+        ≫ grad_clip 0.004. → arch 512 fit tốt nhất (đừng nhỏ), norm_tgt=True là lever, grad_clip vô nghĩa.
+        Xác nhận độc lập H1 bác + chỉ hướng PopArt.
+  >>> RESUME ĐIỂM (2026-05-31, sau result_7+oracle): critic [B-2b] KHÔNG do grad_clip/arch.
+      Đòn bẩy critic = RETURN NORMALIZATION (PopArt). QoS kẹt = vấn đề PHA (PhaseMLP idle), KHÔNG
+      phải critic/λ_D (λ_D↑ đã bị loại — result_1). ĐÃ LOẠI: λ_D↑, grad_clip, arch-nhỏ, readout-now.
+      result_8 ĐỀ XUẤT (chờ user chốt trọng số PopArt): return z-score / reward running-std / full PopArt.
+        Giữ arch512 clip1000 λ_D1.5. Mục tiêu explVar GIỮ >0.5. Sau đó re-assess QoS → pha → readout.
+      Chi tiết ở block "KẾT QUẢ result_6+7+ORACLE — VERDICT" trên. <<<
+  result___  ...
+================================================================================

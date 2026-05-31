@@ -1,0 +1,1125 @@
+\documentclass[12pt,onecolumn]{IEEEtran}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{xcolor}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{bm}
+\usepackage{tikz}
+\usepackage{quantikz}
+\usepackage{amsmath}
+\usepackage{makecell}
+\usepackage{booktabs}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\usepackage{setspace}
+\renewcommand{\baselinestretch}{1.75}
+
+
+
+
+
+\title{\LARGE 
+Hybrid Quantum-Classical Hierarchical Actor-Critic for Sum-Rate Maximization in IRS-Assisted Grouped RSMA Systems
+}
+
+\author{Thinh Duong Tan Hung and Wonjong Noh}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Integrated satellite-terrestrial networks (ISTNs) have emerged as a key architecture for next-generation wireless systems, offering wide-area coverage and seamless connectivity by combining satellite and terrestrial infrastructure.
+However, ISTNs face fundamental challenges including severe path loss, atmospheric fading, building blockage, and the worst-user bottleneck caused by users with poor channel conditions.
+To address these challenges, this paper considers an IRS-assisted grouped rate-splitting multiple access (RSMA) downlink system in ISTN, where multiple intelligent reflecting surfaces (IRSs) improve link reliability for users under blockage, and grouped RSMA enables flexible interference management across heterogeneous user groups.
+
+We propose a hybrid quantum-classical hierarchical actor-critic (HQC-HAC) framework to jointly optimize four coupled decision variables: IRS-assisted link assignment, IRS phase-shift configuration, transmit power allocation, and common-rate distribution.
+These variables form a sequential dependency chain --- the user grouping from link assignment constrains phase-shift design, which determines effective channels for power allocation, and the resulting power levels set the rate budget for common-rate splitting.
+This inherent ordering motivates a hierarchical decomposition.
+At the top level, a quantum actor based on variational quantum circuits (VQCs) resolves the combinatorial IRS assignment bottleneck, whose search space scales as $(M+1)^K$.
+An autoencoder (AE) compresses the high-dimensional channel state into a compact latent representation before quantum encoding to improve scalability.
+At the lower level, three classical sub-actors sequentially handle phase-shift, power, and common-rate decisions.
+Entropy regularization with an annealing schedule is applied across all actors to maintain sufficient exploration during training.
+
+Simulation results show that the proposed HQC-HAC achieves significant sum-rate gains over baseline methods while satisfying per-user quality-of-service (QoS) constraints under imperfect channel state information (CSI) and dynamic user mobility.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Integrated satellite-terrestrial networks (ISTN), intelligent reflecting surface (IRS), rate-splitting multiple access (RSMA), hierarchical actor-critic (HAC), variational quantum circuit (VQC), hybrid quantum-classical reinforcement learning, sum-rate maximization, quality of service (QoS), resource allocation.
+\end{IEEEkeywords}
+
+
+\section{Introduction}
+
+\subsection{Background}
+
+The proliferation of wireless services and the escalating demand for pervasive global connectivity have exposed the fundamental limitations of conventional terrestrial networks, whose coverage is inherently circumscribed by the deployment of fixed ground-based infrastructure. Satellite systems offer a compelling remedy: operating across a diverse spectrum of orbital regimes --- from low Earth orbit (LEO) mega-constellations such as Starlink and OneWeb that deliver low-latency broadband, through medium Earth orbit (MEO) platforms underpinning global navigation systems, to geostationary (GEO) satellites that provide continental-scale coverage from a fixed vantage point --- they maintain line-of-sight access over vast geographical expanses irrespective of terrain~\cite{wang2019convergence}. The recent emergence of small-form-factor CubeSats has further diversified this landscape by substantially reducing launch costs and enabling rapid constellation scaling. Integrating these orbital tiers with terrestrial infrastructure into a unified integrated satellite-terrestrial network (ISTN) has consequently attracted significant research interest as a pathway to delivering pervasive connectivity to maritime, rural, and geographically isolated environments where ground-based base stations are neither practical nor economically viable~\cite{zhu2021integrated,kodheli2020satellite}.
+
+Despite this coverage advantage, satellite-based communications are inherently susceptible to physical impairments that intensify with the propagation distance involved. The extended path between an orbiting satellite and a ground receiver exposes the signal to substantial free-space path loss, rain attenuation, and tropospheric scintillation~\cite{3gpp38811}. In densely built environments, buildings and urban structures further compound these impairments by shadowing the direct satellite-to-user link, leaving the affected terminal without a reliable primary propagation path. Furthermore, when multiple users concurrently access the satellite downlink, inter-user interference degrades individual link quality, and terminals operating under the most adverse channel conditions --- commonly referred to as the worst-user bottleneck --- impose a disproportionate constraint on the aggregate achievable rate of the entire served population~\cite{liu2011multicast}.
+
+The worst-user bottleneck is a well-recognized impediment in multi-user downlink design. Rate-splitting multiple access (RSMA) addresses it by introducing a structured degree of flexibility into interference management~\cite{mao2018rate}. Rather than fully decoding interference, as in non-orthogonal multiple access (NOMA), or treating it entirely as noise, as in space-division multiple access (SDMA), RSMA decomposes each user message into a common component --- decoded cooperatively by a designated set of receivers via successive interference cancellation (SIC)~\cite{cover1972broadcast} --- and a private component decoded independently at each terminal. This partial interference treatment effectively decouples overall system throughput from the performance of the weakest user. A grouped extension of RSMA refines this mechanism further by partitioning users into subgroups according to their channel conditions or propagation characteristics~\cite{tan2025flexible}: within each subgroup, the decodable common rate is bounded by the least-capable member of that group rather than by the globally worst-performing user, affording considerably finer granularity in rate allocation across the network.
+
+Partitioning users by propagation characteristics inevitably raises the question of how to adequately serve those whose direct satellite link is geometrically obstructed. Rate-splitting alone is insufficient to compensate for a physically blocked propagation path, necessitating an alternative transmission route. Intelligent reflecting surfaces (IRSs) furnish precisely such a mechanism~\cite{pan2022overview}. An IRS comprises a planar array of passive reflecting elements, each capable of independently imposing a controllable phase shift on the incident electromagnetic wave. Through judicious configuration of these phase shifts, the reflected wavefront can be coherently steered toward an intended receiver, effectively establishing a virtual line-of-sight link that circumvents the obstruction without incurring additional transmit power expenditure. In the context of grouped RSMA, each active IRS can serve as the reflective backbone of a designated user group, providing reliable alternative propagation paths for terminals that are unreachable via the direct satellite link, as illustrated in Fig.~\ref{fig:istn_system}: Group~$0$ users with unobstructed satellite links receive the direct signal $x_0$, while users in Group~$g$ and Group~$g'$ behind buildings are served through dedicated IRS panels carrying the reflected signals $x_g$ and $x_{g'}$, respectively.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.65\linewidth]{images/ISTN_Comms}
+    \caption{Proposed IRS-assisted grouped RSMA system in an ISTN downlink.
+    The satellite simultaneously serves $G+1$ groups: Group~$0$ users with unobstructed satellite links receive the direct signal $x_0$, while Group~$g$ and Group~$g'$ users blocked by buildings are served via dedicated IRS panels carrying reflected signals $x_g$ and $x_{g'}$.
+    Each IRS steers its reflected signal toward the assigned group through coherent phase-shift configuration $\boldsymbol{\Phi}_m$.}
+    \label{fig:istn_system}
+\end{figure}
+
+The joint optimization of IRS-user link assignment, phase-shift configuration, transmit power allocation, and common-rate distribution constitutes a mixed-integer non-convex problem that admits no tractable closed-form solution. Reinforcement learning (RL) is well-suited to this class of problems by virtue of its model-free nature, acquiring effective resource allocation policies through iterative environment interaction without requiring an explicit analytical characterization of the system~\cite{sutton2018reinforcement}. A salient structural feature of the present problem is that the four optimization variables are not independent but form a strict sequential dependency: the IRS-user assignment defines the grouping structure, which in turn governs the effective channel conditions underlying the phase-shift design, which subsequently shapes the power allocation landscape, and the resulting power budget finally delimits the feasible common-rate split. This inherent ordering provides a principled motivation for a hierarchical actor-critic (HAC) decomposition~\cite{levy2019learning}, wherein a high-level actor commits to the discrete IRS assignment and dedicated low-level actors resolve the remaining continuous variables in sequence --- an architectural paradigm demonstrated to be effective in managing the expansive joint action spaces encountered in IRS-assisted wireless resource management~\cite{gong2022hierarchical}, \cite{gong2023hierarchical}. Entropy regularization is further incorporated across all hierarchical levels to sustain adequate policy diversity and forestall premature convergence during training~\cite{haarnoja2018soft}.
+
+Even with a hierarchical decomposition in place, the top-level IRS assignment remains the principal source of discrete complexity: as the number of deployed IRS panels and served users scales up, the space of feasible user-to-link associations expands at a rate that rapidly renders classical discrete optimization and flat RL policies intractable for realistic system dimensions. Variational quantum circuits (VQCs) offer a fundamentally different computational pathway by harnessing quantum superposition and entanglement to represent rich probability distributions over large discrete action spaces with a compact set of trainable parameters~\cite{jerbi2021parametrized}. A further practical impediment arises from the high dimensionality of the wireless system state, which encompasses complex channel coefficients, blockage indicators, per-user traffic demands, and current allocation variables --- a representation far too unwieldy to be encoded directly into the constrained register of an available quantum device. An autoencoder (AE)~\cite{hinton2006reducing} bridges this dimensionality gap by learning a compact latent embedding of the system state that preserves the information most pertinent to the assignment decision, following the hybrid quantum-classical paradigm established in~\cite{nagy2025hybrid}. This AE-VQC architecture constitutes the quantum actor at the apex of the proposed HQC-HAC framework, resolving the combinatorial bottleneck at the highest level of the hierarchy whilst remaining fully interoperable with the classical sub-actors governing the lower-level continuous decisions. Motivated by the complementary strengths of these components, this paper proposes the hybrid quantum-classical hierarchical actor-critic (HQC-HAC) framework for sum-rate maximization in IRS-assisted grouped RSMA systems within ISTN communications.
+
+\begin{table*}[t]
+\centering
+\caption{Comparison of existing works on IRS/RIS-assisted communication systems}
+\label{tab:comparison_existing_works}
+\begin{tabular}{c|c|c|c|c|c|c|c|c|c|c|c}
+\hline
+\textbf{Ref.} 
+& \textbf{Access} 
+& \textbf{Blockage}
+& \textbf{CSI} 
+& \textbf{Steer. Vec.} 
+& \textbf{Prop. Path}
+& \multicolumn{3}{c|}{\textbf{IRS/RIS}}
+& \textbf{RL} 
+& \textbf{QC} 
+& \textbf{Obj.} \\
+\cline{7-9}
+& 
+& 
+& 
+& 
+& 
+& \textbf{Scale}
+& \textbf{Type}
+& \textbf{Phase}
+& 
+& 
+& \\
+\hline
+
+2022 {\cite{cao2022robust}} 
+& SDMA 
+& \checkmark 
+& Imperf. 
+& -- 
+& Multi 
+& Single 
+& Passive 
+& Cont. 
+& -- 
+& -- 
+& Sum-rate \\
+
+2022 {\cite{dong2022intelligent}} 
+& TDMA 
+& \checkmark 
+& Perf. 
+& \checkmark
+& Multi 
+& Single 
+& Passive 
+& Cont. 
+& -- 
+& -- 
+& WSR \\
+
+2024 {\cite{asif2024transmissive}} 
+& H-NOMA 
+& --
+& Perf. 
+& \checkmark
+& Single 
+& Single 
+& Passive 
+& Cont. 
+& -- 
+& -- 
+& TA-SR \\
+
+2025 {\cite{peng2025robust}} 
+& RSMA 
+& -- 
+& Imperf. 
+& -- 
+& Multi 
+& Single 
+& Passive 
+& Disc. 
+& -- 
+& -- 
+& WSR \\
+
+2025 {\cite{han2025weighted}} 
+& RSMA 
+& -- 
+& Perf. 
+& -- 
+& Single 
+& Single 
+& Passive 
+& Disc. 
+& -- 
+& -- 
+& WSR \\
+
+2025 {\cite{lv2025weighted}} 
+& MU-BF 
+& -- 
+& Perf. 
+& -- 
+& Multi 
+& Single 
+& Passive 
+& Cont. 
+& -- 
+& -- 
+& WSR \\
+
+2025 {\cite{fu2025average}} 
+& NOMA 
+& -- 
+& Perf. 
+& \checkmark
+& Multi
+& Single 
+& Passive 
+& Cont. 
+& \checkmark
+& -- 
+& ASR \\
+
+2025 {\cite{li2025sum}} 
+& RSMA 
+& \checkmark 
+& Perf. 
+& -- 
+& Single 
+& Multi 
+& Passive 
+& Cont. 
+& -- 
+& -- 
+& Sum-rate \\
+
+2026 {\cite{he2026weighted}} 
+& RSMA 
+& -- 
+& Imperf. 
+& \checkmark 
+& Multi 
+& Multi 
+& Passive 
+& Cont. 
+& -- 
+& -- 
+& WSR \\
+
+2026 {\cite{zhang2026satellite}} 
+& RSMA 
+& -- 
+& Imperf.
+& -- 
+& Multi
+& Single
+& Active
+& Cont.
+& -- 
+& -- 
+& Sum-rate \\
+
+2026 {\cite{tan2025flexible}} 
+& RSMA 
+& -- 
+& Perf. 
+& -- 
+& Single 
+& Single 
+& Passive 
+& Cont. 
+& -- 
+& -- 
+& Sum-rate \\
+
+\textbf{Proposed} 
+& G\_RSMA
+& \checkmark 
+& Imperf. 
+& \checkmark 
+& Multi 
+& Multi 
+& Passive 
+& Disc.
+& \checkmark 
+& \checkmark 
+& Sum-rate \\
+\hline
+\end{tabular}
+\end{table*}
+
+Based on the comparison in Table~\ref{tab:comparison_existing_works}, no existing study jointly addresses IRS-assisted grouped RSMA, blockage-aware transmission, imperfect CSI, multi-IRS deployment, discrete phase shifts, RL-based optimization, and quantum-enhanced policy learning within a single framework.
+Motivated by this collective gap, this paper proposes the hybrid quantum-classical hierarchical actor-critic (HQC-HAC) framework for sum-rate maximization in IRS-assisted grouped RSMA-enabled ISTN systems.
+
+\subsection{Contributions}
+
+Motivated by the identified gaps, this paper proposes the HQC-HAC framework for sum-rate maximization in IRS-assisted grouped RSMA systems over ISTN downlinks.
+The framework jointly optimizes four sequentially coupled decision variables --- IRS-user link assignment, IRS phase-shift configuration, transmit power allocation, and common-rate distribution --- under per-user QoS constraints, discrete phase quantisation, imperfect CSI, and building blockage.
+The main contributions of this paper are summarized as follows:
+
+\begin{itemize}
+    \item We formulate a sum-rate maximization problem for a multi-IRS-assisted grouped RSMA downlink system in ISTN, in which IRS-user link assignment, IRS phase-shift configuration, transmit power allocation, and common-rate distribution are jointly optimized as a sequential dependency chain under per-user QoS, discrete phase quantisation, building blockage, and imperfect CSI constraints.
+
+    \item We propose the HQC-HAC framework to solve the resulting mixed-integer non-convex problem by exploiting the inherent sequential dependency of the decision variables. A quantum actor based on a variational quantum circuit (VQC) resolves the combinatorial IRS-user assignment at the high level, while three classical sub-actors sequentially handle phase-shift, power, and common-rate decisions at the low level. Entropy regularization with an annealing schedule is incorporated across all hierarchical levels to sustain policy diversity and forestall premature convergence.
+
+    \item We design a hybrid AE-VQC quantum actor architecture in which an autoencoder (AE) compresses the high-dimensional wireless system state --- comprising channel coefficients, blockage indicators, user demands, and allocation variables --- into a compact latent representation before quantum encoding, enabling the VQC to operate within the constrained register of near-term quantum devices while preserving the information critical to the assignment decision.
+\end{itemize}
+
+\subsection{Organization}
+
+The remainder of this paper is organized as follows.
+Section~\ref{sec:related} reviews related works on IRS-assisted satellite communications, grouped RSMA, and hybrid quantum-classical reinforcement learning.
+Section~\ref{sec:model} presents the system model and formulates the sum-rate maximization problem.
+Section~\ref{sec:framework} details the proposed HQC-HAC framework, covering the hierarchical actor-critic decomposition, AE-based latent state compression, VQC-based quantum actor design, and entropy regularization schedule.
+Section~\ref{sec:results} presents simulation results and performance comparisons against baseline methods.
+Section~\ref{sec:discussion} discusses the implications and limitations of the proposed framework.
+Section~\ref{sec:conclusion} concludes the paper.
+
+\section{Related Works}
+\label{sec:related}
+
+\subsection{IRS-Assisted Grouped RSMA for Sum-Rate Optimization in ISTNs}
+
+The foundational framework for IRS-assisted wireless networks was established by Wu and Zhang~\cite{wu2019intelligent}, who studied an IRS-aided multiuser MISO downlink in which a multi-antenna access point serves multiple single-antenna users via a passive reflective array.
+Their work demonstrated that jointly optimizing active transmit beamforming at the access point and passive phase shifts at the IRS yields substantial reductions in total transmit power relative to IRS-free baselines.
+By aligning the phase shifts so that the IRS-reflected signal combines coherently with the direct path at the intended receiver, the IRS effectively establishes a virtual line-of-sight link that circumvents physical obstructions and augments received signal power without additional transmit energy expenditure.
+Reflected signals can simultaneously be steered destructively at non-intended receivers, furnishing an additional spatial degree of freedom for interference suppression beyond what is attainable through active beamforming alone.
+The resulting non-convex problem was addressed via semidefinite relaxation (SDR) and alternating optimization, with analysis confirming that the required transmit power decreases on the order of $N^2$ as the number of reflecting elements $N$ grows --- a favorable scaling law that motivates large-element IRS deployments in practical systems.
+
+Building upon this beamforming paradigm, Tan et al.~\cite{tan2025flexible} extended IRS-assisted transmission to satellite downlink communications by proposing a flexible grouped RSMA scheme for sum-rate maximization in ISTNs.
+In their system, the $K$ ground users are dynamically partitioned into two disjoint groups based on real-time channel conditions and potential line-of-sight obstructions: group $\mathcal{K}_1$ users are exclusively served via the satellite-IRS-user reflected link, while group $\mathcal{K}_2$ users communicate through the direct satellite-user link.
+Within each group, RSMA decomposes every user's message into a common sub-message --- decoded cooperatively by all group members via successive interference cancellation (SIC) using a shared codebook --- and an independent private sub-message decoded solely at the intended terminal.
+Critically, the decodable common rate within each group is bounded by the weakest member of that subgroup rather than by the globally worst-performing user across the entire population, substantially alleviating the worst-user bottleneck inherent in conventional flat RSMA designs.
+The joint optimization problem encompasses satellite precoding beamforming, IRS passive phase-shift configuration, rate-splitting allocation, and binary IRS-user group selection, and was decomposed into four subproblems solved respectively via SDR with polyblock outer approximation (POA), Riemannian manifold conjugate gradient (RMCG) descent on the IRS phase manifold, alternating optimization for rate allocation, and simulated annealing for the binary group assignment, with the joint solution recovered iteratively.
+
+Despite reporting approximately 29\% sum-rate gain over the IRS-assisted RSMA baseline, the framework of~\cite{tan2025flexible} carries several limitations pertinent to realistic deployment.
+The optimization presupposes perfect and instantaneous CSI at the satellite, whereas practical satellite links are susceptible to estimation errors arising from estimation errors arising from channel aging, Doppler effects, feedback delay, and limited feedback bandwidth.
+Only a single IRS panel is considered, which is insufficient to extend reflected coverage across spatially dispersed user groups.
+Furthermore, the iterative model-based solver incurs computational complexity that scales prohibitively with the numbers of users, IRS elements, and control variables grow, and the framework provides no mechanism for adaptive policy adjustment under dynamic channel conditions or user mobility.
+The proposed HQC-HAC framework addresses these deficiencies by optimizing IRS-user link assignment across multiple IRS panels under imperfect CSI, building blockage, and dynamic user mobility, replacing model-based sub-problem decomposition with a hierarchical reinforcement learning approach in which leverages variational quantum policy representations manages the combinatorial complexity of multi-IRS user assignment.
+
+\subsection{Entropy-Regularized Hierarchical Reinforcement Learning and Hybrid Quantum-Classical Policies}
+
+Hierarchical actor-critic (HAC) methods decompose complex decision problems into multiple levels of abstraction, with high-level actors committing to sub-goals that low-level actors subsequently fulfil~\cite{levy2019learning}, ~\cite{bacon2017option}.
+This temporal and functional decomposition has been demonstrated to accelerate learning in environments with large composite action spaces, including IRS-assisted wireless resource management, where jointly optimizing discrete and continuous variables over extended interaction horizons is otherwise intractable~\cite{gong2022hierarchical}.
+Entropy regularization is commonly incorporated into actor-critic frameworks to encourage sufficient policy diversity during training: the maximum-entropy reinforcement learning objective of the soft actor-critic algorithm~\cite{haarnoja2018soft} penalizes premature collapse to deterministic policies and has been applied extensively in continuous-action wireless optimization problems.
+
+Hybrid quantum-classical reinforcement learning extends this paradigm by replacing or augmenting classical policy networks with variational quantum circuits (VQCs)~\cite{jerbi2021parametrized}.
+VQCs leverage parameterised quantum state transformations to model complex nonlinear policy mappings using comparatively compact trainable representations, thereby motivating their investigation for high-dimensional combinatorial decision problems.
+However, directly encoding high-dimensional wireless system states into a quantum register is impractical given current hardware constraints.
+Nagy et al.~\cite{nagy2025hybrid} addressed this by jointly training an autoencoder (AE) with a VQC-based policy, where the AE compresses the original observation into a low-dimensional latent space suitable for quantum encoding.
+Motivated by these complementary contributions, this work embeds an AE-VQC quantum actor within an entropy-regularized HAC structure, applying it to the combinatorial IRS-user assignment problem in IRS-assisted grouped RSMA over ISTN downlinks.
+
+\section{System Model and Problem Formulation}
+\label{sec:model}
+
+\subsection{Problem Formulation}
+
+\subsubsection{Signal Model}
+
+\begin{table*}[t]
+\centering
+\caption{Summary of Main Notations}
+\label{tab:variables}
+\renewcommand{\arraystretch}{1.18}
+\small
+\singlespacing
+\begin{tabularx}{\textwidth}{
+>{\centering\arraybackslash}p{1.6cm}
+>{\raggedright\arraybackslash}X
+>{\centering\arraybackslash}p{1.6cm}
+>{\raggedright\arraybackslash}X
+}
+\toprule
+\textbf{Symbol} & \textbf{Description} 
+& \textbf{Symbol} & \textbf{Description} \\
+\midrule
+
+$\mathcal{K}$ 
+& Set of ground users
+& $\mathcal{M}$ 
+& Set of IRSs \\
+
+$K$ 
+& Number of ground users
+& $M$ 
+& Number of IRSs \\
+
+$\mathcal{N}$ 
+& Set of IRS reflecting elements
+& $N$ 
+& Number of reflecting elements \\
+
+$\varphi_k$ 
+& IRS-selection variable of user $k$
+& $\mathcal{G}$ 
+& Set of active transmission groups \\
+
+$\mathcal{K}_g$ 
+& Set of users assigned to group $g$
+& $P_S$ 
+& Maximum transmit power of the satellite \\
+
+$s_k$ 
+& Original message intended for user $k$
+& $s_{c,g}$ 
+& Common stream of group $g$ \\
+
+$s_{k,p,g}$
+& Private stream of user $k$ in group $g$
+& $\boldsymbol{\Phi}_m$
+& Phase-shift matrix of IRS $m$ \\
+
+$w_{c,g}$
+& Scalar precoding coefficient for $s_{c,g}$
+& $w_{k,p,g}$
+& Scalar precoding coefficient for $s_{k,p,g}$ \\
+
+$\mathbf{w}$ 
+& Set of scalar precoding coefficients
+& $h$ 
+& Effective channel coefficient \\
+
+$\theta_{m,n}$ 
+& Phase shift of the $n$-th IRS element
+& $\mathcal{Q}_{\theta}$ 
+& Quantized phase-angle set \\
+
+$B$ 
+& Number of phase quantization bits
+& $g$ 
+& True channel coefficient \\
+
+$\hat{g}$ 
+& Estimated channel coefficient
+& $\Delta g$ 
+& CSI estimation error \\
+
+$x$ 
+& Transmitted signal at the satellite
+& $y_k$ 
+& Received signal at user $k$ \\
+
+$n_0$ 
+& Additive white Gaussian noise
+& $\sigma^2$ 
+& Noise variance \\
+
+$\gamma$ 
+& SINR for decoding the corresponding stream
+& $R_{k,c,g}$ 
+& Common-stream decoding rate of user $k$ \\
+
+$R_{c,g}$ 
+& Decodable common rate of group $g$
+& $C_{k,g}$ 
+& Allocated common rate for user $k$ \\
+
+$R_{k,p,g}$
+& Achievable private rate of user $k$ in group $g$
+& $\epsilon$
+& Atmospheric attenuation coefficient \\
+
+$R_k$ 
+& Total achievable rate of user $k$
+& $R_{\mathrm{tot}}$ 
+& Achievable system sum-rate \\
+
+$R_k^{\min}$ 
+& Minimum QoS requirement of user $k$
+& 
+& \\
+
+$\gamma_{\mathrm d}$
+& RL discount factor
+& $\lambda_{\mathrm{GAE}}$
+& GAE bias--variance parameter \\
+
+$\epsilon_{\mathrm c}$
+& PPO clipping range
+& $\epsilon_{\mathrm q}$
+& QoS-penalty guard constant \\
+
+$\lambda_{D}$
+& QoS-penalty weight
+& $\beta$
+& Entropy regularization coefficient \\
+
+$\alpha_{AE}$
+& Autoencoder loss weight
+& $\tau$
+& Critic target Polyak rate \\
+
+$\rho_t$
+& PPO importance-sampling ratio
+& $\hat{A}_t$
+& Generalized advantage estimate \\
+
+$V(\cdot)$
+& State-value function (critic)
+& $\boldsymbol{\eta}$
+& VQC trainable parameters \\
+
+$c_{\mathrm s}$
+& SPSA perturbation step
+&
+& \\
+
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+We consider an IRS-assisted grouped rate-splitting multiple access (RSMA) downlink communication system in an integrated satellite-terrestrial network (ISTN). 
+In the considered system, a satellite serves a set of ground users with the assistance of intelligent reflecting surfaces (IRSs), which are deployed on high buildings to enhance the wireless propagation environment and support users experiencing weak or blocked direct satellite-to-user links. 
+The satellite is assumed to act as the central controller, which determines the transmission strategy, resource allocation, and IRS-assisted communication mode according to the observed channel conditions and user requirements.
+
+Let $\mathcal{K}=\{1,2,\ldots,K\}$ denote the set of downlink ground users, where $K$ is the total number of users. 
+The satellite intends to transmit one independent message to each user. 
+Specifically, the message intended for user $k \in \mathcal{K}$ is denoted by $s_k$. 
+Therefore, the set of scheduled user messages can be written as
+\begin{equation}
+    s = \{s_1, s_2, \ldots, s_K\}.
+\end{equation}
+
+We consider $M$ IRSs deployed on the rooftops of buildings to assist the satellite downlink transmission. 
+Let $\mathcal{M}=\{1,2,\ldots,M\}$ denote the set of IRSs. 
+Each IRS is equipped with $N$ passive reflecting elements, which can independently adjust the phase shift of the incident signal. 
+The IRSs are assumed to be connected to the central controller, and their reflection coefficients are configured according to the channel conditions and user association decisions. For IRS $m \in \mathcal{M}$, the reflection matrix is defined as
+\begin{equation}
+    \boldsymbol{\Phi}_m
+    =
+    \operatorname{diag}
+    \left(
+    e^{j\theta_{m,1}},
+    e^{j\theta_{m,2}},
+    \ldots,
+    e^{j\theta_{m,N}}
+    \right),
+\end{equation}
+where $\theta_{m,n}$ denotes the phase shift of the $n$-th reflecting element at IRS $m$. Let $B$ denote the number of quantization bits. 
+Then, each IRS reflecting element can select one phase shift from $2^B$ discrete phase angles. 
+The quantized phase-angle set is defined as
+\begin{equation}
+    \mathcal{Q}_{\theta}
+    =
+    \left\{
+    \theta^{(0)}, \theta^{(1)}, \ldots, \theta^{(2^B-1)}
+    \right\},
+\end{equation}
+where the $q$-th discrete phase angle is given by
+\begin{equation}
+    \theta^{(q)}
+    =
+    \frac{2\pi q}{2^B},
+    \quad
+    q = 0,1,\ldots,2^B-1.
+\end{equation}
+
+To determine the transmission mode of each user, we define an IRS-selection variable for every user $k \in \mathcal{K}$. 
+Since the considered system includes $M$ IRSs, each user can either be served through the direct satellite-to-user link or through one of the IRS-assisted reflected links. 
+Therefore, the IRS-selection variable is defined as
+\begin{equation}
+    \varphi_k \in \{0,1,\ldots,M\},
+    \quad \forall k \in \mathcal{K},
+\end{equation}
+where
+\begin{equation}
+    \varphi_k =
+    \begin{cases}
+        0, & \text{if user } k \text{ is served through the direct satellite-to-user link},\\
+        m, & \text{if user } k \text{ is served through the satellite-IRS } m\text{-user link}.
+    \end{cases}
+\end{equation}
+
+Following the RSMA principle, each user message $s_k$ of user $k \in \mathcal{K}_g$ is split into a common sub-message $s_{c,g}$ and a private sub-message $s_{p,k}$.
+However, not all IRSs are necessarily selected by the agent at each decision step. 
+Therefore, the number of active groups is denoted by $G$, where $G \leq M+1$.
+We defined set of scheduled user messages after spliting as:
+
+\[
+s = [s_{c,1}, s_{c,2}, \ldots, s_{c,G}, \ldots, s_{p,1}, s_{p,2}, \ldots, s_{p,K}]
+\]
+
+Due to the long propagation distance between the satellite and ground nodes, the satellite-to-user (SU) and satellite-to-IRS (SR) links are dominated by large-scale path loss and rain attenuation following the ITU-R model.
+The IRS-to-user (RU) link additionally exhibits small-scale Rayleigh fading and distance-dependent path loss.
+The true channel coefficients of the three links are modeled as
+\begin{equation}
+\begin{aligned}
+    g^{SU}_k
+    &=
+    \frac{c\sqrt{G_S G_U \epsilon^{SU}_k}}{4\pi f_{SU} d^{SU}_k},
+    && k \in \mathcal{K},
+    \\[2mm]
+    g^{SR}_{m}
+    &=
+    \frac{c\sqrt{G_S \epsilon^{SR}_{m}}}{4\pi f_{SR} d^{SR}_{m}},
+    && m \in \mathcal{M},
+    \\[2mm]
+    g^{RU}_{m,k}
+    &=
+    \sqrt{
+        G_U \cdot \Omega_{sf}
+        \cdot
+        \!\left(\frac{d_0}{d^{RU}_{m,k}}\right)^{\!\alpha}
+        \cdot\,
+        \epsilon^{RU}_{m,k}
+    }
+    \;\tilde{g}^{sf}_{m,k},
+    && m \in \mathcal{M},\ k \in \mathcal{K},
+\end{aligned}
+\end{equation}
+where $c$ is the speed of light; $G_S$ and $G_U$ are the satellite transmit and user receive antenna gains; $f_{SU}$ and $f_{SR}$ are the corresponding carrier frequencies; $d^{SU}_k$, $d^{SR}_{m}$, and $d^{RU}_{m,k}$ denote the satellite-to-user, satellite-to-IRS, and IRS-to-user link distances; $\epsilon^{SU}_k$, $\epsilon^{SR}_{m}$, and $\epsilon^{RU}_{m,k}$ are the rain-attenuation coefficients modeled as lognormal random variables per the ITU-R standard; $\Omega_{sf}$ is the average shadow-fading power gain of the IRS-to-user link; $\alpha$ is the path-loss exponent; $d_0$ is the reference distance; and $\tilde{g}^{sf}_{m,k} \sim \mathcal{CN}(0,1)$ represents the small-scale Rayleigh fading component.
+Each channel coefficient is complex, with a random propagation phase uniformly distributed on $[0, 2\pi)$ which is tracked via Doppler compensation at the satellite.
+
+Since the satellite acquires only an imperfect estimate of each channel coefficient, the estimated channel $\hat{g}$ and the true channel $g$ are related by a multiplicative error model:
+\begin{equation}
+    \hat{g} = g + \Delta g,
+    \qquad
+    \Delta g = \kappa \lvert g \rvert \varepsilon,
+    \qquad
+    \varepsilon \sim \mathcal{CN}(0,1),
+\end{equation}
+where $\kappa \geq 0$ is the relative error coefficient applied uniformly to all three links.
+This yields the estimated channels $\hat{g}^{SU}_k$, $\hat{g}^{SR}_{m}$, and $\hat{g}^{RU}_{m,k}$, which are used for all precoding and resource allocation design.
+The RL agent, however, observes the true channel magnitudes $\lvert g \rvert$ as part of its state, reflecting the assumption that the environment itself operates on the true physical channels while the designed policy must cope with the estimation error present in the system's decision inputs.
+
+Since a single-antenna satellite is considered, spatial beamforming is not performed. 
+Instead, each RSMA stream is assigned a scalar precoding coefficient. 
+For each active group $g \in \mathcal{G}$, let $w_{c,g} \in \mathbb{C}$ denote the scalar precoding coefficient for the group-specific common stream $s_{c,g}$. 
+Similarly, let $w_{k,p,g} \in \mathbb{C}$ denote the scalar precoding coefficient for the private stream $s_{k,p,g}$ of user $k \in \mathcal{K}_g$.
+Based on the grouped RSMA transmission structure, the transmitted signal at the satellite is expressed as
+\begin{equation}
+    x
+    =
+    \sum_{g \in \mathcal{G}} w_{c,g}s_{c,g}
+    +
+    \sum_{g \in \mathcal{G}}\sum_{k \in \mathcal{K}_g} w_{k,p,g}s_{k,p,g}.
+\end{equation}
+where $s_{c,g}$ is the common stream intended for all users in group $\mathcal{K}_g$, and $s_{k,p,g}$ is the private stream intended only for user $k$ in group $g$.
+The scalar precoding coefficients are constrained by the maximum transmit power of the satellite, i.e.,
+$\sum_{g \in \mathcal{G}} |w_{c,g}|^2 + \sum_{g \in \mathcal{G}}\sum_{k \in \mathcal{K}_g} |w_{k,p,g}|^2 \leq P_S$,
+where $P_S$ denotes the maximum transmit power of the satellite.
+
+Fig.~\ref{fig:rsma_encoder} illustrates the RSMA Encoder structure for a representative group $g \in \mathcal{G}$, which consists of three sequential stages.
+In the \emph{Rate Splitting} stage, each user message $s_{k,g}$ is decomposed into a common sub-message $s_{k,c,g}$ and a private sub-message $s_{k,p,g}$.
+The common sub-messages of all $|\mathcal{K}_g|$ users are jointly encoded into a single group codeword $s_{c,g}$, while each private sub-message remains exclusive to its intended user.
+In the \emph{Scalar Precoding} stage, the common codeword $s_{c,g}$ is scaled by the shared coefficient $w_{c,g}$, and each private stream $s_{k,p,g}$ is independently scaled by the user-specific coefficient $w_{k,p,g}$.
+Finally, all precoded streams are superimposed in the \emph{Precoded Streams} stage to form the group signal $x_g$.
+The same encoder structure is applied independently to every active group $g \in \mathcal{G}$, and the total transmitted signal aggregates all group contributions: $x = \sum_{g \in \mathcal{G}} x_g$.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.65\linewidth]{images/RSMA_Encoder}
+    \caption{RSMA Encoder structure for a representative group $g \in \mathcal{G}$, comprising three stages:
+    \emph{Rate Splitting} --- each user message $s_{k,g}$ is decomposed into a common sub-message $s_{k,c,g}$ (jointly encoded into the shared codeword $s_{c,g}$) and a private sub-message $s_{k,p,g}$;
+    \emph{Scalar Precoding} --- $s_{c,g}$ and each $s_{k,p,g}$ are independently scaled by $w_{c,g}$ and $w_{k,p,g}$, respectively;
+    \emph{Precoded Streams} --- all weighted streams are superimposed to form the group signal $x_g$.
+    The overall transmitted signal is $x = \sum_{g \in \mathcal{G}} x_g$.}
+    \label{fig:rsma_encoder}
+\end{figure}
+
+After receiving $y_k$, each user first decodes its group-specific common stream and then decodes its private stream by applying SIC.
+For user $k \in \mathcal{K}_g$, the SINRs for decoding the common stream $s_{c,g}$ and the private stream $s_{k,p,g}$ are respectively given by
+\begin{equation}
+\begin{aligned}
+    \gamma_{k,c,g}
+    &=
+    \frac{
+        |h_k w_{c,g}|^2
+    }{
+        \sum_{\substack{g' \in \mathcal{G} \\ g' \neq g}}
+        |h_k w_{c,g'}|^2
+        +
+        \sum_{g' \in \mathcal{G}}\sum_{j \in \mathcal{K}_{g'}}
+        |h_k w_{j,p,g'}|^2
+        +
+        \sigma^2
+    },
+    \\[2mm]
+    \gamma_{k,p,g}
+    &=
+    \frac{
+        |h_k w_{k,p,g}|^2
+    }{
+        \sum_{g' \in \mathcal{G}}\sum_{\substack{j \in \mathcal{K}_{g'} \\ j \neq k}}
+        |h_k w_{j,p,g'}|^2
+        +
+        \sum_{\substack{g' \in \mathcal{G} \\ g' \neq g}}
+        |h_k w_{c,g'}|^2
+        +
+        \sigma^2
+    }.
+\end{aligned}
+\end{equation}
+Since the common stream $s_{c,g}$ is intended for all users in group $\mathcal{K}_g$, it must be successfully decoded by every user in that group. 
+Therefore, the achievable common rate of group $g$ is limited by the user with the lowest common-stream decoding rate. 
+For user $k \in \mathcal{K}_g$, the common-stream rate is given by
+\begin{equation}
+    R_{k,c,g}
+    =
+    \min_{k \in \mathcal{K}_g} \{R_{1,c,g}, R_{2,c,g}, \ldots, R_{K_g,c,g}\}
+\end{equation}
+
+Let $C_{k,g}$ denote the portion of the group common rate allocated to user $k \in \mathcal{K}_g$. 
+The common-rate allocation must satisfy
+\begin{equation}
+    \sum_{k \in \mathcal{K}_g} C_{k,g}
+    =
+    R_{c,g},
+    \quad
+    C_{k,g} \geq 0.
+\end{equation}
+
+After decoding and removing the common stream, user $k$ decodes its private stream, achieving rate $R_{k,p,g} = \log_2(1 + \gamma_{k,p,g})$.
+The total achievable rate of user $k$ is thus $R_k = R_{k,p,g} + C_{k,g}$, and the system sum-rate is
+\begin{equation}
+    R_{\mathrm{tot}}
+    =
+    \sum_{k \in \mathcal{K}}
+    R_k
+    =
+    \sum_{g \in \mathcal{G}} R_{c,g}
+    +
+    \sum_{g \in \mathcal{G}}\sum_{k \in \mathcal{K}_g} R_{k,p,g}.
+\end{equation}
+
+\subsubsection{Optimizating Problem}
+
+Based on the above system model, the objective of this work is to maximize the achievable system sum-rate by jointly optimizing the IRS-selection variable, scalar precoding coefficients, IRS phase-shift matrices, and common-rate allocation. 
+Specifically, the optimization variables are given by
+$\boldsymbol{\varphi}=\{\varphi_k\}_{k\in\mathcal{K}}$, 
+$\mathbf{w}=\{w_{c,g},w_{k,p,g}\}_{g\in\mathcal{G},k\in\mathcal{K}_g}$,
+$\boldsymbol{\Phi}=\{\boldsymbol{\Phi}_m\}_{m\in\mathcal{M}}$, 
+and $\mathbf{C}=\{C_{k,g}\}_{k\in\mathcal{K}_g,g\in\mathcal{G}}$. 
+The sum-rate maximization problem is formulated as
+\begin{subequations}\label{eq:P0}
+\begin{align}
+    \text{(P0):} \quad
+    \max_{\boldsymbol{\varphi},\mathbf{w},\boldsymbol{\Phi},\mathbf{C}}
+    \quad
+    &
+    R_{\mathrm{tot}}
+    \label{eq:P0_objective}
+    \\
+    \text{s.t.} \quad
+    &
+    \varphi_k \in \{0,1,\ldots,M\},
+    \quad \forall k \in \mathcal{K},
+    \label{eq:P0_selection}
+    \\[1mm]
+    &
+    \sum_{g \in \mathcal{G}} |w_{c,g}|^2
+    +
+    \sum_{g \in \mathcal{G}}\sum_{k \in \mathcal{K}_g} |w_{k,p,g}|^2
+    \leq P_S,
+    \label{eq:P0_power}
+    \\[1mm]
+    &
+    \theta_{m,n} \in \mathcal{Q}_{\theta},
+    \quad \forall m \in \mathcal{M}, \forall n \in \mathcal{N},
+    \label{eq:P0_phase}
+    \\[1mm]
+    &
+    \boldsymbol{\Phi}_m
+    =
+    \operatorname{diag}
+    \left(
+    e^{j\theta_{m,1}},
+    e^{j\theta_{m,2}},
+    \ldots,
+    e^{j\theta_{m,N}}
+    \right),
+    \quad \forall m \in \mathcal{M},
+    \label{eq:P0_phi}
+    \\[1mm]
+    &
+    \sum_{k \in \mathcal{K}_g} C_{k,g}
+    = R_{c,g},
+    \quad \forall g \in \mathcal{G},
+    \label{eq:P0_common_rate}
+    \\[1mm]
+    &
+    C_{k,g} \geq 0,
+    \quad \forall k \in \mathcal{K}_g,\ \forall g \in \mathcal{G},
+    \label{eq:P0_nonnegative}
+    \\[1mm]
+    &
+    R_k \geq R_k^{\min},
+    \quad \forall k \in \mathcal{K}.
+    \label{eq:P0_qos}
+\end{align}
+\end{subequations}
+
+In the above problem (P0),~\eqref{eq:P0_selection} limits the values of the IRS-selection variables, which determine whether each user is served through the direct satellite-to-user link or one of the available IRS-assisted links.~\eqref{eq:P0_power} guarantees that the total transmit power of the satellite does not exceed the maximum power budget.~\eqref{eq:P0_phase} restricts the phase shift of each IRS reflecting element to the discrete quantized phase-angle set, while constraint~\eqref{eq:P0_phi} defines the corresponding passive IRS phase-shift matrix. 
+Constraint~\eqref{eq:P0_common_rate} requires that the allocated common rates fully exhaust the group common rate, i.e., the entire decodable common rate of each group is distributed among its members with no waste. Constraint~\eqref{eq:P0_nonnegative} ensures non-negativity of the allocated common rates, and constraint~\eqref{eq:P0_qos} enforces the per-user minimum QoS requirement.  
+
+\section{Proposed HQC-HAC Framework}
+\label{sec:framework}
+
+\subsection{Overall Framework}
+
+Problem~(P0) is a mixed-integer non-convex program. The IRS-selection variables $\boldsymbol{\varphi}$ are discrete with a combinatorial feasible set of size $(M+1)^K$; the per-element phase shifts $\theta_{m,n}$ are restricted to the quantised set $\mathcal{Q}_\theta$; and these discrete choices are tightly coupled with the continuous precoding powers $\mathbf{w}$ and common-rate shares $\mathbf{C}$ through the SINR expressions. The objective $R_{\mathrm{tot}}$ is non-concave, since each user's rate depends on the ratio of its effective channel gain to the aggregate cross-stream interference, and the per-user QoS constraints~\eqref{eq:P0_qos} couple all four variable blocks simultaneously. Consequently, (P0) is NP-hard and admits no closed-form solution. Conventional model-based methods --- semidefinite relaxation, alternating optimization, manifold optimization, or branch-and-bound --- scale poorly with $K$, $M$, and $N$, must be re-solved from scratch for every channel realization, and presuppose accurate instantaneous CSI that is unavailable under the imperfect-CSI and user-mobility conditions considered here. These limitations motivate a model-free reinforcement learning (RL) formulation: rather than re-solving (P0) at every coherence interval, we cast the sequential resource-allocation task as a Markov decision process and learn a policy that maps the observed system state directly to the joint action, amortising the optimization cost into a trained network that adapts online to channel dynamics and estimation error.
+
+The four decision variables of (P0) exhibit a strict sequential dependency: the assignment $\boldsymbol{\varphi}$ determines which IRS panels are active and thereby fixes the number of active groups $G$ and the dimension of the common-power vector $\mathbf{w}_c$; the active set governs the effective channels that underpin the phase-shift design $\boldsymbol{\Phi}$; the resulting channel gains shape the power-allocation landscape $(\mathbf{w}_p,\mathbf{w}_c)$; and the allocated powers finally delimit the feasible common-rate split $\mathbf{C}$. A flat RL agent acting over the entire joint, and mixed discrete--continuous, action space would face an action dimension that explodes with $K$ and $M$ and would have to learn this coupling implicitly. We instead adopt a hierarchical actor--critic (HAC) decomposition that mirrors the natural ordering of the variables: a high-level actor commits to the discrete assignment, and three low-level actors resolve the continuous variables in sequence, each conditioned on the decisions made upstream.
+
+Even after this decomposition, the high-level assignment $\boldsymbol{\varphi}\in\{0,1,\ldots,M\}^K$ remains the principal source of difficulty: its search space of size $(M+1)^K$ is non-differentiable and grows exponentially in both $M$ and $K$, so a classical policy head would require a rapidly expanding parameter budget to represent a sufficiently expressive distribution over candidate assignments. We therefore place a variational quantum circuit (VQC) at the top of the hierarchy. By preparing an $n_q$-qubit state that spans a $2^{n_q}$-dimensional Hilbert space, the VQC represents rich, correlated distributions over the exponentially large assignment space using only $\mathcal{O}(L\,n_q)$ trainable parameters. Its entangling layers --- a nearest-neighbor CZ chain augmented with cross-block bridges coupling the user-qubit and IRS-qubit registers --- further inject an inductive bias matched to the user--IRS coupling that the assignment must capture. Once $\boldsymbol{\varphi}$ is fixed, the remaining sub-problems are smooth, continuous, and low-dimensional, and are handled efficiently by classical multi-layer perceptrons (MLPs); reserving the quantum circuit for the combinatorial bottleneck is precisely what renders the framework \emph{hybrid} quantum--classical.
+
+A direct quantum encoding of the raw state is, however, infeasible. The environment state $\mathbf{s}_t\in\mathbb{R}^{d_s}$ has a dimension that scales with the number of reflecting elements $N$ and far exceeds the register size of near-term quantum hardware; moreover, much of it --- such as the full per-element phase configuration --- is only weakly informative for the assignment decision. Encoding $\mathbf{s}_t$ qubit-by-qubit would thus demand an impractically large register. We bridge this gap with an autoencoder (AE) that compresses the state into a compact latent vector $\mathbf{z}_t\in\mathbb{R}^{2n_q}$, exactly matching the encoding capacity of the $n_q$-qubit circuit while preserving the information most relevant to link assignment. A reconstruction loss regularizes this latent space. The AE is given a brief reconstruction-only warm-up so that its latent is informative from the outset. Thereafter, it is trained jointly and end-to-end with the policy, rather than being frozen as an inference-only feature extractor. This ensures the representation remains task-aware and co-adapts with the quantum actor throughout learning.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{images/HQC-HAC}
+    \caption{Overall HQC-HAC hierarchical actor-critic framework. The quantum actor (top level) resolves the discrete IRS-user assignment $\boldsymbol{\varphi}$ via a VQC, while three sequential classical sub-actors --- Phase MLP, Power MLP, and Common-Rate MLP --- optimize the remaining continuous variables conditioned on the chosen assignment. A shared classical critic provides state-value estimates for computing advantages across all actors.}
+    \label{fig:framework}
+\end{figure}
+
+Fig.~\ref{fig:framework} illustrates the full architecture. At each decision step~$t$, the global state vector is constructed from the raw channel coefficients, the per-IRS reflection efficiencies, a circular encoding of the current IRS phase configuration, and the current assignment:
+\begin{equation}
+\mathbf{s}_t
+=
+\bigl[
+  \operatorname{Re}(\mathbf{g}^{SR}),\;
+  \operatorname{Im}(\mathbf{g}^{SR}),\;
+  \operatorname{Re}(\mathbf{G}^{RU}),\;
+  \operatorname{Im}(\mathbf{G}^{RU}),\;
+  \operatorname{Re}(\mathbf{g}^{SU}),\;
+  \operatorname{Im}(\mathbf{g}^{SU}),\;
+  \boldsymbol{\beta},\;
+  \cos\boldsymbol{\Theta},\;
+  \sin\boldsymbol{\Theta},\;
+  \boldsymbol{\varphi}
+\bigr]
+\in \mathbb{R}^{d_s},
+\label{eq:state}
+\end{equation}
+where $\boldsymbol{\Theta} \in \mathbb{R}^{M \times N}$ collects the current phase angles, $\boldsymbol{\beta} \in \mathbb{R}^{M}$ is the vector of per-IRS reflection efficiencies, and the total state dimension is $d_s = M(3+2K+2N)+3K$. The circular encoding $(\cos\boldsymbol{\Theta},\sin\boldsymbol{\Theta})$ ensures continuity across the $2\pi$ phase boundary.
+
+Following the data flow in Fig.~\ref{fig:framework}, the latent $\mathbf{z}_t$ produced by the AE encoder is mapped by the VQC to a measurement vector, which the quantum actor's output head converts into a categorical distribution over candidate assignments; sampling this distribution yields $\boldsymbol{\varphi}$. Conditioned on $\boldsymbol{\varphi}$, the three low-level sub-actors act in sequence: the Phase MLP produces the quantised phase indices $\boldsymbol{\theta}_{\mathrm{idx}}$ (and hence $\boldsymbol{\Phi}$), the Power MLP allocates the private and common powers $(\mathbf{w}_p,\mathbf{w}_c)$, and the Common-Rate MLP distributes the group common rates $\mathbf{C}$ among users. The resulting joint action $(\boldsymbol{\varphi},\boldsymbol{\Phi},\mathbf{w},\mathbf{C})$ is applied to the environment, which returns the next state and a reward equal to the system sum-rate minus a soft QoS-violation penalty. A single shared critic evaluates the state $\mathbf{s}_t$ and supplies the advantage signal used to update all four actors.
+
+The framework is trained as an actor--critic system optimized by proximal policy optimization (PPO). The shared state-value critic $V(\mathbf{s}_t;\boldsymbol{\psi})$ provides a low-variance, action-independent baseline for advantage estimation, which is essential here for two reasons: the quantum policy gradients, estimated by simultaneous perturbation stochastic approximation (SPSA), are inherently noisy, and the reward is itself stochastic under per-step noise and imperfect CSI; subtracting a state-only baseline reduces this variance without introducing bias and avoids the self-cancellation that a state--action baseline would incur. PPO is adopted in preference to vanilla policy gradient because its clipped surrogate objective bounds the magnitude of each update, yielding trust-region-like stability that is critical in a hierarchical architecture: a large step in the high-level assignment would shift the input distribution seen by every downstream actor, and, combined with noisy quantum gradients, could readily destabilise training. The importance-sampling ratio underlying PPO additionally permits several optimization epochs over each batch of collected rollouts, improving sample efficiency --- a valuable property given the cost of quantum-circuit evaluations. Entropy regularization with an annealing schedule is applied across all actors to sustain exploration over the combinatorial assignment space and to prevent premature convergence, while the per-user QoS requirement~\eqref{eq:P0_qos} is relaxed into a soft quadratic penalty added to the reward so that demand shortfalls are penalized proportionally without blocking gradient flow. The critic is updated by temporal-difference learning against a frozen target network, and detailed descriptions of all components --- including the AE, the VQC, and the training procedure --- are provided in Sections~\ref{sec:ae}--\ref{sec:training}.
+
+\subsection{Autoencoder-Based Latent State Representation}
+\label{sec:ae}
+
+Directly encoding the raw environment state $\mathbf{s}_t \in \mathbb{R}^{d_s}$ into a quantum register is impractical: the state dimension $d_s = M(3+2K+2N)+3K$ grows with the number of IRS elements $N$, which is unrelated to the IRS-user assignment decision and introduces irrelevant information into the quantum encoding. Instead, the quantum actor operates on a compact \emph{affinity feature vector} $\mathbf{a}_t \in \mathbb{R}^{d_{aff}}$ that retains only the information pertinent to link assignment, where $d_{aff} = K(M+2) + 2M$. The affinity vector is structured as
+\begin{equation}
+    \mathbf{a}_t
+    =
+    \bigl[
+      \underbrace{a_{k,m}}_{\substack{K \times M \\ \text{IRS-user} \\ \text{affinity}}},\;
+      \underbrace{D_k}_{K},\;
+      \underbrace{|\hat{g}^{SU}_k|}_{K},\;
+      \underbrace{q_m,\; p_m}_{2M}
+    \bigr],
+    \label{eq:affinity}
+\end{equation}
+where $a_{k,m} = |\hat{g}^{SR}_m| \cdot |\hat{g}^{RU}_{m,k}|$ is the end-to-end IRS path quality for user $k$ via IRS $m$, $D_k$ is the per-user QoS demand, $|\hat{g}^{SU}_k|$ is the direct satellite-to-user link quality, $q_m = \frac{1}{K}\sum_{k=1}^{K} a_{k,m}$ is the mean affinity of IRS $m$ across all users, and $p_m = |\hat{g}^{SR}_m|^2$ is the received satellite-to-IRS power. Prior to encoding, a group-wise layer normalization is applied to the affinity, direct-link, and IRS feature blocks, while the demand block $D_k$ is kept unnormalized to preserve the absolute rate-scale information it carries.
+
+A dual-branch encoder then compresses $\mathbf{a}_t$ into the latent vector $\mathbf{z}_t \in \mathbb{R}^{2n_q}$, where $n_q$ is the number of qubits. As illustrated in Fig.~\ref{fig:ae_process}, the encoder consists of two parallel branches that process IRS-level and user-level information separately before concatenation. The \emph{IRS branch} processes the IRS summary statistics $[q_m, p_m]_{m=1}^{M} \in \mathbb{R}^{2M}$ through a two-layer MLP,
+\begin{equation}
+    \mathbf{z}_{IRS}
+    =
+    \mathbf{W}_{2}^{IRS}
+    \,\sigma\!\bigl(
+      \mathbf{W}_{1}^{IRS}[q_1,p_1,\ldots,q_M,p_M]^\top
+      + \mathbf{b}_{1}^{IRS}
+    \bigr)
+    + \mathbf{b}_{2}^{IRS}
+    \in \mathbb{R}^{2M},
+\end{equation}
+where $\mathbf{W}_{1}^{IRS} \in \mathbb{R}^{16 \times 2M}$, $\mathbf{W}_{2}^{IRS} \in \mathbb{R}^{2M \times 16}$, and $\sigma(\cdot)$ denotes the ReLU activation. The \emph{user branch} applies a shared micro-encoder $\phi$ independently to each user $k$,
+\begin{equation}
+    \mathbf{z}_k
+    =
+    \mathbf{W}_{2}^{U}
+    \,\sigma\!\bigl(
+      \mathbf{W}_{1}^{U}[a_{k,1},\ldots,a_{k,M},D_k,|\hat{g}^{SU}_k|]^\top
+      + \mathbf{b}_{1}^{U}
+    \bigr)
+    + \mathbf{b}_{2}^{U}
+    \in \mathbb{R}^{2},
+    \quad \forall k \in \mathcal{K},
+\end{equation}
+where $\mathbf{W}_{1}^{U} \in \mathbb{R}^{8 \times (M+2)}$ and $\mathbf{W}_{2}^{U} \in \mathbb{R}^{2 \times 8}$ are shared across all $K$ users. The $K$ per-user embeddings are stacked into $\mathbf{z}_{stack} = [\mathbf{z}_1^\top, \ldots, \mathbf{z}_K^\top]^\top \in \mathbb{R}^{2K}$ and projected to the user-block latent subspace by a linear map $\mathbf{P} \in \mathbb{R}^{2(n_q - M) \times 2K}$, giving $\mathbf{z}_{user} = \mathbf{P}\,\mathbf{z}_{stack} \in \mathbb{R}^{2(n_q - M)}$. The final latent vector concatenates the two branches, $\mathbf{z}_t = [\mathbf{z}_{user} \,\|\, \mathbf{z}_{IRS}] \in \mathbb{R}^{2n_q}$, so that the first $2(n_q - M)$ dimensions carry user-assignment information and the last $2M$ dimensions carry IRS-quality information, matching the qubit partition of the VQC.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.72\linewidth]{images/AE_Process}
+    \caption{Dual-branch autoencoder architecture for latent state compression.
+    The encoder (top path) processes IRS summary features $[q_m, p_m]$ and per-user affinity features $[a_{k,m}, D_k, |\hat{g}^{SU}_k|]$ through separate branches before concatenating into the latent representation $\mathbf{z}_t \in \mathbb{R}^{2n_q}$, which is forwarded to the quantum actor.
+    The decoder (bottom path, active during training only) reconstructs the input feature vector $\hat{\mathbf{a}}_t$ from $\mathbf{z}_t$ and computes the reconstruction loss $\mathcal{L}_{AE} = \frac{1}{2}\|\hat{\mathbf{a}}_t - \mathbf{a}_t\|^2$ to regularize the latent space.}
+    \label{fig:ae_process}
+\end{figure}
+
+A symmetric decoder mirrors the encoder depth and reconstructs $\hat{\mathbf{a}}_t \in \mathbb{R}^{d_{aff}}$ from $\mathbf{z}_t$, producing the reconstruction loss
+\begin{equation}
+    \mathcal{L}_{AE}
+    =
+    \frac{1}{2}
+    \bigl\|\hat{\mathbf{a}}_t - \mathbf{a}_{\text{norm},t}\bigr\|^2,
+    \label{eq:ae_loss}
+\end{equation}
+where $\mathbf{a}_{\text{norm},t}$ is the group-normalized input. The decoder is used only during training and is discarded at inference time, where solely the encoder and the latent $\mathbf{z}_t$ are forwarded to the VQC.
+
+The autoencoder is trained jointly and end-to-end with the remainder of the framework: the reconstruction loss in~\eqref{eq:ae_loss} is added to the policy objective as an auxiliary regularizer with weight $\alpha_{AE}$, so that the encoder receives gradients from both $\mathcal{L}_{AE}$ and the reinforcement-learning loss back-propagated through the quantum actor. This contrasts with the common practice of training an autoencoder offline and then freezing it as a fixed feature extractor for inference: here the encoder is never frozen, and continues to adapt throughout the reinforcement-learning phase. End-to-end training is preferred for two reasons. First, reconstruction fidelity is not the true objective: a latent optimized solely to reconstruct its input may retain features irrelevant to link assignment while discarding decision-critical ones, whereas end-to-end training lets the policy gradient shape $\mathbf{z}_t$ to be \emph{task-aware}, emphasizing precisely the information that improves the assignment and the resulting sum-rate. Second, the distribution of visited states is non-stationary: as the policy improves, the states it encounters drift, so a frozen latent would become mismatched to the current policy, whereas a jointly trained encoder co-adapts with the evolving policy and the downstream VQC and sub-actors. The reconstruction term is retained throughout because the reinforcement-learning gradient alone can collapse the latent space to a degenerate representation; $\mathcal{L}_{AE}$ thus acts as a structural regularizer that keeps $\mathbf{z}_t$ informative, with $\alpha_{AE}$ trading off representational fidelity against task performance.
+
+To prevent the encoder from lagging behind the faster-adapting policy networks at the start of training, a short reconstruction-only \emph{warm-up} is performed on states collected under a random policy before joint optimization begins. Without this warm-up, a randomly initialized encoder would emit an uninformative latent in the early episodes, effectively feeding noise into the VQC and retarding the initial learning of all downstream actors. The warm-up mitigates this by supplying a sensible starting representation, placing the AE on a comparable footing with the other components. We emphasize that this step is purely an initialization and \emph{not} an offline pre-training of a frozen feature extractor: once joint optimization begins, the encoder is not frozen but continues to be trained together with the policy, so the latent evolves from this reconstruction-faithful starting point into a task-aware representation.
+
+\subsection{Variational Quantum Circuit}
+\label{sec:vqc}
+
+The latent vector $\mathbf{z}_t \in \mathbb{R}^{2n_q}$ from the dual-branch encoder is processed by a variational quantum circuit (VQC) acting on an $n_q$-qubit register, which maps it to a compact feature vector $\hat{\mathbf{o}}_t$. The dimension $2n_q$ supplies one rotation angle per qubit along each of two encoding axes (defined below). By exploiting quantum superposition and entanglement, the VQC represents correlations among the user--IRS affinities using far fewer trainable parameters than a classical network of comparable expressivity.
+
+\subsubsection{Data Encoding}
+
+Before encoding, the latent vector is layer-normalized to stabilise the input range:
+\begin{equation}
+    \tilde{\mathbf{z}}_t = \frac{\mathbf{z}_t - \mu_{z}}{\sigma_{z} + \epsilon},
+    \label{eq:ln_z}
+\end{equation}
+where $\mu_{z}$ and $\sigma_{z}$ are the mean and standard deviation of $\mathbf{z}_t$. The normalized vector is then mapped to per-qubit rotation angles via trainable encoding scales $\boldsymbol{\lambda}_y, \boldsymbol{\lambda}_z \in \mathbb{R}^{n_q}$:
+\begin{equation}
+    \alpha_i = \pi \tanh\!\bigl(\lambda^y_i \cdot \tilde{z}_{2i}\bigr),
+    \qquad
+    \delta_i = \pi \tanh\!\bigl(\lambda^z_i \cdot \tilde{z}_{2i+1}\bigr),
+    \quad i = 0,\ldots,n_q-1.
+    \label{eq:encoding_angles}
+\end{equation}
+The $\tanh$ squashes each angle to $(-\pi, \pi)$, preventing gradient vanishing from over-rotation. The trainable scales $\boldsymbol{\lambda}$ allow the circuit to selectively amplify or suppress each latent dimension's influence on the quantum state, and are optimized jointly with the variational parameters via SPSA (detailed in Section~\ref{sec:training}).
+
+\subsubsection{Circuit Architecture}
+
+As illustrated in Fig.~\ref{fig:vqc}, the register is first placed in a uniform superposition by a layer of Hadamard ($H$) gates, after which $L$ layers are applied, each composed of three blocks built only from single- and two-qubit gates. The \emph{encoding block} $U_E$ applies a pair of single-qubit rotations $R_y(\alpha_i)$ and $R_z(\delta_i)$ to every qubit; two axes are used because an $R_y R_z$ pair can steer a qubit to an arbitrary point on the Bloch sphere, so the $2n_q$ latent components are loaded into the quantum state without loss. The \emph{variational block} $U_L$ applies trainable rotations $R_y(\theta^y_i)$ and $R_z(\theta^z_i)$ on each qubit; these are the free parameters that the policy gradient tunes and, together with the entangler, form a universal layered ansatz. The \emph{entangling block} $U_{\rm ent}$ uses controlled-$Z$ (CZ) gates: a nearest-neighbor CZ chain builds correlations beyond product states, augmented by $M$ cross-block CZ bridges. These bridges are the key problem-specific design choice --- since the latent is partitioned so that its first $2(n_q{-}M)$ components carry user information and its last $2M$ carry IRS information, the bridges let the circuit model the user--IRS coupling that governs the assignment, which a within-block chain alone cannot represent. Finally, $U_E$ is re-applied at the start of every layer (\emph{data re-uploading}); re-injecting $\mathbf{z}_t$ at each depth enlarges the function class the circuit can express and keeps the input information from being washed out by successive entangling layers. The circuit therefore relies solely on the gates $H$, $R_y$, $R_z$, and CZ, which keeps it hardware-efficient.
+
+\begin{figure}[t]
+\centering
+\resizebox{0.95\linewidth}{!}{%
+\begin{quantikz}[row sep=0.4cm, column sep=0.45cm]
+\lstick{$|0\rangle\,q_0$} & \gate{H}
+  & \gate{R_y(\alpha_0)}\gategroup[4,steps=2,style={dashed,rounded corners,fill=purple!10},background]{$U_E(\mathbf{z};\boldsymbol{\lambda})$}
+  & \gate{R_z(\delta_0)} &
+  & \gate{R_y(\theta^{y}_0)}\gategroup[4,steps=2,style={dashed,rounded corners,fill=blue!10},background]{$U_L(\boldsymbol{\theta})$}
+  & \gate{R_z(\theta^{z}_0)} &
+  & \ctrl{1}\gategroup[4,steps=2,style={dashed,rounded corners,fill=orange!18},background]{$U_{\rm ent}$}
+  & \ctrl{3} & \meter{} \rstick{$\langle Z_0\rangle$} \\
+\lstick{$|0\rangle\,q_1$} & \gate{H}
+  & \gate{R_y(\alpha_1)} & \gate{R_z(\delta_1)} &
+  & \gate{R_y(\theta^{y}_1)} & \gate{R_z(\theta^{z}_1)} &
+  & \control{} & \qw & \meter{} \rstick{$\langle Z_1\rangle$} \\
+\lstick{$\vdots$} & \setwiretype{n}\vdots & \vdots & \vdots & & \vdots & \vdots & & \vdots & \vdots & \\
+\lstick{$|0\rangle\,q_{n_q-1}$} & \gate{H}
+  & \gate{R_y(\alpha_{n_q-1})} & \gate{R_z(\delta_{n_q-1})} &
+  & \gate{R_y(\theta^{y}_{n_q-1})} & \gate{R_z(\theta^{z}_{n_q-1})} &
+  & \qw & \control{} & \meter{} \rstick{$\langle Z_{n_q-1}\rangle$}
+\end{quantikz}}
+\caption{Variational quantum circuit (VQC) of the quantum actor, shown for representative qubits $q_0, q_1, \ldots, q_{n_q-1}$.
+After $H^{\otimes n_q}$, each of the $L$ layers applies the encoding block $U_E$ with $\alpha_i = \pi\tanh(\lambda^y_i \tilde{z}_{2i})$ and $\delta_i = \pi\tanh(\lambda^z_i \tilde{z}_{2i+1})$, the variational block $U_L(\boldsymbol{\theta})$, and the entangling block $U_{\rm ent}$ (nearest-neighbor CZ chain plus a cross-block bridge linking the user- and IRS-qubit registers).
+The encoding block is re-applied at each layer (data re-uploading).
+The Pauli expectations $\langle Z_i\rangle$ and $\langle Z_iZ_j\rangle$ form the measurement vector $\hat{\mathbf{o}}_t$.}
+\label{fig:vqc}
+\end{figure}
+
+\subsubsection{Measurement and Post-processing}
+
+The quantum state is read out through the expectation values of single-qubit $Z$ and nearest-neighbor $Z_iZ_{i+1}$ observables,
+\begin{equation}
+    \hat{\mathbf{o}}_t
+    =
+    \bigl[\langle Z_0\rangle,\ldots,\langle Z_{n_q-1}\rangle,\;
+          \langle Z_0 Z_1\rangle,\ldots,\langle Z_{n_q-2} Z_{n_q-1}\rangle\bigr]
+    \in [-1,1]^{N_Q},
+    \quad N_Q = 2n_q-1.
+    \label{eq:observables}
+\end{equation}
+Expectation-value readout is preferred to raw single-shot measurements because it returns a smooth, bounded, real-valued vector that yields stable gradient estimates and keeps the policy output well-conditioned. The single-qubit terms summarize each qubit's marginal state, while the $Z_iZ_{i+1}$ terms expose the pairwise correlations created by the entangling block, giving the policy access to the encoded user--IRS coupling at a cost of only $2n_q-1$ features. These expectations are computed analytically from the statevector during training, for low-variance gradients, and estimated from $S$ measurement shots at inference.
+
+The readout $\hat{\mathbf{o}}_t$ has a fixed length $N_Q$ that does not match the $K(M{+}1)$ logits the assignment requires, and a shallow circuit exposes only a limited set of observables. A classical post-processing head $\xi$ (an MLP with ReLU activations) therefore maps the quantum features to the action space. It first concatenates the readout with the raw latent into $\mathbf{h}_t = [\mathbf{z}_t \,\|\, \hat{\mathbf{o}}_t] \in \mathbb{R}^{2n_q + N_Q}$ as a skip connection, which preserves information that the limited readout may discard, and then outputs a per-user assignment distribution,
+\begin{equation}
+    \boldsymbol{\pi}_k
+    =
+    \mathrm{softmax}\!\Bigl(\xi(\mathbf{h}_t)\bigl[k(M{+}1):(k{+}1)(M{+}1)\bigr]\Bigr)
+    \in \Delta^{M},
+    \quad k \in \mathcal{K},
+    \label{eq:pi_k}
+\end{equation}
+over the $M+1$ choices (the direct link or one of the $M$ IRS panels). The assignment is sampled $\varphi_k \sim \boldsymbol{\pi}_k$ during training and taken greedily, $\varphi_k = \arg\max \boldsymbol{\pi}_k$, at evaluation. The VQC parameters $\{\boldsymbol{\lambda}_y, \boldsymbol{\lambda}_z, \boldsymbol{\theta}^{(1)},\ldots,\boldsymbol{\theta}^{(L)}\}$ are trained by SPSA (Section~\ref{sec:training}), and $\xi$ by back-propagation.
+
+\subsection{Entropy-Regularized Hierarchical Actor-Critic Training}
+\label{sec:training}
+
+The four actors of Section~\ref{sec:framework} are trained together with a single shared critic in an entropy-regularized actor--critic scheme optimized by proximal policy optimization (PPO). The quantum actor and the three classical sub-actors constitute a \emph{joint hierarchical policy} that factorises the composite action, while the critic supplies a common advantage signal that couples their updates toward the shared goal of sum-rate maximization under per-user QoS constraints.
+
+\subsubsection{Markov Decision Process Formulation}
+
+We cast the sequential resource-allocation task as a Markov decision process $(\mathcal{S},\mathcal{A},\mathcal{P},r,\gamma_{\mathrm d})$. The \emph{state} $\mathbf{s}_t$ is the system observation defined in~\eqref{eq:state}, comprising the imperfect channel coefficients, the reflection efficiencies, the current IRS phase configuration, and the current assignment. The \emph{action} is the joint decision produced by the hierarchical policy, $\mathbf{a}_t = (\boldsymbol{\varphi},\,\boldsymbol{\Phi},\,\mathbf{w},\,\mathbf{C})$, where the assignment $\boldsymbol{\varphi}$ is drawn from the quantum actor's distribution~\eqref{eq:pi_k}, and $\boldsymbol{\Phi}$, $\mathbf{w}$, and $\mathbf{C}$ are produced in turn by the phase, power, and common-rate sub-actors conditioned on $\boldsymbol{\varphi}$. Once the action is applied, the environment advances the user positions and channels to yield the next state $\mathbf{s}_{t+1}$.
+
+The \emph{reward} links the optimization objective~\eqref{eq:P0_objective} to the QoS constraint~\eqref{eq:P0_qos} through a soft quadratic penalty,
+\begin{equation}
+    r_t
+    =
+    R_{\mathrm{tot}}
+    \;-\;
+    \lambda_D \sum_{k \in \mathcal{K}}
+    \left(
+      \frac{\max\!\bigl(0,\; R_k^{\min} - R_k\bigr)}{R_k^{\min} + \epsilon_{\mathrm q}}
+    \right)^{\!2},
+    \label{eq:reward}
+\end{equation}
+where $R_k = R_{k,p,g} + C_{k,g}$ is the total achievable rate of user $k$, $\lambda_D>0$ weights the penalty, and $\epsilon_{\mathrm q}$ is a small constant that guards the denominator. The penalty vanishes when every user meets its demand and grows quadratically with the normalized shortfall otherwise, so maximizing $r_t$ steers the policy toward the constrained sum-rate optimum of (P0) without imposing a hard, non-differentiable feasibility boundary. To suppress the variance injected by the per-step noise, $r_t$ is averaged over several independent noise realizations of the same action, and future rewards are discounted by a factor $\gamma_{\mathrm d}\in(0,1)$, distinct from the SINR $\gamma$.
+
+\subsubsection{Learning Objective and Critic}
+
+The hierarchical policy is trained to maximize an entropy-regularized expected return,
+\begin{equation}
+    \mathcal{J}(\boldsymbol{\Theta})
+    =
+    \mathbb{E}\!\left[
+      \sum_{t} \gamma_{\mathrm d}^{\,t}
+      \Bigl( r_t + \beta \sum_{j} H\!\bigl(\pi_j(\cdot\,|\,\mathbf{s}_t)\bigr) \Bigr)
+    \right],
+    \label{eq:objective}
+\end{equation}
+where $\boldsymbol{\Theta}$ collects the parameters of all four actors, $H(\pi_j) = -\sum \pi_j \log \pi_j$ is the entropy of actor $j$'s policy, and $\beta>0$ weights an entropy bonus that sustains exploration over the combinatorial assignment space and prevents premature convergence to a deterministic policy. The coefficient $\beta$ is annealed linearly from $\beta_0$ to a floor $\beta_{\min}$ over the early training phase, so that exploration dominates initially and gradually gives way to exploitation. The reward term of~\eqref{eq:objective} drives the policy toward the constrained sum-rate optimum, while the entropy term keeps the search broad.
+
+Optimizing~\eqref{eq:objective} by policy gradient requires an estimate of how advantageous each action is relative to the current policy; this is supplied by a shared critic. The critic $V(\mathbf{s}_t;\boldsymbol{\psi})$ is an MLP that estimates the state value and acts as a variance-reducing baseline. Its parameters are fitted by temporal-difference regression against a frozen target network $\boldsymbol{\psi}^-$,
+\begin{equation}
+    \mathcal{L}_V(\boldsymbol{\psi})
+    =
+    \bigl(\, r_t + \gamma_{\mathrm d}\, V(\mathbf{s}_{t+1};\boldsymbol{\psi}^-) - V(\mathbf{s}_t;\boldsymbol{\psi}) \,\bigr)^{2},
+    \label{eq:critic_loss}
+\end{equation}
+and the target tracks the online network through a Polyak update $\boldsymbol{\psi}^- \leftarrow \tau\boldsymbol{\psi} + (1-\tau)\boldsymbol{\psi}^-$ with $\tau\ll1$. The advantage shared by all actors is obtained by generalized advantage estimation,
+\begin{equation}
+    \hat{A}_t = \sum_{l\ge 0} (\gamma_{\mathrm d}\lambda_{\mathrm{GAE}})^{l}\,\delta_{t+l},
+    \qquad
+    \delta_t = r_t + \gamma_{\mathrm d}\, V(\mathbf{s}_{t+1}) - V(\mathbf{s}_t),
+    \label{eq:gae}
+\end{equation}
+where $\lambda_{\mathrm{GAE}}\in[0,1]$ trades bias against variance. Conditioning the baseline on the state alone makes $\hat{A}_t$ a low-variance signal common to the whole hierarchy and avoids the gradient self-cancellation of a state--action baseline. Advantages are standardised across each rollout batch before use.
+
+\subsubsection{Policy Optimization via PPO}
+
+Let $j\in\{\varphi,\Phi,\mathbf{w},\mathbf{C}\}$ index the four actors with policies $\pi_j(\cdot\,|\,\mathbf{s}_t;\boldsymbol{\Theta}_j)$, and let $\rho^{j}_t = \pi_j(a^{j}_t|\mathbf{s}_t)/\pi^{j,\mathrm{old}}(a^{j}_t|\mathbf{s}_t)$ denote the importance ratio between the current and behavior policies. Every actor is updated with the clipped PPO surrogate
+\begin{equation}
+    \mathcal{L}^{j}_{\mathrm{PPO}}
+    =
+    \mathbb{E}\Bigl[
+      \min\!\bigl(\rho^{j}_t \hat{A}_t,\;
+      \mathrm{clip}(\rho^{j}_t,\,1-\epsilon_{\mathrm c},\,1+\epsilon_{\mathrm c})\,\hat{A}_t\bigr)
+    \Bigr],
+    \label{eq:ppo}
+\end{equation}
+where $\epsilon_{\mathrm c}$ is the clip range. Clipping bounds each update so that a large change in the high-level assignment cannot abruptly shift the conditioning of the downstream actors, and it permits several optimization epochs over the same batch. Combining the clipped surrogate with the entropy bonus of the objective in~\eqref{eq:objective} and, for the quantum actor, the autoencoder reconstruction loss~\eqref{eq:ae_loss}, the per-actor training objectives become
+\begin{equation}
+\begin{aligned}
+    \mathcal{J}_{\varphi}
+    &= \mathcal{L}^{\varphi}_{\mathrm{PPO}} + \beta\,H(\pi_\varphi) - \alpha_{AE}\,\mathcal{L}_{AE}, \\[1mm]
+    \mathcal{J}_{j}
+    &= \mathcal{L}^{j}_{\mathrm{PPO}} + \beta\,H(\pi_j),
+    \qquad j\in\{\Phi,\mathbf{w},\mathbf{C}\}.
+\end{aligned}
+    \label{eq:actor_obj}
+\end{equation}
+The quantum encoding scales and variational angles $\boldsymbol{\eta}=\{\boldsymbol{\lambda}_y,\boldsymbol{\lambda}_z,\boldsymbol{\theta}\}$ lie inside the circuit and cannot be differentiated by ordinary back-propagation; their gradients are instead estimated by simultaneous perturbation stochastic approximation (SPSA). Whereas the parameter-shift rule evaluates two circuits \emph{per} parameter --- a cost that scales linearly with $\dim(\boldsymbol{\eta})$ --- SPSA perturbs all parameters at once along a single random direction $\boldsymbol{\Delta}$ with $\Delta_i\in\{-1,+1\}$ and estimates each component from one pair of circuit evaluations,
+\begin{equation}
+    \hat{g}_i
+    =
+    \frac{\mathcal{J}_{\varphi}(\boldsymbol{\eta}+c_{\mathrm s}\boldsymbol{\Delta})
+          - \mathcal{J}_{\varphi}(\boldsymbol{\eta}-c_{\mathrm s}\boldsymbol{\Delta})}
+         {2\,c_{\mathrm s}\,\Delta_i},
+    \label{eq:spsa}
+\end{equation}
+where $c_{\mathrm s}$ is a small perturbation step and the estimate is averaged over a few repetitions to reduce its variance. The cost of~\eqref{eq:spsa} is independent of the number of quantum parameters, making each update orders of magnitude cheaper than the parameter-shift rule; the price is a higher-variance gradient, which the critic baseline and the conservative PPO clipping are well placed to absorb. The classical encoder and post-processing head of the quantum actor, all three sub-actors, and the critic are updated by standard back-propagation, and every module uses the Adam optimizer with per-module learning rates and gradient-norm clipping.
+
+\subsubsection{Training Procedure}
+
+Training proceeds through repeated rollout-and-update cycles. \emph{(i)~Rollout:} the current policy is executed for a fixed number of episodes, and each transition $(\mathbf{s}_t,\mathbf{a}_t,r_t,V_t)$ is stored together with the behavior log-probabilities $\log\pi^{j,\mathrm{old}}$ of all four actors. \emph{(ii)~Targets:} the stored values and the next-state bootstrap are used to compute the GAE advantages~\eqref{eq:gae} and the TD targets~\eqref{eq:critic_loss}, after which the advantages are standardised over the batch. \emph{(iii)~Update:} for several epochs the buffer is shuffled into mini-batches and, for each mini-batch, the four actor objectives~\eqref{eq:actor_obj} and the critic loss~\eqref{eq:critic_loss} are evaluated and their parameters updated; the importance ratios in~\eqref{eq:ppo} make these repeated passes both stable and sample-efficient. \emph{(iv)~Anneal:} the target network is Polyak-updated and the entropy coefficient and learning rates are decayed on their schedules. The autoencoder warm-up of Section~\ref{sec:ae} is performed once before this loop begins, and the cycle repeats until convergence. The hyperparameter values used in our experiments are reported in Section~\ref{sec:results}.
+
+\section{Experiment}
+\label{sec:results}
+
+\subsection{Simulation Setup}
+
+We evaluate the proposed HQC-HAC framework on the IRS-assisted grouped RSMA downlink described in Section~\ref{sec:model}. The satellite serves $K$ single-antenna users with the aid of $M$ IRS panels of $N$ reflecting elements each, using a $2$-bit quantised phase set. The three links follow the ITU-R channel model of Section~\ref{sec:model} under imperfect CSI (error coefficient $\kappa$) and per-step noise, and the users move according to the random-walk mobility model. The quantum actor employs an $n_q$-qubit VQC with $2n_q$ latent dimensions, $L$ variational layers, and data re-uploading, and its quantum gradients are estimated by SPSA, while all classical modules are trained by back-propagation; the complete framework is optimized by the entropy-annealed PPO procedure of Section~\ref{sec:training}. Unless otherwise stated, the system, channel, quantum-actor, and training settings are summarized in Table~\ref{tab:hyper}, and all reported results are averaged over multiple random seeds.
+
+\begin{table*}[t]
+\centering
+\caption{Simulation and Training Hyperparameters}
+\label{tab:hyper}
+\renewcommand{\arraystretch}{1.15}
+\small
+\singlespacing
+\begin{tabular}{@{}l l @{\hskip 3em} l l@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Parameter} & \textbf{Value} \\
+\midrule
+\multicolumn{2}{@{}l}{\emph{System, channel, and quantum actor}} & \multicolumn{2}{l}{\emph{Reinforcement learning and training}} \\
+Users $K$ / IRS $M$ / elements $N$ & $5$ / $1$ / $24$ & Discount factor $\gamma_{\mathrm d}$ & $0.95$ \\
+Satellite transmit power $P_S$ & $50$ dBm & GAE parameter $\lambda_{\mathrm{GAE}}$ & $0$ \\
+Carrier frequency $f$ / altitude $h_{SR}$ & $1.58$ GHz / $800$ km & PPO clip $\epsilon_{\mathrm c}$ / epochs & $0.2$ / $6$ \\
+Antenna gains $G_S, G_U$ & $60$ dBi & Rollout episodes / mini-batch & $8$ / $64$ \\
+Noise $n_0$ (mean, variance) & $(-30,\ 10)$ dBW & Entropy $\beta_0 \rightarrow \beta_{\min}$ & $2\times10^{-3} \rightarrow 2\times10^{-4}$ \\
+Rain attenuation ($\mu$, $\sigma^2$) & $(4\ \mathrm{dB},\ 0.1)$ & QoS penalty $\lambda_D$ / guard $\epsilon_{\mathrm q}$ & $3.5$ / $10^{-3}$ \\
+CSI error coefficient $\kappa$ & $0.05$ & Reward noise averaging & $8$ \\
+Phase quantisation bits $B$ & $2$ ($4$ levels) & Critic Polyak rate $\tau$ & $5\times10^{-3}$ \\
+QoS demand $R_k^{\min}$ & $0.1$ bps/Hz & LR (AE $\omega$ / VQC $\boldsymbol{\eta}$ / head $\xi$) & $10^{-4}$ / $10^{-4}$ / $3\times10^{-4}$ \\
+LoS radius / IRS height & $0.45$ km / $20$ m & LR (sub-actors / critic) & $10^{-4}$ / $5\times10^{-4}$ \\
+User speed & $1.5$ m/s & Episodes / steps per episode & $6000$ / $200$ \\
+Qubits $n_q$ / latent dim $2n_q$ & $8$ / $16$ & Optimizer & Adam \\
+Variational layers $L$ & $3$ & & \\
+Data re-uploading & enabled & & \\
+SPSA step $c_{\mathrm s}$ / repetitions & $0.1$ / $4$ & & \\
+Measurement shots $S$ (train / eval) & $1500$ / $3000$ & & \\
+Autoencoder loss weight $\alpha_{AE}$ & $0.5$ & & \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\emph{Scenario.} In each episode, the $M$ IRS panels are deployed on building rooftops within the satellite's line-of-sight (LoS) coverage disk, and the $K$ users are spawned in the same region. A fraction of the users are placed inside building footprints so that their direct satellite link is blocked and can only be restored through an IRS, while the remaining users retain a usable direct link; this models the worst-user bottleneck that the framework must overcome. The users then move according to the random-walk mobility model at $1.5$ m/s, and the three-link channels, rain attenuation, and additive noise are re-sampled at every step following the model of Section~\ref{sec:model}, with the agent observing only the imperfect CSI ($\kappa = 0.05$). Each episode runs for $200$ steps, over which the per-user demand $R_k^{\min}$ must be sustained.
+
+\emph{Training protocol.} The framework is trained for $6000$ episodes following the procedure of Section~\ref{sec:training}. Rollouts are collected over $8$ episodes before each update; advantages and TD targets are then formed, and the four actors and the critic are optimized for $6$ PPO epochs on mini-batches of $64$ transitions. The autoencoder warm-up precedes joint training, and the entropy coefficient and learning rates follow their annealing schedules. Quantum gradients are estimated by SPSA while all classical modules are trained with Adam, and per-module gradient-norm clipping is applied throughout.
+
+\emph{Evaluation protocol and baselines.} For evaluation, the learned policy is executed greedily ($\varphi_k = \arg\max\boldsymbol{\pi}_k$) over a held-out set of episodes with independent random seeds, and the outcomes are averaged to suppress the variance arising from user spawning, mobility, and channel noise. We report the achievable system sum-rate $R_{\mathrm{tot}}$ as the primary metric, together with the per-user QoS-satisfaction rate --- the fraction of users meeting $R_k^{\min}$ --- to confirm constraint compliance. To contextualise the gains, the proposed HQC-HAC is compared against four baselines that share the same grouped-RSMA signal model but differ in the IRS-user assignment policy: (i) a \emph{random} assignment; (ii) a \emph{greedy} assignment that selects, for each user, the link with the strongest instantaneous channel; (iii) a \emph{direct-only} scheme that disables the IRS and serves all users through the satellite link; and (iv) an \emph{all-IRS} scheme that routes every user through an IRS. The corresponding numerical results are presented in the following subsection.
+
+\subsection{Performance Analysis}
+
+
+
+
+
+
+
+\section{Discussion}
+\label{sec:discussion}
+
+
+
+
+
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{reference}
+
+\end{document}

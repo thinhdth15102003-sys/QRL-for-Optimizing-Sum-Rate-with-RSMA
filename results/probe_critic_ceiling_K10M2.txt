@@ -1,0 +1,119 @@
+==============================================================================
+  CRITIC ALEATORIC-CEILING PROBE  ·  Tier-1 diagnostic
+==============================================================================
+  Generated: 2026-05-31 06:07:28
+
+HOW TO READ
+------------------------------------------------------------------------------
+  ceiling_explVar(V(s)) = 1 − E[Var(return | s, π)] / Var(return)
+    No critic — however well-tuned — can exceed this.
+  ⚠ CAVEAT: variance is over BOTH env stochasticity AND policy
+    stochasticity (action sampling).  For a random policy the
+    ceiling is dominated by ACTION variance; for a trained policy
+    (lower entropy) the ceiling should be HIGHER.
+    → Always run BOTH a random and a checkpoint scenario.
+
+  Compare to observed explVar in training_log.txt:
+    if observed ≈ ceiling → env+policy-bound, accept noisy critic.
+    if observed << ceiling → pipeline/theory fixes can still help.
+
+  Per-source ablation interpretation:
+    Per-STEP: only n0 acts within a step (others affect future steps).
+    H-step RETURN: 'only_X' = ONLY source X enabled, others disabled.
+      → σ_intra(only_X) − σ_intra(all_off) ≈ contribution of source X.
+      'all_off' is NOT zero because policy stochasticity remains.
+
+==============================================================================
+  SCENARIO: random_R0.20  ·  K=10 M=2 R_LoS=0.20  ·  reward_noise_avg=16  κ=0.05
+==============================================================================
+  cross-state  reward:  μ=-1.523  σ=1.835  (n=200)
+  cross-state  return:  μ=-9.888  σ=4.889  H=10
+
+  ── per-STEP aleatoric (reward|s,a, full noise) ──
+    σ_intra: mean=0.125  med=0.133  p25=0.079  p75=0.164  max=0.281
+    aleatoric_fraction = 0.005
+    ceiling explVar(reward) ≈ +0.995
+
+  ── per-RETURN aleatoric (return_H|s,π, full noise) ⭐ ──
+    σ_intra: mean=3.630  med=3.506  p25=3.225  p75=4.108
+    aleatoric_fraction = 0.551
+    ⭐ CEILING explVar(V(s)) ≈ +0.449
+
+  ── per-source ablation (per-STEP σ — only n0 acts per-step) ──
+    name                       σ_intra   fraction   ceiling
+    all_off                      0.000    0.000    +1.000
+    only_n0                      0.132    0.005    +0.995
+    only_csi_kappa               0.000    0.000    +1.000
+    only_rain                    0.000    0.000    +1.000
+    only_mobility                0.000    0.000    +1.000
+    only_channel_resample        0.000    0.000    +1.000
+    full_noise                   0.132    0.005    +0.995
+
+  ── per-source ablation (H-step RETURN σ ⭐ — meaningful for V(s)) ──
+    name                       σ_intra_ret  fraction   ceiling
+    all_off                        3.893    0.634    +0.366
+    only_n0                        3.886    0.632    +0.368
+    only_csi_kappa                 3.607    0.544    +0.456
+    only_rain                      3.945    0.651    +0.349
+    only_mobility                  3.940    0.649    +0.351
+    only_channel_resample          4.071    0.693    +0.307
+    full_noise                     3.539    0.524    +0.476
+
+  ── action-conditional variance ──
+    σ(reward|s, varying a) mean=1.232
+    ratio σ_action / σ_aleatoric  = 9.85
+    → Q(s,a) MAY help over V(s) (actions swing reward 9.8× env noise)
+
+==============================================================================
+  SCENARIO: ckpt_ep_01000_R0.20  ·  K=10 M=2 R_LoS=0.20  ·  reward_noise_avg=16  κ=0.05
+==============================================================================
+  cross-state  reward:  μ=-1.724  σ=1.433  (n=200)
+  cross-state  return:  μ=-11.362  σ=6.326  H=10
+
+  ── per-STEP aleatoric (reward|s,a, full noise) ──
+    σ_intra: mean=0.127  med=0.122  p25=0.074  p75=0.174  max=0.310
+    aleatoric_fraction = 0.008
+    ceiling explVar(reward) ≈ +0.992
+
+  ── per-RETURN aleatoric (return_H|s,π, full noise) ⭐ ──
+    σ_intra: mean=3.098  med=3.078  p25=2.815  p75=3.501
+    aleatoric_fraction = 0.240
+    ⭐ CEILING explVar(V(s)) ≈ +0.760
+
+  ── per-source ablation (per-STEP σ — only n0 acts per-step) ──
+    name                       σ_intra   fraction   ceiling
+    all_off                      0.000    0.000    +1.000
+    only_n0                      0.099    0.005    +0.995
+    only_csi_kappa               0.000    0.000    +1.000
+    only_rain                    0.000    0.000    +1.000
+    only_mobility                0.000    0.000    +1.000
+    only_channel_resample        0.000    0.000    +1.000
+    full_noise                   0.099    0.005    +0.995
+
+  ── per-source ablation (H-step RETURN σ ⭐ — meaningful for V(s)) ──
+    name                       σ_intra_ret  fraction   ceiling
+    all_off                        1.982    0.098    +0.902
+    only_n0                        2.056    0.106    +0.894
+    only_csi_kappa                 2.413    0.146    +0.854
+    only_rain                      1.683    0.071    +0.929
+    only_mobility                  2.272    0.129    +0.871
+    only_channel_resample          2.667    0.178    +0.822
+    full_noise                     2.752    0.189    +0.811
+
+  ── action-conditional variance ──
+    σ(reward|s, varying a) mean=1.285
+    ratio σ_action / σ_aleatoric  = 10.08
+    → Q(s,a) MAY help over V(s) (actions swing reward 10.1× env noise)
+
+==============================================================================
+  CROSS-SCENARIO SUMMARY  ·  ⭐ ceiling explVar(V(s))
+==============================================================================
+  scenario                  R_LoS   ceiling(V)   σ_return
+  random_R0.20              0.20   +0.449      4.889
+  ckpt_ep_01000_R0.20       0.20   +0.760      6.326
+
+  Compare to observed mean explVar from training_log.txt for result_5:
+  ≈ 0.40 (wobble 0.02-0.69).  Interpretation:
+    ceiling 0.6+ → critic NOT at ceiling; pipeline/theory still has room.
+    ceiling 0.3-0.5 → critic near ceiling; env-bound, accept noisy V.
+    ceiling <0.3 → env aleatoric dominates; switch tactics entirely.

@@ -1,0 +1,111 @@
+================================================================================
+  TRAINING CASE 1  ·  K=5, M=1  ·  hyperparameter theo từng ramp R_LoS
+================================================================================
+  Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
+  File này: hyper ĐÃ DÙNG cho Case 1 theo từng ramp 0.2→0.5, + bài học thực tế
+  (result_1→11) và "set thế này → ra sao".
+  Cập nhật lần cuối: 2026-05-29
+--------------------------------------------------------------------------------
+
+# ── CẤU HÌNH CASE 1 (params.py ACTIVE CASE) ─────────────────────────────────
+K=5, M=1, P_S_dBm=50, n_qubits=8, n_latent=16.   d_aff = K*(M+2)+2M = 17.
+Hidden dims (đủ dùng cho Case 1):
+  n_hidden_ae=[32], n_hidden_post=[256,128], n_hidden_phase=[64,128,256,128],
+  n_hidden_power=[64,128,64], n_hidden_ck=[64,128,64,32], critic_hidden=[512,256,128,64].
+
+# ── BỘ HYPER ỔN ĐỊNH ĐÃ HỘI TỤ (state-of-art của Case 1, dùng từ result_9+) ──
+gae_lambda=0.9             # BẮT BUỘC. gae=0 gây collapse (xem ramp 0.45 dưới).
+critic_target_tau=0.02     # (từ 0.005) re-calibrate nhanh khi λ_D/R_LoS đổi.
+beta_entropy=0.001         # THẤP khi resume policy tốt (β cao gây entropy-domination).
+beta_entropy_min=0.0003
+beta_entropy_anneal_end=0.1
+n_rollout_episodes=12
+lr_decay_start=0.2, lr_min_frac=0.25
+spsa_n_reps=4              # Case 1 (nq=8) tạm ổn; λ vẫn hơi đóng băng (xem chú ý).
+critic_warmup_episodes=16, critic_warmup_epochs=50
+reward_noise_avg=8, D_k_bps_hz=0.1, user_free_radius_frac=0.4
+lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất per-ramp).
+
+
+================================================================================
+  HYPER THEO TỪNG RAMP R_LoS  (+ bài học)
+================================================================================
+
+── R_LoS = 0.2 ──────────────────────────────────────────────────────────────
+  Runs: result_1 (λ_D=2, orphan), result_3 (λ_D=3, GỐC chuỗi). [result_2 = debug 9ep, rác]
+  λ_D: 3.  gae=0 (giai đoạn đầu, chưa biết bài học gae).
+  Kết quả: result_3 dừng sớm ~ep500, QoS ~54% (đang lên thì dừng).
+  Lưu ý: bước dễ nhất, dùng để khởi tạo. AE-pretrain bật (fresh, không resume).
+
+── R_LoS = 0.3 ──────────────────────────────────────────────────────────────
+  Run: result_4 (resume result_3, λ_D=3, gae=0).
+  Kết quả: QoS ~81% — tốt.
+
+── R_LoS = 0.4 ──────────────────────────────────────────────────────────────
+  Runs: result_5 (resume result_4, λ_D=3), result_6 (resume result_5, λ_D=4).
+  result_5: QoS lên ~85% rồi THOÁI HÓA về 63% cuối run (gae=0 → collapse [A]).
+  result_6: λ_D 3→4, QoS ~76%, dừng sớm ~ep400. result_6/best là gốc cho ramp 0.45.
+  Bài học: λ_D=3 hơi thấp ở 0.4; nâng lên 4 giữ QoS tốt hơn.
+
+── R_LoS = 0.45 ─────────────────────────────────────────────────────────────  ★ NHIỀU BÀI HỌC
+  Runs (đều resume từ result_6/best hoặc nhánh của nó):
+   - result_7 (λ_D=3.5, gae=0): PLATEAU ~ep600 QoS~80%, rồi collapse. NHÁNH CHẾT.
+       → λ_D=3.5 quá thấp → reward phẳng (ridge) → plateau [D].
+   - result_8 (λ_D=4.5, gae=0): QoS leo tới ĐỈNH 90% @ep1000 ★ rồi collapse về ~72%.
+       → λ_D=4.5 thoát plateau. Nhưng gae=0 → common-stream sụp (wc70%→24%, Ck→0.46) [A].
+       → BEST CHECKPOINT của giai đoạn này: result_8/checkpoints/ep_01000 (KHÔNG dùng best/).
+   - result_9 (resume result_8/ep1000, λ_D=4.5, gae=0.9): QoS leo tới 93% ★★ (cao nhất!).
+       → gae=0.9 GIỮ + ĐẨY common-stream. NHƯNG bị entropy-dominated (β=0.004, ent/pg phase~1) [C].
+   - result_10 (resume result_9/ep400, cùng config β=0.004): β re-inject ĐÁNH TỤT 93%→88% [C].
+       → bài học: resume policy tốt mà β cao = phá policy.
+  Bài học ramp 0.45 (QUAN TRỌNG):
+   * λ_D=4.5 (không phải 3.5) để thoát plateau ở 0.45.
+   * gae=0.9 là thứ chặn collapse (common-stream).
+   * β phải THẤP (0.001) khi resume — β=0.004 gây entropy-domination, tụt QoS.
+
+── R_LoS = 0.5 ──────────────────────────────────────────────────────────────  (bước cuối)
+  Run: result_11 (resume result_9/ep400, λ_D=4.5, gae=0.9, β=0.001 ĐÃ FIX, anneal=0.1).
+  Kết quả: chạy tốt tới ep254 (QoS~83%, ent/pg phase=0.13 — KHÔNG còn entropy-dominated,
+    critic explVar~0.79) RỒI bị GPU HANG [H] (do Ctrl+Z job cũ giữ GPU). Đã kill, còn
+    checkpoint ep_200. → tiếp tục: resume từ result_11/checkpoints/ep_00200.
+  Lưu ý: feasibility probe ở 0.5 — kiểm "Servable %" để xác nhận λ_D=4.5 còn an toàn.
+
+
+================================================================================
+  LINEAGE (chuỗi sạch để phân tích)  —  result_3→4→5→6→8→9→(10)→11
+================================================================================
+  Loại khỏi phân tích: result_1 (orphan), result_2 (debug 9ep), result_7 (nhánh chết),
+  result_10 (bị β đánh tụt, đã thay bằng cách fix β ở result_11).
+  best model toàn Case 1 cho tới giờ: vùng result_9 (QoS 93% @0.45) và result_11 (@0.5).
+  NHỚ: chọn checkpoint theo QoS, KHÔNG theo thư mục best/.
+
+
+================================================================================
+  HYPER CẦN CHÚ Ý Ở CASE 1  (set thế nào → ra sao)
+================================================================================
+  - lambda_D: knob per-ramp quan trọng nhất. Thấp → plateau (reward phẳng) [D].
+    Cao quá → reward âm sâu nếu QoS chưa đạt + phạt user bất khả thi [I]. Sweet spot
+    ở 0.45 là 4.5. Re-check feasibility mỗi ramp.
+  - gae_lambda: 0 → collapse (common-stream xói) [A]. 0.9 → giữ/đẩy QoS. ĐỪNG để 0.
+  - beta_entropy: cao khi resume policy tốt → entropy-domination → tụt QoS [C].
+    0.001 + anneal nhanh là an toàn.
+  - λ|max| (lượng tử): ở Case 1 (nq=8) gần như đóng băng ở init 0.50/0.45 suốt các run [E].
+    Chưa xử lý triệt để ở Case 1; cân nhắc spsa_n_reps↑ nếu muốn QC học thật.
+  - PhaseMLP: entropy ~65% max, có vẻ "random" nhưng QoS cao → nhiều khả năng landscape
+    pha phẳng (chưa xác nhận bằng greedy eval). Xem [F].
+
+
+================================================================================
+  NHẬT KÝ RUN (Case 1)  —  điền tiếp khi có run mới
+================================================================================
+  result_3  R_LoS0.2 λ_D3 gae0 fresh        → QoS54% (dừng sớm ep500)
+  result_4  R_LoS0.3 λ_D3 gae0 ←r3          → QoS81%
+  result_5  R_LoS0.4 λ_D3 gae0 ←r4          → QoS85%→63% (collapse)
+  result_6  R_LoS0.4 λ_D4 gae0 ←r5          → QoS76% (dừng ep400) [gốc ramp 0.45]
+  result_7  R_LoS0.45 λ_D3.5 gae0 ←r6       → plateau QoS80% [NHÁNH CHẾT]
+  result_8  R_LoS0.45 λ_D4.5 gae0 ←r6       → ĐỈNH QoS90%@ep1000 → collapse72% ★
+  result_9  R_LoS0.45 λ_D4.5 gae0.9 ←r8/ep1000 → QoS93% ★★ (entropy-dominated)
+  result_10 R_LoS0.45 λ_D4.5 gae0.9 β0.004 ←r9/ep400 → 88% (β đánh tụt) [thay bằng r11]
+  result_11 R_LoS0.5  λ_D4.5 gae0.9 β0.001 ←r9/ep400 → ep254 QoS83% rồi GPU-hang; có ep_200
+  result___ ...
+================================================================================

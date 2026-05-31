@@ -1,0 +1,187 @@
+================================================================================
+  VQC ENTANGLEMENT + READOUT — DESIGN SPEC
+================================================================================
+  Mục tiêu: thiết kế tầng entanglement + readout của VQC sao cho TỐT cho AGENT
+  (output = assignment φ_k ∈ {direct, IRS_1..M} cho K user).
+  Trạng thái: ĐÃ CHỐT THIẾT KẾ — CHƯA IMPLEMENT (triển khai khi thấy phù hợp).
+  Nền: Common-Knowledge.txt (cơ chế), VQC pipeline (latent→post-NN).
+  Cập nhật lần cuối: 2026-05-29
+--------------------------------------------------------------------------------
+  ⚠️ SEQUENCING: đây là lever THỨ YẾU. Nút thắt hiện tại là critic mù (λ_D).
+     CHỈ A/B test thiết kế này SAU KHI critic hoạt động (explVar>0.5 với λ_D=1.5).
+     Không đổi khi critic còn mù → không đo được tác dụng. Validate Case 2 trước.
+--------------------------------------------------------------------------------
+
+
+================================================================================
+  PHẦN 0 — QUYẾT ĐỊNH ĐÃ CHỐT (tóm tắt)
+================================================================================
+  [E1] Entanglement user↔IRS: FULL bridges (mọi user × mọi IRS).
+  [E2] Entanglement user↔user: brick-wall 2 tầng (+ wrap), KHÔNG full all-to-all.
+  [R1] Readout per user: Z_i (user) + ⟨Z_i·Z_IRS_m⟩ RIÊNG từng IRS (per-IRS, không sum)
+                         + C_i aggregate Σ_j⟨Z_iZ_j⟩ (cluster) + ⟨Z_IRS_m⟩ (giữ).
+  [B ] Classical bypass: feed z_k ĐẦY ĐỦ (raw per-user) thẳng vào post-NN (mọi Case).
+  [M ] User→qubit map:  Case1 structured-inject | Case2 identity | Case3 SOFT-CLUSTER.
+  Nguyên lý nền: readout ⟨Z_iZ_j⟩ chỉ có nghĩa nếu i,j ĐƯỢC ENTANGLE
+                 → E1 phục vụ R1(user-IRS), E2 phục vụ R1(cluster). Co-design.
+
+
+================================================================================
+  PHẦN 1 — ENTANGLEMENT (tạo tương quan trong state)
+================================================================================
+  Áp trong MỖI lớp variational ℓ, SAU rotation học được (Rz·Ry), TRƯỚC lớp kế:
+
+  [E1] USER↔IRS full bridges  (tiêu chí: trộn user-IRS để chọn IRS tốt hơn)
+       for k in users, for m in IRS:  CZ(q_user_k, q_IRS_m)
+       → mọi user-qubit entangle với mọi IRS-qubit → ⟨Z_k·Z_IRS_m⟩ có nghĩa ∀k,m.
+       Case 2: 10×2 = 20 CZ/lớp.
+
+  [E2] USER↔USER brick-wall, 2 tầng  (tiêu chí: gom cụm — general hơn nearest-index)
+       tầng A (chẵn): CZ(0,1) CZ(2,3) CZ(4,5) …
+       tầng B (lẻ):   CZ(1,2) CZ(3,4) CZ(5,6) …  + wrap CZ(n_user-1, 0)
+       → sau L lớp → connectivity ~all-to-all NHƯNG depth thấp.
+       KHÔNG dùng full all-to-all (K(K-1)/2 CZ → BARREN PLATEAU).
+
+  Chi phí: CZ KHÔNG có tham số → KHÔNG tăng #circuit-eval (chi phí SPSA/param-shift
+  do #param quyết định). → entanglement gần như MIỄN PHÍ. Giới hạn = barren plateau.
+
+  Lý do bỏ nearest-neighbor-theo-INDEX:
+    - q_i–q_{i+1} là 2 user TÙY Ý (thứ tự gán), không phải gần nhau vật lý;
+      vị trí đổi mỗi episode (mobility) → không cố định thứ tự qubit theo vị trí.
+    - chỉ cho cặp liên tiếp → không "gom cụm".
+    → thay bằng E2 brick-wall (mix toàn cục) + readout aggregate C_i (R1) bắt cụm
+      theo ĐỘ GIỐNG FEATURE (encoding mang vị trí/kênh), general, độc lập index.
+
+
+================================================================================
+  PHẦN 2 — READOUT (đo tương quan → o_hat)
+================================================================================
+  Công thức quan sát:
+    ⟨Z_i⟩    = Σ_x |ψ_x|² (1 − 2·bit_i(x))
+    ⟨Z_iZ_j⟩ = Σ_x |ψ_x|² (1 − 2·bit_i)(1 − 2·bit_j)
+  (bản shots: thay |ψ_x|² bằng tần suất n_shots mẫu)
+
+  Per user i (hoặc slot ở Case 3), lấy:
+   [R1-a] USER part:      Z_i                         → K (hoặc #slot)
+   [R1-b] USER↔IRS:       ⟨Z_i · Z_IRS_m⟩  ∀ m        → K×M   ★ RIÊNG từng IRS (KHÔNG sum)
+            → mỗi logit gán user_i→IRS_m có feature tương ứng → phân biệt IRS nào.
+   [R1-c] CLUSTER agg:    C_i = Σ_{j≠i} ⟨Z_i·Z_j⟩     → K
+            → "user i ở trong cụm giống nhau cỡ nào" (cần E2 mới có nghĩa).
+   [R1-d] IRS part:       ⟨Z_IRS_m⟩                   → M   (GIỮ — IRS-affinity baseline)
+
+  Chi phí: thêm observable KHÔNG tăng #circuit-eval (do #param quyết định); chỉ tăng
+  compute observable (Σ trên 2^nq, rẻ trên GPU) + chiều input post-NN (nhỏ).
+
+
+================================================================================
+  PHẦN 3 — CLASSICAL BYPASS  (giữ per-user info song song quantum)
+================================================================================
+  Vấn đề: khi user→qubit map KHÔNG identity (Case1 expand, Case3 compress), readout
+  lượng tử là per-QUBIT/SLOT, không còn per-user; và z_t (qua W_proj) có thể bị nén.
+
+  Giải pháp [B]: feed z_k ĐẦY ĐỦ (raw per-user, 2K dims) THẲNG vào post-NN, bỏ qua W_proj.
+    post-NN input = [ z_k_raw (2K)  ‖  z_IRS (2M)  ‖  o_hat_quantum ]
+  → Quantum lo FEATURE TƯƠNG QUAN (có thể ở mức cụm/nén);
+    Classical lo PER-USER RESOLUTION (không nén).
+  → Tách bạch: "quantum = correlation, classical = per-user" → narrative sạch + agent
+    không mất thông tin per-user dù qubit map nén thế nào.
+  Áp dụng: MỌI Case (Case2 identity thì z_k_raw ≡ z_user, nhưng vẫn ghi rõ để thống nhất).
+
+
+================================================================================
+  PHẦN 4 — USER → QUBIT MAP (W_proj) theo từng Case
+================================================================================
+  Ràng buộc gốc: user qubits = nq − M.
+    Case 1: nq−M=7  >  K=5   → THỪA qubit
+    Case 2: nq−M=10 =  K=10  → vừa khít
+    Case 3: nq−M=12 <  K=20  → THIẾU qubit (TƯỜNG)
+
+  [M-Case1] structured-inject: gán K user vào K qubit đầu (identity-like), qubit thừa
+            làm ancilla (hoặc giảm nq cho Case 1). Readout per-user trên K qubit dùng.
+  [M-Case2] W_proj = IDENTITY (freeze): qubit k = user k. Readout per-user sạch.
+  [M-Case3] W_proj = SOFT-CLUSTER (học được): gán mềm 20 user → 12 slot-qubit.
+            → slot = CỤM user → readout per-SLOT = per-cluster (hiện thực hóa "grouping"
+              edge user ngay ở kiến trúc). Per-user resolution do classical bypass [B] lo.
+            (Thay cho W_proj random dày hiện tại — cái đang trộn vô cấu trúc.)
+
+  Vì sao KHÔNG tăng nq cho Case 3: nq≥24 → state 2^24=16M × batch → bất khả thi trên sim.
+  Tùy chọn nâng cấp (để dành): multiplexed re-uploading (mỗi lớp nạp projection khác của
+  user → dùng băng thông độ sâu L để tải đủ 2K dim mà không nén). Phức tạp hơn soft-cluster.
+
+
+================================================================================
+  PHẦN 5 — BẢNG DIMENSION
+================================================================================
+                          Case 1          Case 2          Case 3
+  K, M                    5, 1            10, 2           20, 4
+  nq                      8               12              16
+  user qubits (nq−M)      7               10              12
+  user→qubit map          struct-inject   IDENTITY        SOFT-CLUSTER
+  readout unit            per-user        per-user        per-slot (12)
+
+  o_hat:
+   R1-a Z_i               5               10              12
+   R1-b Z_i·Z_IRS (×M)    5×1=5           10×2=20         12×4=48
+   R1-c C_i cluster       5               10              12
+   R1-d Z_IRS (×M)        1               2               4
+   ── tổng o_hat          16              42              76
+
+  post-NN input [B]:
+   z_k_raw (2K)           10              20              40
+   z_IRS   (2M)           2               4               8
+   o_hat                  16              42              76
+   ── tổng input          28              66              124
+  output logit K·(M+1)    10              30              100
+
+
+================================================================================
+  PHẦN 6 — CODE TOUCH-POINTS (khi implement)
+================================================================================
+  params.py
+    - extra_cz_pairs   → FULL user×IRS (E1)
+    - thêm cấu hình brick-wall user-user (E2, 2 tầng)
+    - cờ readout-mode (per-user / per-slot) + W_proj-mode (identity/cluster)
+  RL/quantum_circuit.py
+    - _build_batch        : áp E1 (full user↔IRS CZ) + E2 (brick-wall 2 tầng + wrap)
+    - _obs_from_batch     : R1-a Z_i + R1-b per-IRS ZZ + R1-c aggregate C_i + R1-d Z_IRS
+    - _n_obs / configure_topology : cập nhật đếm observable theo R1
+    - param_shift/spsa jacobian : cập nhật cho tập observable mới (R1-b,c,d)
+  RL/quantum_actor.py
+    - W_proj: identity-freeze (Case2) / structured (Case1) / soft-cluster học (Case3)
+    - classical bypass [B]: ghép z_k_raw vào input post-NN (sửa h_t = concat[...])
+    - N_QUANTUM mới; post-NN input dim mới (bảng Phần 5); backward path cho readout + bypass
+  CSI/baselines.py (nếu cần probe optimal-phase để verify IRS-vs-direct — xem ghi chú)
+
+
+================================================================================
+  PHẦN 7 — CAVEAT / RỦI RO
+================================================================================
+  1. Barren plateau: E2 brick-wall 2 tầng là VỪA; đừng nâng lên full all-to-all.
+  2. Tường Case 3: per-user bất khả thi (nq−M<K) → bắt buộc soft-cluster + bypass.
+  3. R1-c (cluster) CẦN E2 (user-user entangle) mới có nghĩa (nguyên lý co-design).
+  4. R1-b CẦN E1 (user-IRS entangle) mới có nghĩa.
+  5. Soft-cluster Case3: rủi ro slot "trộn nhầm" user khác cụm → cần regularize/giám sát.
+  6. SEQUENCING: chỉ test sau khi critic ổn (explVar>0.5). Đổi MỘT thứ/lần (A/B).
+
+
+================================================================================
+  PHẦN 8 — KẾT QUẢ THỰC TẾ  (điền sau khi implement / A-B test)
+================================================================================
+  Mẫu ghi mỗi lần test:
+    [ngày] Case __ | baseline = readout cũ (B4, 25 obs) | new = spec này (__ obs)
+      Setup: explVar lúc test=__, λ_D=__, R_LoS=__, resume từ=__
+      QoS:      cũ __% → mới __%
+      R_tot:    cũ __  → mới __
+      IRS-usage:cũ irs=__ → mới irs=__   (agent có dùng IRS nhiều hơn không?)
+      Per-head: phase entropy __, explVar __, λ|max| __
+      Kết luận: GIỮ / BỎ / CHỈNH __ (lý do)
+  ----------------------------------------------------------------------------
+  [chưa có — điền khi test]
+
+  Câu hỏi cần trả lời bằng kết quả:
+   Q1. Readout per-user (E1+R1) có làm agent DÙNG IRS nhiều hơn / học IRS tốt hơn không?
+   Q2. Classical bypass có cải thiện per-user QoS không?
+   Q3. R1-c cluster + E2 brick-wall có giúp gom nhóm (Case 3) không?
+   Q4. Chi phí compute thực tế (s/ep) tăng bao nhiêu so với readout cũ?
+   Q5. Có dấu hiệu barren plateau (grad qc/λ giảm mạnh) khi tăng entanglement không?
+================================================================================

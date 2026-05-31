@@ -1,0 +1,148 @@
+================================================================================
+  REMOTE MONITOR + CONTROL  ·  giám sát & điều khiển training từ phone/laptop
+================================================================================
+  Mục tiêu (cả phone & laptop):
+   1) Nhận TRIGGER alert (treo/dừng) + xem ĐẦY ĐỦ training log.
+   2) NHẮN cho Claude (agent) để tự kill / quan sát / ghi nhật ký / chạy lại.
+  Cập nhật: 2026-05-30
+--------------------------------------------------------------------------------
+  KIẾN TRÚC TỔNG (mọi thứ chạy trên DESKTOP có 4090):
+    DESKTOP (Windows + WSL2)
+      ├─ tmux session "ml": [0] training  [1] Claude Code (agent)  [2] monitor_train.py
+      ├─ (truy cập từ xa: Chrome Remote Desktop HOẶC Tailscale+SSH)
+    PHONE/LAPTOP:
+      ├─ Telegram app   → nhận TRIGGER + log on-demand (đường "biết")
+      └─ Remote access  → attach tmux → NHẮN Claude + xem full log (đường "làm")
+================================================================================
+
+
+================================================================================
+  PHẦN A — TRIGGER + LOG qua TELEGRAM  (đường "biết" — push về phone)
+================================================================================
+  → đã có monitor_train.py. Setup (đọc đầu file đó): @BotFather lấy BOT_TOKEN,
+    getUpdates lấy CHAT_ID, điền vào, chạy nền trong tmux window [2].
+  → Nhận: status mỗi 30', ⚠ cảnh báo TREO (log đứng >12'), 🔴 báo DỪNG.
+  → (TÙY CHỌN, để nhận FULL log on-demand qua Telegram: bot 2 chiều — nhắn "/tail"
+     → bot trả 20 dòng cuối; "/status" → trạng thái. Bảo Claude thêm nếu muốn.)
+
+
+================================================================================
+  PHẦN B — TMUX  (giữ session BỀN + chia sẻ — BẮT BUỘC cho cả 2 đường)
+================================================================================
+  tmux giữ training + Claude SỐNG kể cả khi bạn ngắt kết nối, và cho phép attach lại
+  từ phone/laptop để xem + gõ.
+
+  Cài + tạo session (trong WSL trên desktop):
+    sudo apt install -y tmux
+    tmux new -s ml                      # tạo session "ml"
+    # trong tmux: Ctrl-b c = tạo window mới; Ctrl-b <số> = chuyển; Ctrl-b d = detach
+    #   window 0: chạy training       → python train.py --episodes 4000
+    #   window 1: chạy Claude Code     → claude        (đây là chỗ bạn NHẮN tôi)
+    #   window 2: chạy monitor         → python monitor_train.py
+    #   window 3 (tùy): tail -f results/result_*/training_log.txt   (full log live)
+
+  Attach lại (từ desktop / qua SSH):  tmux attach -t ml
+  → training & Claude vẫn chạy dù bạn đóng SSH/đóng app. Chỉ mất khi desktop tắt/reboot.
+
+
+================================================================================
+  PHẦN C — TRUY CẬP TỪ XA  (chọn 1 trong 2 tier)
+================================================================================
+
+── TIER 1 (DỄ NHẤT, khuyến nghị): CHROME REMOTE DESKTOP ───────────────────────
+  Xem TOÀN BỘ desktop (terminal training + Claude + log) từ phone/laptop, gõ trực tiếp.
+  1. Desktop: cài "Chrome Remote Desktop" (remotedesktop.google.com/access) → đặt PIN.
+  2. Phone: app "Chrome Remote Desktop" (iOS/Android), login cùng Google account → chọn
+     desktop → nhập PIN → thấy màn hình desktop.
+  3. Laptop: vào remotedesktop.google.com/access (trình duyệt) → kết nối.
+  → Mở cửa sổ WSL/terminal đang chạy tmux → `tmux attach -t ml` → chuyển window 1 →
+    GÕ tin nhắn cho Claude (kill/observe/rerun). Window 3 xem full log.
+  Ưu: 5 phút, không cấu hình mạng, phone+laptop đều được. Nhược: nặng hơn (chia sẻ màn hình).
+
+── TIER 2 (NHẸ, terminal-clean): TAILSCALE + SSH ──────────────────────────────
+  Chỉ terminal (ít data, hợp phone mạng yếu). Nhiều bước hơn (mạng WSL hơi fiddly).
+  1. Tailscale (VPN mesh, free, không port-forward):
+     - Desktop (Windows): cài Tailscale, login.
+     - Phone + laptop: cài Tailscale, login CÙNG account → mọi máy thấy nhau qua IP riêng.
+  2. SSH server trong WSL:
+     sudo apt install -y openssh-server
+     sudo sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config   # port riêng cho WSL
+     sudo service ssh start            # (hoặc: sudo /usr/sbin/sshd)
+  3. Cho Tailscale tới được WSL: cách đơn giản nhất = chạy Tailscale TRONG WSL:
+     curl -fsSL https://tailscale.com/install.sh | sh
+     sudo tailscaled --tun=userspace-networking >/tmp/ts.log 2>&1 &
+     sudo tailscale up                 # login → WSL có IP Tailscale riêng
+     (Win11 có systemd: thêm '[boot] systemd=true' vào /etc/wsl.conf rồi
+      'sudo systemctl enable --now tailscaled' cho gọn.)
+  4. Từ laptop:  ssh -p 2222 <user>@<wsl-tailscale-ip>  → tmux attach -t ml
+     Từ phone:   app Termius/Blink → SSH tới <wsl-tailscale-ip>:2222 → tmux attach -t ml
+  → Trong tmux: window 1 = NHẮN Claude; `tail -f .../training_log.txt` = full log.
+  Ưu: nhẹ, bảo mật, hợp phone. Nhược: cấu hình mạng WSL hơi rối (nếu kẹt → dùng Tier 1).
+
+
+================================================================================
+  PHẦN D — WORKFLOW HÀNG NGÀY
+================================================================================
+  Khởi động (1 lần, trên desktop):
+    1. tmux new -s ml
+    2. window 0: python train.py --episodes 4000
+    3. window 1: claude   (mở agent — phiên làm việc với tôi)
+    4. window 2: python monitor_train.py   (Telegram alerts)
+    5. Ctrl-b d (detach) — mọi thứ chạy nền.
+
+  Từ phone/laptop khi nhận alert (vd ⚠ TREO từ Telegram):
+    1. Mở Chrome Remote Desktop (Tier1) HOẶC SSH+tmux attach (Tier2).
+    2. Vào window 1 (Claude) → nhắn: "check result_N" / "training treo, kill rồi rerun" /
+       "ghi nhật ký" → tôi thực hiện (kill, quan sát, cập nhật nhật ký, chạy lại) y như
+       khi bạn ngồi máy.
+    3. Window 3 / `tail -f` → xem full log realtime.
+
+  → Telegram = NHẬN BIẾT (push, không cần mở gì). Remote+tmux = LÀM (nhắn Claude, xem log,
+    kill/rerun). Dùng cả hai = đủ tiêu chí.
+
+
+================================================================================
+  PHẦN E — iPhone 7 Plus (iOS 15, app mới có thể KHÔNG cài được)
+================================================================================
+  Vấn đề: iPhone 7 Plus dừng ở iOS 15.8 → app remote-desktop/SSH mới thường đòi iOS 16+
+  → KHÔNG cài được. NHƯNG Telegram cài được (hỗ trợ iOS cũ).
+  → CHIẾN LƯỢC: dồn CONTROL vào TELEGRAM (kill/status/tail/gpu/rerun ngay trong app chat),
+    KHÔNG cần SSH/RDP. SSH/RDP chỉ để "nhắn Claude" cho việc phức tạp (thử cài, fail thì
+    dùng laptop).
+
+  BƯỚC CHO iPhone 7:
+   1. Cài Telegram (App Store). Nếu báo cần iOS mới → bấm "Tải phiên bản tương thích
+      cuối" (App Store tự đề nghị bản cũ chạy được iOS 15).
+   2. Setup bot: @BotFather → BOT_TOKEN; getUpdates → CHAT_ID; điền vào monitor_train.py.
+   3. ⭐ NÂNG monitor_train.py thành CONTROL BOT (nhờ Claude làm — xem offer): nhắn bot:
+        /status  → ep, QoS, explVar, grad V        /tail    → 20 dòng log cuối
+        /gpu     → nvidia-smi (util/mem)           /kill    → kill training (treo)
+        /rerun   → chạy lại train.py               /diag    → critic health (explVar/gradV)
+      → Khóa theo CHAT_ID của bạn (chỉ bạn ra lệnh được).
+      → Vậy là bạn KILL/QUAN SÁT/CHẠY LẠI/XEM FULL LOG ngay trên Telegram, KHÔNG cần app khác.
+
+   4. (Tùy chọn) "Nhắn Claude" trực tiếp cho việc phức tạp — thử cài theo thứ tự, dùng
+      "Tải bản tương thích cuối" nếu báo cần iOS mới:
+        - SSH: Termius (nhẹ nhất, hợp iPhone 7) → SSH tmux → window Claude.
+        - Remote desktop: RustDesk / Microsoft RD Client (bản cũ).
+      Nếu KHÔNG cài được cái nào → dùng CONTROL BOT (bước 3) cho thao tác thường + để
+      "nhắn Claude" cho LAPTOP (Phần dưới).
+
+  → Với iPhone 7: Telegram control bot lo ~90% nhu cầu (alert + log + kill + rerun).
+    Quyết định phức tạp ("phân tích, đổi hyper") thì làm trên laptop.
+
+  LAPTOP (dễ — máy mới, không lo app):
+   - Chrome Remote Desktop qua TRÌNH DUYỆT: remotedesktop.google.com/access (KHÔNG cần
+     cài app) → thấy desktop → tmux attach → nhắn Claude + xem log. Đơn giản nhất.
+   - Hoặc SSH (terminal sẵn có) → tmux attach.
+
+
+================================================================================
+  GHI CHÚ
+================================================================================
+  • Desktop phải BẬT (tmux/training/Claude sống nhờ desktop on). Tắt máy = mất session.
+    → đặt Windows KHÔNG sleep khi training (Power settings → Sleep = Never khi cắm điện).
+  • monitor_train.py + Claude + SSH đều KHÔNG tốn GPU → an toàn cạnh training.
+  • Bảo mật: Tailscale/Chrome Remote Desktop đều mã hóa + cần login account của bạn.
+  • Nếu chỉ cần "biết" (không cần điều khiển) → chỉ Telegram (Phần A) là đủ, bỏ qua B/C.
+================================================================================

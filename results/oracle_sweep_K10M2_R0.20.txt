@@ -1,0 +1,58 @@
+==============================================================================
+  ORACLE CRITIC SWEEP  ·  Tier-0 comprehensive diagnostic
+==============================================================================
+  Generated: 2026-05-31 12:23:57  (8513s total)
+  Case K=10 M=2 R_LoS_km=0.2  dataset N=20000 (reward_noise_avg=128)
+  Tier-1 ceiling (trained policy ref) ≈ 0.81  ·  online (result_5/6) ≈ 0.40
+
+  RANKED BY best_EV (raw-scale validation explained-variance)
+  --------------------------------------------------------------------------
+  arch                    clip   norm   best_EV  final_EV
+  512x256x128x64         100.0   True    +0.376    +0.376
+  512x256x128x64        1000.0   True    +0.376    +0.376
+  512x256x128x64           0.0   True    +0.376    +0.376
+  512x256x128x64           1.0   True    +0.365    +0.358
+  512x256x128x64         100.0  False    +0.326    +0.326
+  512x256x128x64        1000.0  False    +0.325    +0.325
+  512x256x128x64           0.0  False    +0.319    +0.318
+  256x128                  1.0   True    +0.295    +0.292
+  256x128                100.0   True    +0.292    +0.289
+  256x128               1000.0   True    +0.292    +0.289
+  256x128                  0.0   True    +0.292    +0.289
+  512x256x128x64           1.0  False    +0.272    +0.251
+  128x64                   1.0   True    +0.269    +0.266
+  64x64                    1.0   True    +0.261    +0.253
+  128x64                 100.0   True    +0.255    +0.255
+  128x64                1000.0   True    +0.255    +0.255
+  128x64                   0.0   True    +0.255    +0.255
+  64x64                  100.0   True    +0.249    +0.248
+  64x64                 1000.0   True    +0.249    +0.248
+  64x64                    0.0   True    +0.249    +0.248
+  256x128                100.0  False    +0.248    +0.247
+  256x128                  1.0  False    +0.247    +0.247
+  128x64                   1.0  False    +0.240    +0.240
+  64x64                    1.0  False    +0.239    +0.239
+  256x128               1000.0  False    +0.237    +0.237
+  256x128                  0.0  False    +0.237    +0.237
+  128x64                 100.0  False    +0.231    +0.231
+  128x64                1000.0  False    +0.223    +0.223
+  128x64                   0.0  False    +0.223    +0.223
+  64x64                  100.0  False    +0.222    +0.222
+  64x64                 1000.0  False    +0.218    +0.218
+  64x64                    0.0  False    +0.218    +0.218
+
+  MARGINAL EFFECT (mean best_EV holding one knob) 
+  --------------------------------------------------------------------------
+  arch       (spread +0.104): 512x256x128x64=+0.342  256x128=+0.268  128x64=+0.244  64x64=+0.238
+  grad_clip  (spread +0.004): 100.0=+0.275  1.0=+0.274  1000.0=+0.272  0.0=+0.271
+  norm_tgt   (spread +0.042): True=+0.294  False=+0.252
+
+  VERDICT GUIDE
+  --------------------------------------------------------------------------
+  • Knob with LARGEST spread = the dominant lever → apply live.
+  • If best_EV ≈ 0.81 ceiling → arch CAN fit; live instability is
+    pure training-dynamics (clip / lr / policy-drift) → fixable.
+  • If best_EV plateaus ≪ 0.81 even unclipped+normalized+small-arch
+    → arch/feature bottleneck → redesign critic input or capacity.
+  • grad_clip=1.0 row ≪ grad_clip=1000/off row → confirms clip was
+    strangling the live critic (H1) → keep grad_clip_critic high.

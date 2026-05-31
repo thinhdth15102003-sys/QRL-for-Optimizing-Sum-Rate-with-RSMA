@@ -1,0 +1,286 @@
+================================================================================
+  COMMON KNOWLEDGE  ·  IRS-assisted RSMA Quantum-RL  (case-agnostic)
+================================================================================
+  Kiến thức CHUNG về mô hình & cách train, KHÔNG phụ thuộc (K,M) hay R_LoS.
+  Hyperparameter cụ thể theo từng case → xem Training-Case-<N>.txt.
+  Cập nhật lần cuối: 2026-05-31  (Case1 r1→11; +[I-2],[J](C2 r1), [B-2](r2), [B-2b]GAE(r3), [H-2]TDR(r4),
+                                 [B-2b] clipfrac-trước-lr + clip-là-triệu-chứng (C2 r6/r7), [B-2c] oracle-sweep,
+                                 lưu-ý QoS⊥critic (C2 r5/6/7))
+--------------------------------------------------------------------------------
+  CÁCH DÙNG BỘ FILE NÀY:
+   - Common-Knowledge.txt (file này): cơ chế mô hình, bảng tra lỗi, tín hiệu chẩn đoán,
+     nguyên tắc — đúng cho mọi case.
+   - Training-Case-1.txt: K=5,M=1 — hyper từng ramp 0.2→0.5 + lịch sử thực tế.
+   - Training-Case-2.txt: K=10,M=2 — hyper + những điểm cần chú ý.
+   - params.py định nghĩa Case 1/2/3 = (K=5,M=1) / (K=10,M=2) / (K=20,M=4).
+--------------------------------------------------------------------------------
+
+
+================================================================================
+  PHẦN 1 — TỔNG QUAN MÔ HÌNH
+================================================================================
+
+Bài toán: IRS-assisted RSMA cho vệ tinh (NTN băng L, 1.58 GHz). Agent RL điều khiển
+4 quyết định mỗi bước để tối đa reward = sum_rate − QoS_penalty.
+
+Actor pipeline (4 stage/step):
+  1. IRS selection (LƯỢNG TỬ): state → AE encoder → z_t → QC (nq qubit, L=3, data
+     re-uploading) → post-NN → logits gán mỗi user vào {direct, IRS_1..M}.
+  2. PhaseMLP: chọn pha IRS (N=24 phần tử/IRS × M, mức rời rạc 2-bit). Trọng số CHIA
+     SẺ theo phần tử.
+  3. PowerMLP: phân bổ công suất [w_c (common, theo group), w_p (private)] Σ=P_S.
+  4. CkMLP: chia common-rate C_k trong group (softmax).
+
+Critic: V(s) MLP (state-value). Dùng làm baseline cho advantage.
+AE: dual-branch encoder (IRS branch + user micro-encoder chia sẻ theo user) → z_t;
+    decoder tái tạo d_aff = K*(M+2)+2M (regulariser).
+Lượng tử: tham số học được λ (encoding scales) + θ (variational angles), train bằng
+    parameter-shift / SPSA. λ encoding: α=π·tanh(λ_y·z), δ=π·tanh(λ_z·z).
+Thuật ngữ mạch: đây là VQC (data re-uploading) — PQC có tham số được tối ưu variational.
+
+
+================================================================================
+  PHẦN 2 — CƠ CHẾ CỐT LÕI (hiểu "tại sao")
+================================================================================
+
+REWARD:  reward = sum_rate − qp_penalty
+  qp = λ_D · Σ_k (shortfall_k / (D_k+ε))²,  shortfall_k = max(0, D_k − R_tot_k)
+  → reward RẤT NHẠY với QoS: 1 user fail → penalty lớn (∝ λ_D). reward âm sâu khi
+    nhiều user dưới ngưỡng. Đây là "vòng xoáy" khi QoS tụt (penalty tăng → reward
+    càng âm → advantage nhiễu → policy càng tệ).
+
+GAE (gae_lambda): Â_t = Σ(γλ)^l δ_{t+l}. λ=0 → TD 1-bước (bias cao, KHÔNG credit dài
+  hạn). λ→1 → Monte-Carlo. Phối hợp IRS/power/Ck là bài toán DÀI HẠN (200 bước) →
+  cần λ cao (≈0.9) để credit đúng. λ=0 là nguyên nhân gốc của collapse (xem [A]).
+
+CRITIC + WARM-UP: advantage chỉ tốt khi V(s) chính xác. Critic dựng mới (blind,
+  explVar≈0) feed advantage rác cho actor đã tốt → phá policy. Warm-up = roll policy
+  ĐÓNG BĂNG, fit V(s) theo Monte-Carlo return TRƯỚC PPO → V đúng thang từ ep 1.
+  Critic được lưu kèm checkpoint → resume tự nạp lại. Đổi λ_D/R_LoS làm dịch thang
+  return → critic_target_tau cao hơn giúp re-calibrate nhanh.
+
+ENTROPY (β): khuyến khích explore. NHƯNG "β·H phải ≪ L_pg, KỂ CẢ khi hội tụ". Khi
+  policy gần tối ưu (nhất là với gae>0) L_pg → rất nhỏ → β cố định/cao làm β·H lấn át
+  → policy trôi về NGẪU NHIÊN → un-learn QoS. Harness in cờ "⚠ ENTROPY-DOMINATED".
+  → β phải anneal về sàn; resume policy tốt thì β thấp + anneal nhanh.
+
+SPSA (lượng tử): ước lượng gradient QC bằng n_reps nhiễu (rẻ hơn parameter-shift).
+  nq lớn → SPSA nhiễu hơn → λ dễ "đóng băng" ở init (không học). Tăng spsa_n_reps
+  cho gradient sạch hơn.
+
+CURRICULUM (R_LoS): tăng độ khó hình học dần 0.2→0.3→0.4→0.45→0.5, resume mỗi bước.
+  R_LoS lớn = user/IRS xa hơn = link yếu hơn = QoS khó hơn. ỔN ĐỊNH ở bước hiện tại
+  RỒI mới lên — lên sớm = mang lỗi sang env khó hơn.
+
+CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục best/ (best lưu theo
+  REWARD, không cùng thang giữa các λ_D, và đỉnh reward thường là ep sớm chứ không phải
+  đỉnh QoS).
+
+
+================================================================================
+  PHẦN 3 — BẢNG TRA SỰ CỐ  (triệu chứng → nguyên nhân → cách khắc phục)
+================================================================================
+  (Giá trị hyper cụ thể tùy case → đối chiếu Training-Case-<N>.txt.)
+
+[A] COLLAPSE — QoS/reward lên đỉnh rồi TỤT, common-stream sụp (wc→~24%, Ck→~0.46).
+    Nguyên nhân: credit dài hạn yếu (gae_lambda=0) → luồng common bị xói khi hết
+    exploration nâng đỡ. KHẮC PHỤC: gae_lambda=0.9. Theo dõi wc & Ck giữ ổn định.
+
+[B] CRITIC MÙ — explVar≈0 / V̄ sai thang (vd ≈−1 khi return thật ±20).
+    Hai biến thể (phân biệt bằng explVar có tự khỏi sau khi gỡ entropy không):
+    (B-1) Cold-start/scale (sau resume, hoặc warm-start policy tốt): critic chưa calibrate.
+          KHẮC PHỤC: bật critic warm-up; nạp lại critic đã lưu; critic_target_tau↑ (≈0.02).
+    (B-2) DAI DẲNG dù đã gỡ entropy-domination [C] (explVar vẫn ~0.1 sau khi cờ ⚠ tắt, qua
+          nhiều trăm ep): KHÔNG phải entropy → critic KHÔNG FIT NỔI return. Nguyên nhân:
+          return variance quá cao (policy còn stochastic → cùng s_t, action sample khác →
+          return khác; + nhiễu env κ/mobility/noise) và/hoặc mismatch target (critic học
+          TD(0) 1-bước + target net chậm, nhưng explVar đo vs GAE-return).
+          KHẮC PHỤC (thử theo thứ tự): reward_noise_avg↑ (vd 8→16, giảm variance ~1/√2);
+          bật critic warm-up CHO CẢ FRESH (cho V scale tốt từ đầu → bootstrap); nếu vẫn mù/
+          BẤT ỔN → ⭐ train critic bằng GAE-return ('ret'=Â+V) thay TD(0) — xem B-2b.
+    (B-2b) BẤT ỔN / GRAD V KHÔNG GIẢM: dấu hiệu = ‖∇‖V plateau LỚN (vd 700-1000, clip 1.0 cắt
+          mạnh) KHÔNG giảm + explVar DAO ĐỘNG (vd 0.14↔0.64, không giữ >0.5) + QoS kẹt — DÙ
+          explVar đã > blind (vd ~0.4). = critic "đuổi" target TD(0) nhiễu, không settle.
+          GỐC: critic học TD(0) (r+γV_target(s')) phương sai cao + mismatch (explVar đo vs GAE-ret).
+          ⭐ FIX GỐC: đổi critic target TD(0) → GAE-return t['ret'] (train.py: critic.compute_grads_batch
+          dùng t['ret'] thay t['td_target']). ret (λ-return) ít nhiễu hơn (avg ~1/(1-γλ) bước) +
+          align explVar + là value-target PPO CHUẨN → grad V giảm/settle, explVar ổn. (TD(0)+
+          target-net là phi chuẩn cho PPO — nguồn bất ổn.) Phụ trợ: lr_critic↓ (dampen) nếu còn wobble.
+          (Case 2 result_3: warm-up+noise_avg đưa explVar 0.08→0.4 nhưng grad plateau 700-1000 +
+           explVar wobble + QoS kẹt 51% → B-2b → đổi GAE-target ở result_4.)
+          ⭐ QUY TẮC THỨ TỰ (general): khi grad_clip_critic BIND (clipfrac→~100%, tức ‖∇‖V preclip
+          ≫ ngưỡng clip — vd preclip 400-1300 vs clip 1.0), thì chỉnh lr_critic GẦN NHƯ VÔ NGHĨA:
+          gradient đã bị rescale về đúng clip-norm → bước hiệu dụng = lr·clip_norm·hướng, chỉ còn
+          HƯỚNG của grad có tác dụng; hạ lr chỉ thu nhỏ một bước vốn đã bị clip. → PHẢI đọc clipfrac
+          (preclip ‖∇‖V vs ngưỡng) TRƯỚC khi tune lr. Nếu clipfrac cao → NỚI grad_clip_critic (vd
+          1.0→5.0) để critic nhận đủ tín hiệu, RỒI mới xét lr. (Tier-2 critic_diag đo clipfrac sẵn.)
+          (Case 2 result_6: lr_critic 5e-4→3e-4 ĐƠN LẺ KHÔNG fix — explVar vẫn wobble 0.21-0.66,
+           grad V plateau 400-1300, clipfrac~100% ở clip=1.0. lr ko chạm tới vì grad đã bị clip.)
+          ⚠ CẢNH BÁO (general, Case 2 result_7): grad_clip BIND chỉ là TRIỆU CHỨNG, KHÔNG chắc là
+          BỆNH. Nới clip (1.0→1000) → clipfrac 100%→0% (preclip tự co 400-1300→~200 vì critic fit
+          được) NHƯNG explVar VẪN wobble −0.37↔+0.62 + QoS kẹt → clip KHÔNG phải nút thắt gốc.
+          Khi nới clip: kiểm explVar có GIỮ >0.5 ỔN ĐỊNH không, ĐỪNG mừng vì clipfrac rớt. Nếu vẫn
+          wobble → gốc sâu hơn = RETURN SCALE-DRIFT / target non-stationarity (bias=μ(V−ret) trôi
+          mạnh là dấu hiệu) → ⭐ FIX = RETURN NORMALIZATION (z-score target / PopArt: critic dự đoán
+          return chuẩn hóa, un-scale ở output bằng running μ,σ). Bake-in target-norm làm critic fit
+          tốt hơn + BỀN với grad_clip (xem [DIAG-ORACLE]).
+    (B-2c) ⭐ ORACLE-SWEEP DIAGNOSTIC (general method — tách "giới hạn ARCH/capacity" khỏi "giới
+          hạn TRAINING-DYNAMICS"): khi critic loạn dai dẳng qua nhiều run mà không rõ gốc, train
+          critic OFFLINE trên 1 dataset CỐ ĐỊNH (collect random/mixed policy, reward_noise_avg cao
+          ~128 để khử n0) theo GRID arch × grad_clip × target-norm, plain MSE, không PPO/policy-drift.
+          Đọc MARGINAL spread mỗi knob = đòn bẩy. (Case 2: arch spread 0.104 ≫ norm 0.042 ≫ clip
+          0.004 → arch TO=tốt nhất (đừng nhỏ), norm_tgt=True là lever, clip vô nghĩa.) explVar tốt
+          nhất offline vs ceiling Tier-1 → nếu ≈ceiling: arch fit được, lỗi là training-dynamics
+          (fixable); nếu ≪ceiling kể cả config tốt nhất: arch/feature bottleneck (redesign input).
+          Script: sweep_oracle_critic.py. RẺ (CPU, ~2h), không tranh GPU, không confound policy-drift.
+    LƯU Ý KIẾN TRÚC: critic là V(s_t), ĐỘC LẬP với actor readout/o_hat → đổi readout/
+    entanglement KHÔNG cứu critic mù. Phải fix critic riêng. Kiểm: explVar>0.5 + V̄ đúng thang.
+    LƯU Ý NÚT THẮT (Case 2 result_5/6/7): critic ổn KHÔNG đồng nghĩa QoS lên. Nếu QoS kẹt 1 mức
+    XUYÊN SUỐT nhiều run BẤT KỂ explVar (kể cả lúc explVar cao) → nút thắt KHÔNG ở critic mà ở
+    POLICY/HEAD (vd PhaseMLP idle → IRS pha ngẫu nhiên → user rớt). Đừng fix critic mãi; tách bạch
+    "critic health" (explVar) với "task metric" (QoS) — chúng độc lập.
+
+[C] ENTROPY-DOMINATED — cờ "⚠", ent/pg phase>1, policy trôi về random, QoS un-learn.
+    Nguyên nhân: β quá cao so với L_pg (nhỏ khi gần tối ưu / gae cao). KHẮC PHỤC:
+    beta_entropy↓ (≈0.001) + anneal nhanh; nếu còn → hạ beta_entropy_min.
+    ↔ Ngược với [D]: nếu đang plateau thì lại cần β cao hơn (kèm λ_D↑).
+
+[D] PLATEAU — reward/QoS đi ngang, best không bị vượt, L_pg≈0.
+    Nguyên nhân: reward phẳng dọc ridge QoS↔sum-rate; advantage bé ở gần optimum.
+    KHẮC PHỤC: lambda_D↑ (nghiêng ridge → tạo dốc); n_rollout↑ (advantage ít nhiễu);
+    explore burst nhẹ (β↑ vừa, KÈM λ_D↑ để L_pg không quá nhỏ → tránh [C]); gae>0.
+
+[E] λ LƯỢNG TỬ ĐÓNG BĂNG — "λ|max| y/z" đứng yên ở init (≈0.50/0.45) suốt run.
+    Nguyên nhân: SPSA quá nhiễu / lr_qc thấp (tệ hơn ở nq lớn). KHẮC PHỤC:
+    spsa_n_reps↑ (≈8), lr_actor_qc↑ (≈2e-4). Kiểm λ|max| có nhúc nhích khỏi init.
+
+[F] PHASE HEAD CÒN RANDOM/ĐUỐI — ent phase ~65% max, KL & grad lớn nhưng entropy
+    không giảm. Phân biệt bằng GREEDY eval: greedy≈sampled → landscape pha phẳng,
+    entropy là đệm → ĐỂ YÊN. greedy≫sampled → chưa hội tụ → sharpen (lr_phase↑ /
+    nới n_hidden_phase / giảm entropy riêng cho phase).
+
+[G] REWARD 1 SỐ EP RẤT THẤP — vật lý hay dao động agent? Xem Blk/K, QoS/K, R_tot:
+    Blk/K cao bất thường + QoS thấp → SPAWN KHÓ (trần vật lý, hiếm).
+    Blk/K bình thường + QoS thấp → DAO ĐỘNG AGENT (sample action kém ep đó, phần lớn).
+    λ_D cao khuếch đại. → Báo cáo hiệu năng bằng GREEDY eval, không bằng reward rollout.
+
+[H] CLI ĐỨNG / EP KHÔNG NHẢY nhưng process còn chạy (log mtime cũ, %CPU cao). 2 biến thể:
+    (H-1) DEADLOCK GPU: 2 job cùng GPU, hoặc 1 job bị Ctrl+Z (state 'T') giữ GPU context.
+          Dấu hiệu: state T (suspended) hoặc 2 PID. nvidia-smi mem giữ.
+    (H-2) CUDA HANG do CONTENTION/TDR (single job): process state R, wchan=0 (userspace
+          SPIN), GPU util ~0% (idle), kẹt nhiều giờ ở một PPO update. Nguyên nhân: GPU bị
+          tranh bởi app KHÁC (vd GAME Windows — WSL2 chia sẻ GPU vật lý) → kernel training
+          quá hạn → Windows TDR reset driver → CUDA context training hỏng → process spin.
+          (Case2 result_4: treo ep96 sau khi launch lúc game đang dùng 14GB/86% GPU.)
+    KHẮC PHỤC (cả 2): ps -eo pid,stat,cmd|grep train + cat /proc/PID/wchan (0=userspace spin)
+    → nvidia-smi (mem thấp+util thấp = hang chứ không OOM) → kill -9 <PID> → nvidia-smi xác nhận
+    → resume từ checkpoint gần nhất. (stack: py-spy dump --pid, cần ptrace_scope=0.)
+    PHÒNG: 1 job GPU/lúc; dừng bằng Ctrl+C (KHÔNG Ctrl+Z); KHÔNG train khi GAME/app khác
+    dùng GPU (TDR risk). Nếu BUỘC train+game: raise Windows TdrDelay + cap game FPS + giữ
+    VRAM headroom (xem giải đáp train+game — rủi ro vẫn còn, runs quan trọng nên GPU sạch).
+
+[I] λ_D SAI — reward rất âm từ đầu, QoS trần thấp / agent kẹt DƯỚI baseline tầm thường.
+    Hai biến thể:
+    (I-1) R_LoS lớn → nhiều user bất khả thi → λ_D phạt cả user không thể phục vụ.
+          KHẮC PHỤC: xem "Servable %"; nếu <~95% → HẠ lambda_D.
+    (I-2) λ_D QUÁ CAO ở ramp DỄ (penalty-domination → critic không học được). Khi một
+          policy TẦM THƯỜNG đã đạt ~100% QoS (xem "Direct-only %" / "All-IRS %"), QoS là
+          trivial → λ_D cao chỉ tạo qp ≫ sum-rate → reward âm sâu & cực nhiễu → critic
+          cold-start KHÔNG fit nổi (explVar~0.1, kéo theo [B]) → advantage nhiễu → agent
+          kẹt DƯỚI cả baseline Direct-only. KHẮC PHỤC: HẠ λ_D mạnh (vd 3.0→1.5-2.0) để
+          return học được; nếu đang fresh thì resume từ checkpoint để critic warm-up
+          re-fit V về thang mới. Dấu hiệu nhận biết: qp/step ≫ R̄, explVar kẹt ~0.1,
+          QoS < Direct-only baseline.
+    QUY TẮC CALIBRATE λ_D: nhắm theo baseline TẦM THƯỜNG TỐT NHẤT (gồm cả Direct-only,
+    KHÔNG chỉ All-IRS). Trivial-baseline ~100% QoS → giữ λ_D THẤP. Baseline thấp/khó →
+    λ_D cao hơn. (result_1 Case 2: Direct-only=100% mà dùng λ_D=3.0 → critic mù, kẹt 54%.)
+
+[J] DIRECT-ATTRACTOR / IRS CHICKEN-AND-EGG — agent bỏ dần IRS, kẹt local optimum
+    "all-direct"; phase head idle (đói data) → không học pha → IRS mãi tệ → càng tránh.
+    Dấu hiệu: behaviour `dir` tăng dần về K, `irs=[..]` tụt về ~0, ent phase kẹt CAO
+    (~50-60% max) dù IRS không dùng; QoS có thể vẫn thấp vì power/IRS path chưa học.
+    Nguyên nhân (vòng luẩn quẩn): pha KHỞI TẠO NGẪU NHIÊN (env random_phi) → IRS link
+    tệ lúc đầu → critic credit "IRS xấu" → agent chọn direct → phase head ít sample IRS
+    → pha mãi ngẫu nhiên. Bị che bởi D_k THẤP: direct dù bị block vẫn vượt D_k (QoS
+    trivial) nên IRS "không cần" cho QoS — nhưng IRS-aligned cho SUM-RATE cao hơn nhiều
+    cho user bị block (beamforming gain ∝ N²) → reward tối ưu THỰC SỰ dùng IRS.
+    ⚠️ CAVEAT PROBE: baseline "All-IRS %" dùng PHA NGẪU NHIÊN (AllIRSPolicy KHÔNG set
+    phase_idx) → là lower-bound BẤT CÔNG, KHÔNG phải tiềm năng IRS. ĐỪNG kết luận "IRS
+    tệ hơn direct" từ nó. Với pha căn chỉnh, IRS thường vượt direct (nhất là user bị block).
+    → DÙNG probe_irs_vs_direct.py (so |h_IRS|_opt vs |h_direct| per user) để biết IRS-usage
+      cao có optimal không. PHÁT HIỆN (Case2 R_LoS=0.2): IRS-opt thắng direct 100% ở user
+      BỊ BLOCK (+38dB) nhưng chỉ MARGINAL ở non-block (+1.5dB). Pha ngẫu nhiên yếu ~14dB
+      (|Σφ| N→√N) → block vẫn thắng (dùng IRS), non-block lật sang THUA (giữ direct).
+      → IRS/K ≈ block-count là HỢP LÝ khi pha xấu. LEVER đẩy IRS-usage cao (route non-block)
+      = CHẤT LƯỢNG PHA, KHÔNG phải assignment/readout. Thứ tự: critic→pha→readout.
+    KHẮC PHỤC: (1) [mạnh nhất] PHASE WARM-START — pretrain pha về căn chỉnh kênh
+    (max |g_SR·Φ·g_RU|) thay random init → agent thử IRS thì IRS đã tốt sẵn → phá vòng.
+    (2) giữ exploration q-head (IRS-select) lâu hơn để phase có data (coi chừng [C]).
+    (3) curriculum R_LoS tăng dần → IRS cần thêm từng chút → agent thích nghi dần,
+    tránh nhảy vào ramp khó với IRS path trắng. KHÔNG resume từ checkpoint đã "tránh IRS"
+    (warm-up sẽ re-fit critic theo policy direct-only → đóng đinh local optimum).
+    (result_1 Case 2 @R_LoS=0.2: Blk~6/10 nhưng agent drift dir 4→8, irs→~1, phase idle.)
+
+
+================================================================================
+  PHẦN 4 — BẢNG TÍN HIỆU CHẨN ĐOÁN  (đọc nhanh trong training_log.txt)
+================================================================================
+  Đọc: dòng diag[...], rolling-50, behaviour.
+
+  Tín hiệu          | Khỏe / Mong muốn          | Báo động → mã
+  ------------------+---------------------------+----------------------------
+  ── CRITIC (sức khỏe critic — đọc cụm này CÙNG NHAU) ──
+  explVar (critic)  | > 0.5 & ỔN ĐỊNH           | ≈0 → mù [B-1/B-2] · dao động 0.1↔0.6 → bất ổn [B-2b]
+  V̄ (mean value)    | ≈ thang return thật       | ≈±1 khi return lớn → sai thang [B-1]
+  σV                | có spread (state-dep)     | ≈0 (đoán ~hằng số) → mù [B]
+  ‖∇‖V (grad critic)| GIẢM dần → settle         | plateau LỚN (vd 700-1000) không giảm → bất ổn [B-2b]
+  ── ACTOR/POLICY ──
+  ent/pg phase      | < ~0.3                    | > 1 → entropy-dominated [C]
+  L_pg              | nhỏ = gần hội tụ          | ≈0 + reward ngang → plateau [D]
+  λ|max| y/z        | DI CHUYỂN khỏi init       | đứng ở 0.50/0.45 → QC chết [E]
+  wc (common pwr%)  | ổn định                   | →~24% → common collapse [A]
+  Ck tot            | ổn định                   | →~0.46 → common collapse [A]
+  QoS/K             | tiến tới trần servable    | tụt dần → un-learn [A]/[C]
+  Blk/K vs QoS      | QoS cao dù Blk cao = tốt  | (mục [G] để phân biệt)
+  dir / irs=[..]    | dùng IRS khi IRS có lợi   | dir→K, irs→~0 + phase idle → [J]
+  KL per head       | nhỏ, ổn định              | tăng vọt → update quá mạnh
+
+  ⚠️ Probe baselines: "Servable %" = trần thật (best link). "Direct-only %" = direct
+  thật. "All-IRS %" = IRS với PHA NGẪU NHIÊN (lower-bound, KHÔNG phải tiềm năng IRS) → [J].
+
+
+================================================================================
+  PHẦN 5 — NGUYÊN TẮC BẤT BIẾN
+================================================================================
+  1. Bake từ ep 1: gae_lambda=0.9, critic warm-up bật, β thấp + anneal nhanh,
+     critic_target_tau≈0.02.
+  2. Curriculum R_LoS 0.2→0.5, resume mỗi bước, ổn định rồi mới lên.
+  3. KHÔNG transfer trọng số giữa các Case (shape khác: nq, output, d_s). Mỗi case
+     train từ đầu nhưng bake sẵn bài học.
+  4. KHÔNG thêm độ sâu MLP broadly — hidden đã rộng; thêm = khó train = kém ổn định.
+     Chỉ nới bề rộng lớp đầu của net có input theo K (xem Training-Case).
+  5. Re-tune λ_D qua feasibility probe ở MỖI R_LoS (đừng bê số cũ).
+  6. 1 job GPU/lúc; dừng bằng Ctrl+C. Lấy best model theo QoS từ checkpoints/.
+  7. lr_decay_start & beta_entropy_anneal_end là % của --episodes → đổi episodes nhớ
+     canh lại fraction.
+  8. ⭐ THỨ TỰ ƯU TIÊN TỐI ƯU (khi bắt đầu ramp, đặc biệt R_LoS=0.2 — cũng là thứ tự ĐỌC
+     KẾT QUẢ): CRITIC → PhaseMLP (học optimize IRS) → KHÔNG-IDLE (mọi head, đặc biệt các
+     agent SAU VQC: phase/power/ck) → QoS → SUM-RATE.
+     LÝ DO: (a) critic mù → advantage nhiễu → MỌI ramp sau khó optimize → critic là gốc,
+     fix TRƯỚC. (b) PhaseMLP phải học optimize IRS Ở RAMP DỄ (0.2, QoS còn slack); không
+     học được ở đây thì ramp khó không bao giờ. (c) head idle (entropy phẳng ~max, không
+     hội tụ) = lãng phí capacity + chặn pipeline phía sau VQC. (d) QoS KHÔNG ép bằng tuning
+     ở 0.2 — trade-off bằng λ_D Ở MỖI RAMP SAU (per feasibility probe). (e) sum-rate là
+     đánh bóng cuối. → ĐỪNG nhảy xuống QoS/sum-rate khi critic/PhaseMLP/head chưa khỏe;
+     đo task-metric trên nền chưa ổn = vô nghĩa (xem [B-2b] lưu-ý QoS⊥critic).
+
+
+================================================================================
+  GHI CHÚ BẢO TRÌ
+================================================================================
+  Khi gặp & giải quyết lỗi MỚI mang tính CHUNG (đúng cho mọi case) → cập nhật file
+  này: thêm mã kế tiếp [J]/[K]… vào Phần 3 (triệu chứng→nguyên nhân→cách sửa) và (nếu
+  có tín hiệu nhận biết) 1 dòng vào Phần 4. KHÔNG nhân đôi mã đã có — mở rộng mã cũ.
+  Lỗi/bài học theo hyper CỤ THỂ của 1 case → cập nhật Training-Case-<N>.txt (không để ở đây).
+  Quy trình này do skill "irs-rsma-log-reading" (Step 5) tự động thực hiện sau mỗi lần đọc log.
+================================================================================

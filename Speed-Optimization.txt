@@ -1,0 +1,212 @@
+================================================================================
+  SPEED OPTIMIZATION  ·  IRS-assisted RSMA Quantum-RL  (chuẩn bị Case 3)
+================================================================================
+  Mục tiêu: giảm thời gian training BẰNG parallel/optimize code, KHÔNG đổi thuật toán
+  (KHÔNG đụng reward_noise_avg / n_rollout / ppo_epochs / gae / λ_D — đó là hyper THUẬT
+  TOÁN, đổi chúng = đổi kết quả, không phải "tăng tốc").
+  Trạng thái: THIẾT KẾ + RULES — áp dụng khi bắt đầu run MỚI (đừng đụng run đang chạy).
+  Cập nhật: 2026-05-30
+--------------------------------------------------------------------------------
+
+
+================================================================================
+  §0 — BASELINE ĐO ĐƯỢC  (result_3, Case 2 nq=12, K=10)
+================================================================================
+  s/ep: rollout-ep ~25-36s | PPO-update-ep ~195s
+  → per 12-ep cycle ≈ 11×30 + 195 = 525s:  ROLLOUT ~360s (69%) | UPDATE ~165s (31%)
+  GPU: util ~36% | power 42W/450W (9%) | mem 2.9GB/24GB (12%)  → DÙNG RẤT ÍT (idle nhiều)
+
+  Chẩn đoán: nút thắt Case 2 = ROLLOUT (tuần tự, CPU-bound vì reward_noise_avg=16 →
+  16 lần tính reward/step; + 200 step × 12 ep tuần tự, GPU forward bé → GPU idle).
+  → GPU idle 64% = headroom THẬT cho parallel/batch. "Dư memory" KHÔNG phải nút thắt
+    (mem chỉ 12%); nút thắt là rollout tuần tự CPU-bound + GPU under-utilized.
+
+  ⚠️ Case 3 (nq=16) KHÁC: state 65536 (16×) → PPO UPDATE thành GPU-heavy → bottleneck
+     CHUYỂN từ rollout (Case2) sang update (Case3). Optimization khác nhau theo case.
+
+
+================================================================================
+  §1 — RULES  (guardrails để tăng tốc KHÔNG vi phạm pipeline/correctness)
+================================================================================
+  R1. PHÂN LOẠI MỌI THAY ĐỔI:
+      • BEHAVIOR-PRESERVING (an toàn mọi lúc): profiling/timing, precision đã-là-FP32,
+        kernel fusion, giảm CPU↔GPU transfer. → KHÔNG đổi kết quả (cùng seed → cùng curve).
+      • BEHAVIOR-CHANGING (PHẢI validate trước khi nhận): batch lớn hơn, vectorized env,
+        parallelism đổi thứ tự RNG, spsa_n_reps. → đổi kết quả kể cả cùng seed.
+      → CHỈ behavior-preserving được áp tự do. Behavior-changing PHẢI qua R9 (validate).
+
+  R2. RUN ĐANG CHẠY: sửa file KHÔNG ảnh hưởng job đang chạy (Python đã nạp code vào RAM).
+      NHƯNG run KẾ dùng code mới → py_compile + smoke-test TRƯỚC khi tin. Đừng giả định.
+
+  R3. MỘT THAY ĐỔI/LẦN + A/B: không gộp speed-opt với đổi thuật toán/hyper (không quy được
+      nguyên nhân). So curve (QoS/explVar/loss) new-vs-old trên run ngắn.
+
+  R4. DETERMINISM GUARD: speed-opt đổi thứ tự bốc RNG (env batching, parallel) → đổi kết quả
+      DÙ cùng seed → coi là BEHAVIOR-CHANGING (R1) → validate learning curve, KHÔNG chỉ
+      "chạy được". (vectorized rollout thuộc loại này.)
+
+  R5. NO-GIT SAFETY: snapshot (cp -r results/.. hoặc git init + commit) TRƯỚC mọi speed-opt
+      không tầm thường. Speed-opt rất dễ ngầm phá correctness.
+
+  R6. GPU/PROCESS HYGIENE (bài học deadlock): mặc định 1 job/GPU; parallel chỉ khi CỐ Ý +
+      giám sát; dừng bằng Ctrl+C (KHÔNG Ctrl+Z → treo giữ GPU); trước khi chạy luôn kiểm
+      `ps aux | grep train` + `nvidia-smi`.
+
+  R7. PARALLEL-RUNS SCOPE: chỉ cho SEARCH độc lập (seed/hyper khác nhau), KHÔNG để tăng tốc
+      1 run. Mỗi run → result dir RIÊNG. Giám sát: tổng VRAM < ~22GB + KHÔNG oversubscribe
+      CPU core (rollout CPU-heavy → N_run × core/run ≤ số core vật lý).
+
+  R8. KHÔNG dùng reward_noise_avg / n_rollout / ppo_epochs / gae / λ_D làm lever "tốc độ" —
+      chúng đổi KẾT QUẢ → là đổi thuật toán (xử lý qua skill training, không phải file này).
+      Speed thuần = batching, vectorization, precision, parallelism, transfer.
+
+  R9. VALIDATE EQUIVALENCE (cho mọi claim "preserving" hoặc "không hại"): chạy ~50-100 ep
+      new-vs-old, xác nhận QoS/explVar/loss curve KHỚP (trong biên nhiễu). RỒI mới nhận.
+
+  R10. PROFILING gated OFF mặc định → đo KHÔNG bao giờ đổi behavior (xem §2).
+
+
+================================================================================
+  §2 — PROFILING  (task 4: đo chính xác env vs forward vs update — gated OFF)
+================================================================================
+  Câu hỏi cần trả lời: trong rollout (69%), CPU-env (reward_noise_avg) hay GPU-forward
+  chiếm phần lớn? → quyết định vectorize-env vs batch-forward.
+
+  CÁCH AN TOÀN: gate sau cờ mặc định OFF → run thường KHÔNG đổi gì. Patch ready-to-paste:
+
+  --- params.py: thêm 1 dòng ---
+    profile_timing = False   # True → in breakdown thời gian (chỉ để đo, không đổi training)
+
+  --- train.py (trong _train_body) ---
+    # đầu mỗi episode, cạnh các accumulator khác:
+       _prof = getattr(P, 'profile_timing', False)
+       _t_fwd = _t_env = 0.0
+    # trong step loop, bọc phần forward (từ extract_state tới trước env.step):
+       if _prof: _ts = time.perf_counter()
+       ... (actor.forward + sub-actors + build action) ...
+       if _prof: _t_fwd += time.perf_counter() - _ts; _ts = time.perf_counter()
+       obs2, reward, _, env_info = env.step(action)
+       if _prof: _t_env += time.perf_counter() - _ts
+    # bọc khối PPO update (if (ep+1)%n_rollout==0):
+       if _prof: _tu = time.perf_counter()
+       ... (PPO update block) ...
+       if _prof: _flog(f"  · prof: fwd={_t_fwd:.1f}s env={_t_env:.1f}s update={time.perf_counter()-_tu:.1f}s")
+
+  ĐỌC KẾT QUẢ:
+   - env ≫ fwd  → rollout CPU-bound (reward_noise_avg) → vectorize ENV (§4) hoặc (đổi thuật
+     toán, ngoài file này) giảm reward_noise_avg.
+   - fwd ≫ env  → rollout GPU-forward-bound (launch overhead 1 circuit/step) → BATCH forward
+     qua parallel env (§4) lấp GPU idle.
+   - update lớn (Case 3) → tối ưu phần GPU update (batch↑, xem §4 / spsa lever ở Common-Knowledge).
+  GUARDRAIL: profile_timing=False là MẶC ĐỊNH → run bình thường byte-identical (R10).
+
+
+================================================================================
+  §3 — PARALLEL INDEPENDENT RUNS  (task 2: cho HYPERPARAMETER SEARCH, không 1-run-speedup)
+================================================================================
+  Khi nào: sweep config cho Case-3 prep (vd spsa_n_reps=4 vs 8, λ_D, batch). GPU idle 36%
+  → chạy 2-3 run gần đồng thời → N kết quả trong ~1.3-1.5× thời gian. KHÔNG tăng tốc 1 run.
+
+  PROTOCOL AN TOÀN (tuân R6, R7):
+   1. Mỗi config = một bản params.py riêng (hoặc override qua env var / args) → result dir RIÊNG.
+   2. ⚠️ GOTCHA: _next_run_dir() scan + mkdir → 2 launch ĐỒNG THỜI có thể cùng chọn result_N
+      → COLLISION. → Launch CÁCH NHAU vài giây (stagger), hoặc gán dir tường minh.
+   3. Trước mỗi launch: `ps aux | grep train` (đếm job) + `nvidia-smi` (VRAM/util).
+   4. Giám sát: tổng VRAM các job < ~22GB; số job × CPU-core/job ≤ core vật lý (rollout
+      CPU-heavy → oversubscribe core làm CHẬM tất cả).
+   5. Dừng: Ctrl+C TỪNG job (KHÔNG Ctrl+Z); sau đó kiểm `ps` + `nvidia-smi` để chắc sạch.
+   6. Kỳ vọng: mỗi run chậm ~30-50% (cạnh tranh CPU rollout + GPU time-slice update), nhưng
+      tổng throughput tăng (GPU/CPU đang có headroom). Lời cho SEARCH, không cho 1 run.
+
+  KHÔNG làm: parallel để "tăng tốc 1 run" (không được — 1 run vẫn tuần tự); parallel khi
+  một job đang ở giai đoạn GPU-heavy của Case 3 (lúc đó GPU bão hòa → parallel chỉ time-slice).
+
+
+================================================================================
+  §4 — VECTORIZED ROLLOUT  (task 3: tăng tốc 1 RUN — design, behavior-CHANGING → validate)
+================================================================================
+  Mục tiêu: lấp GPU idle + amortize CPU env trong ROLLOUT (69% Case 2) bằng cách chạy
+  B_env episode SONG SONG, batch state → 1 forward batched thay vì B_env forward tuần tự.
+
+  THIẾT KẾ:
+   1. B_env instance ISTNEnv độc lập (seed khác nhau) — hoặc 1 vectorized-env wrapper.
+   2. Mỗi step: gom B_env state → 1 actor.forward BATCHED (đường batch ĐÃ CÓ cho gradient —
+      `compute_logprobs_grads_batch` / `expectations_*_batch` — tái dùng semantics).
+      → B_env action → step B_env env (env.step vector hóa, hoặc loop nhẹ B_env lần CPU).
+   3. Sub-actors (phase/power/ck) batch qua (B_env × active-IRS).
+   4. Buffer PPO đầy B_env× nhanh hơn → cùng PPO update.
+
+  LỢI: GPU forward batched (lấp idle) + env CPU amortized (B_env env "song song" qua batch
+  numpy nếu vectorize được) → rollout 360s có thể giảm mạnh. Mem dư (21GB) thừa sức B_env lớn.
+
+  RỦI RO / PHẢI XỬ LÝ:
+   - BEHAVIOR-CHANGING (R1,R4): B_env env song song đổi thứ tự bốc RNG → kết quả khác DÙ
+     cùng seed. → PHẢI validate learning curve tương đương (R9), không chỉ "chạy được".
+   - env.step phải hỗ trợ batch HOẶC viết vectorized-env (g_SU/g_RU/blocking/reward tính
+     song song cho B_env). Đây là phần KHÓ nhất (env hiện single-instance).
+   - actor batch-forward phải KHỚP single-forward semantics (cùng circuit → nên khớp; verify
+     bằng so o_hat batched vs từng cái trên cùng input).
+   - sub-actor batch + state-building phải đúng per-env.
+
+  VALIDATION (bắt buộc trước khi nhận, R9):
+   - chạy ~50-100 ep vectorized vs sequential (cùng seed-set) → QoS/explVar/loss curve khớp
+     trong biên nhiễu + đo speedup thực.
+   - chỉ nhận nếu (a) curve tương đương VÀ (b) nhanh hơn đáng kể.
+
+  EFFORT: LỚN (vectorize env là chính). Đáng làm cho Case 3 NẾU profiling (§2) cho thấy
+  rollout vẫn nặng. Với Case 3, update GPU-heavy → cân nhắc kết hợp batch↑ ở update nữa.
+
+--------------------------------------------------------------------------------
+  §4b — BẢN NHẸ: chỉ batch QUANTUM FORWARD (không vectorize env)  [bước đầu, effort vừa]
+--------------------------------------------------------------------------------
+  Ý tưởng: chạy B_env env instance song song; mỗi step CHỈ batch phần QUANTUM forward
+  (GPU win), CÒN sub-actor (MLP nhỏ) + env.step thì LOOP B_env lần (CPU, rẻ/đơn giản).
+  → cô lập đúng phần GPU (quantum) để batch, không phải viết lại env.
+
+  CẤU TRÚC (pseudocode vòng rollout):
+    envs = [ISTNEnv(cfg, seed=base+b, ...) for b in range(B_env)]
+    obs  = [e.reset() for e in envs]
+    for step in range(n_steps):                       # 1 "wave" = B_env episode song song
+        s = stack([actor.extract_state(obs[b], demand, blocked[b]) for b in range(B_env)])  # (B,d_s) CPU rẻ
+        # ── PHẦN DUY NHẤT BATCH (GPU): B state → B φ ──
+        phi_B, logp_B, z_B = actor.forward_batch_sample(s)     # ⬅ METHOD MỚI cần viết
+        for b in range(B_env):                         # phần còn lại LOOP (CPU, MLP nhỏ)
+            phase/power/ck.forward(... phi_B[b], z_B[b] ...) → action_b
+            obs[b], r_b, _, info_b = envs[b].step(action_b)    # env CPU — KHÔNG batch
+            ep_buf[b].append(transition_b)
+    # n_rollout_episodes=12, B_env=12 → 1 wave 200 step → 2400 transition (như cũ)
+    # → GPU forward: 200 call batched(B=12) thay vì 2400 call đơn → 12× ít launch.
+
+  PIECE DUY NHẤT PHẢI VIẾT: actor.forward_batch_sample(s_batch) →
+    _dual_encode_batch → encode angles → _build_batch (shots, đã batch được) →
+    batched softmax → SAMPLE B φ (categorical) + B log_prob + trả z_t batch.
+    (Tái dùng _dual_encode_batch / expectations_*_batch; thêm batched shot-sampling +
+     categorical sample. Verify: pi từ batched == pi từ single trên CÙNG input.)
+
+  WIN CHỈ CÓ NẾU: forward (GPU) là phần ĐÁNG KỂ của rollout. → PHẢI profile (§2) trước:
+    - forward ≳ env  → bản nhẹ ăn (batch forward, ít launch) ✓
+    - env ≫ forward (nghi do reward_noise_avg=16 CPU)  → bản nhẹ win ÍT (env vẫn B× loop)
+      → cần BẢN FULL (§4, vectorize env) hoặc lever khác.
+
+  KHÔNG đổi: thuật toán/PPO/mạng/hyper/sub-actor (chỉ gọi trong loop). ĐỔI: RNG order
+  (B env song song) → behavior-CHANGING (R4) → validate equivalence (R9).
+
+  EFFORT: VỪA (1 method mới forward_batch_sample + restructure rollout; KHÔNG đụng env).
+  Nhẹ hơn bản full nhiều. Là bước-đầu hợp lý NẾU profiling cho thấy forward đáng kể.
+
+  RỦI RO: forward_batch_sample phải khớp distribution single (verify); shot RNG batch
+  đúng; B env seed khác nhau (độc lập); vẫn behavior-changing → A/B (R9).
+
+
+================================================================================
+  §5 — TÓM TẮT ƯU TIÊN
+================================================================================
+  AN TOÀN MỌI LÚC (preserving): profiling (§2, gated off).
+  CHO SEARCH (Case-3 prep): parallel runs (§3) — protocol R6/R7, lời cho sweep.
+  TĂNG TỐC 1 RUN: vectorized rollout (§4) — behavior-changing, validate R9, effort lớn.
+  ĐÃ TỐI ƯU SẴN (đừng đụng): complex64 (FP32), SPSA (param-shift bất khả thi Case3),
+                              GPU batched jacobian.
+  KHÔNG coi là "speed" (đổi thuật toán → skill training): reward_noise_avg, n_rollout,
+                              ppo_epochs, gae, λ_D, spsa_n_reps.
+  MỌI THAY ĐỔI: theo RULES §1 (phân loại → validate → A/B → 1-thay-đổi/lần → snapshot).
+================================================================================

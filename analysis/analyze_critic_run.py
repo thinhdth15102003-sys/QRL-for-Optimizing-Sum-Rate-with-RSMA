@@ -27,6 +27,11 @@ Usage
 """
 from __future__ import annotations
 
+# ── path bootstrap: make project root importable when run as script ──────
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ─────────────────────────────────────────────────────────────────────────
+
 import os
 import json
 import argparse

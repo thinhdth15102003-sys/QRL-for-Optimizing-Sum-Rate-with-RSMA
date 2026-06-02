@@ -3,9 +3,11 @@
 ================================================================================
   Kiến thức CHUNG về mô hình & cách train, KHÔNG phụ thuộc (K,M) hay R_LoS.
   Hyperparameter cụ thể theo từng case → xem Training-Case-<N>.txt.
-  Cập nhật lần cuối: 2026-05-31  (Case1 r1→11; +[I-2],[J](C2 r1), [B-2](r2), [B-2b]GAE(r3), [H-2]TDR(r4),
+  Cập nhật lần cuối: 2026-06-01  (Case1 r1→11; +[I-2],[J](C2 r1), [B-2](r2), [B-2b]GAE(r3), [H-2]TDR(r4),
                                  [B-2b] clipfrac-trước-lr + clip-là-triệu-chứng (C2 r6/r7), [B-2c] oracle-sweep,
-                                 lưu-ý QoS⊥critic (C2 r5/6/7))
+                                 lưu-ý QoS⊥critic (C2 r5/6/7); +PopArt-stable-capped + đọc-explVar-đúng + counterfactual
+                                 power-probe (C2 r8); +code-clean gỡ TD/target-net (PopArt+GAE-return only);
+                                 +stable-capped-caveat + [B-2d] DRIFT-ATTRIBUTION timeline (C2 r8 drift ep1068→1404))
 --------------------------------------------------------------------------------
   CÁCH DÙNG BỘ FILE NÀY:
    - Common-Knowledge.txt (file này): cơ chế mô hình, bảng tra lỗi, tín hiệu chẩn đoán,
@@ -124,6 +126,30 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
           mạnh là dấu hiệu) → ⭐ FIX = RETURN NORMALIZATION (z-score target / PopArt: critic dự đoán
           return chuẩn hóa, un-scale ở output bằng running μ,σ). Bake-in target-norm làm critic fit
           tốt hơn + BỀN với grad_clip (xem [DIAG-ORACLE]).
+          (Case 2 result_8: FULL PopArt → T1 grad O(1-5), T2 bias~0, POP|ΔV|=1e-15. T3 post-anneal
+           explVar mean0.45 STD0.11 MIN0.30 KHÔNG dip âm → critic ỔN, agent cải thiện QoS 51→57%, reward+.)
+          ⭐ ĐỌC explVar ĐÚNG (general): ĐỪNG đọc binary "mean>0.5". explVar mean<0.5 NHƯNG std THẤP
+          (<0.15) + KHÔNG dip âm = STABLE-CAPPED (ổn định ở ~TRẦN ALEATORIC, CHẤP NHẬN) — KHÁC HẲN
+          unstable-WOBBLE (std cao + dip xuống âm). Trần aleatoric tuỳ policy-stochasticity + env noise
+          (Tier-1 probe đo). → đọc std + min + có-dip-âm-không, KHÔNG chỉ mean. Stable-capped = ĐỦ TỐT
+          để tiến (đừng đào critic mãi khi nó chỉ "capped" chứ không "loạn").
+          ⚠ STABLE-CAPPED CAVEAT (general, Case2 result_8 drift): "stable-capped" chỉ chứng minh critic
+          ỔN trong CỬA SỔ ĐO (vd post-anneal ep400-700). Run DÀI HƠN có thể drift muộn: critic destabilize
+          sau ep1000+ (explVar dip âm) → advantage nhiễu → actor head trôi degenerate. → mean<0.5 dù
+          std thấp = "borderline" còn nguy cơ non-stationarity dài hạn (T3-WOBBLE branch tiềm tàng).
+          PHÒNG: EARLY-STOP-BY-TASK-METRIC (QoS rolling không vượt best sau N ep) bảo vệ checkpoint tốt
+          nhất khi critic chưa đủ bền cho run rất dài.
+    (B-2d) ⭐ DRIFT-ATTRIBUTION (general — khi actor HEAD đi degenerate giữa run): TRƯỚC KHI đổ tội head,
+          check TIMELINE NHÂN-QUẢ với critic explVar. Trình tự PHỔ BIẾN: critic destabilize (explVar dip
+          âm / sụp) → advantage nhiễu → head trôi vào degenerate basin (vd wc spike→max, common-collapse
+          [A], head extreme value). HIẾM KHI head tự loạn rồi critic theo sau. → ĐỌC: tại ep head extreme
+          xuất hiện, explVar đã wobble/dip TRƯỚC chưa? CÓ → head là BỀ MẶT (fix head = treat triệu chứng);
+          gốc thật = critic non-stationarity / λ_D / lever khác. Fix head VẪN ĐÁNG nếu head có vấn đề
+          ĐỘC LẬP (vd PowerMLP wp-concentration trần QoS — quan sát Ở ĐỈNH lúc lành, tách biệt với drift),
+          nhưng KHÔNG kỳ vọng fix head chữa drift.
+          (Case2 result_8 ep1068→1404: explVar dip −0.21 ep1068 → sụp ep1356 → wc spike 71% ep1404 SAU.
+           PowerMLP=bề mặt; gốc=critic non-stationarity run dài [B-2b T3-wobble branch] + λ_D=1.5 cho
+           phép QoS-abandonment.)
     (B-2c) ⭐ ORACLE-SWEEP DIAGNOSTIC (general method — tách "giới hạn ARCH/capacity" khỏi "giới
           hạn TRAINING-DYNAMICS"): khi critic loạn dai dẳng qua nhiều run mà không rõ gốc, train
           critic OFFLINE trên 1 dataset CỐ ĐỊNH (collect random/mixed policy, reward_noise_avg cao
@@ -135,10 +161,17 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
           Script: sweep_oracle_critic.py. RẺ (CPU, ~2h), không tranh GPU, không confound policy-drift.
     LƯU Ý KIẾN TRÚC: critic là V(s_t), ĐỘC LẬP với actor readout/o_hat → đổi readout/
     entanglement KHÔNG cứu critic mù. Phải fix critic riêng. Kiểm: explVar>0.5 + V̄ đúng thang.
-    LƯU Ý NÚT THẮT (Case 2 result_5/6/7): critic ổn KHÔNG đồng nghĩa QoS lên. Nếu QoS kẹt 1 mức
+    LƯU Ý NÚT THẮT (Case 2 result_5/6/7/8): critic ổn KHÔNG đồng nghĩa QoS lên. Nếu QoS kẹt 1 mức
     XUYÊN SUỐT nhiều run BẤT KỂ explVar (kể cả lúc explVar cao) → nút thắt KHÔNG ở critic mà ở
-    POLICY/HEAD (vd PhaseMLP idle → IRS pha ngẫu nhiên → user rớt). Đừng fix critic mãi; tách bạch
-    "critic health" (explVar) với "task metric" (QoS) — chúng độc lập.
+    POLICY/HEAD. Đừng fix critic mãi; tách "critic health" (explVar) với "task metric" (QoS) — độc lập.
+    ⭐ TÌM HEAD-NÚT-THẮT bằng COUNTERFACTUAL PROBE (general, RẺ — không cần train ablation): giữ NGUYÊN
+    policy, thay 1 head bằng baseline đơn giản, recompute metric trên CÙNG state + CÙNG noise draw.
+    (Case 2 result_8: QoS kẹt + user rớt trên MỌI link (IRS lẫn direct) → nghi POWER. probe_power_qos.py
+    thay w_p học-được bằng CHIA ĐỀU → QoS 58%→83% (+25pts), sum-rate gần như không đổi → PowerMLP
+    CONCENTRATE power (wp-top2~48%, ôm 2 user, đói 8 user) là thủ phạm QoS THẬT, KHÔNG phải phase/
+    assignment. met user có 2.7× power vs unmet.) → counterfactual cô lập đúng head hỏng, rẻ hơn nhiều.
+    LƯU Ý: head concentrate power = agent tối đa sum-rate biên ở λ_D thấp → bỏ QoS. Lever = sửa head
+    đó (power-spread / QoS-aware), HOẶC λ_D (per-ramp) — nhưng λ_D↑ phải sau khi critic ổn.
 
 [C] ENTROPY-DOMINATED — cờ "⚠", ent/pg phase>1, policy trôi về random, QoS un-learn.
     Nguyên nhân: β quá cao so với L_pg (nhỏ khi gần tối ưu / gae cao). KHẮC PHỤC:
@@ -252,8 +285,9 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
 ================================================================================
   PHẦN 5 — NGUYÊN TẮC BẤT BIẾN
 ================================================================================
-  1. Bake từ ep 1: gae_lambda=0.9, critic warm-up bật, β thấp + anneal nhanh,
-     critic_target_tau≈0.02.
+  1. Bake từ ep 1: gae_lambda=0.9, critic warm-up bật, β thấp + anneal nhanh.
+     CRITIC = V(s) + GAE-return target + PopArt (value-target normalisation). ĐÃ GỠ
+     TD(0)/target-net (forward_target/polyak/critic_target_tau bỏ — code clean 2026-06-01).
   2. Curriculum R_LoS 0.2→0.5, resume mỗi bước, ổn định rồi mới lên.
   3. KHÔNG transfer trọng số giữa các Case (shape khác: nq, output, d_s). Mỗi case
      train từ đầu nhưng bake sẵn bài học.

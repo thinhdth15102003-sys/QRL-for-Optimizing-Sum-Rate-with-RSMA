@@ -1,0 +1,253 @@
+================================================================================
+  ABLATION STUDY PLAN  ·  HQC-HAC paper (IRS-assisted grouped RSMA, ISTN)
+================================================================================
+  Mục đích: thiết kế ablation chứng minh TỪNG contribution thực sự đóng góp.
+  Nền: paper .tex (Research Paper/HQC-HAC...tex), code train.py/RL/, diagnostic pipeline.
+  Trạng thái: KẾ HOẠCH (chưa chạy — chạy SAU khi hệ ổn định). Cập nhật: 2026-05-31
+--------------------------------------------------------------------------------
+
+# ── 3 CONTRIBUTIONS CỦA PAPER (ablation phải bám) ───────────────────────────
+  C1. Problem formulation: sum-rate max, multi-IRS grouped RSMA / ISTN, joint 4 biến
+      (assignment, phase, power, common-rate) như SEQUENTIAL DEPENDENCY CHAIN, dưới
+      QoS + discrete-phase + blockage + imperfect-CSI.  (= setup, ít ablate được.)
+  C2. HQC-HAC framework: VQC quantum actor lo ASSIGNMENT (high-level combinatorial) +
+      3 classical sub-actor (phase/power/Ck) low-level, khai thác sequential dependency.
+      Entropy regularization + annealing across all levels.
+  C3. AE-VQC: autoencoder NÉN state cao chiều → latent gọn → quantum encode (vừa register
+      NISQ + giữ info quan trọng cho assignment).
+
+# ── ĐÃ CÓ TRONG PAPER (đừng làm lại) ────────────────────────────────────────
+  4 BASELINES (khác assignment policy, CÙNG grouped-RSMA signal model):
+    (i) random  (ii) greedy (strongest channel)  (iii) direct-only (no IRS)  (iv) all-IRS.
+  → cover: giá trị IRS + chất lượng assignment learned-vs-heuristic.
+  Metric chính: sum-rate R_tot + QoS-satisfaction %. Eval GREEDY trên held-out, avg seeds.
+  → ABLATION của ta = BỔ SUNG: test COMPONENT kiến trúc (baseline test assignment policy).
+
+# ── ⚠ LỆCH PAPER vs CODE (phải reconcile TRƯỚC khi report) ─────────────────
+  Table hyper (tab:hyper) = Case-1 CŨ + method CŨ:
+    λ_GAE=0 (code: gae=0.9 [A]) · β 2e-3→2e-4 (code 1e-3→3e-4 [C]) · reward-noise 8 (code 16)
+    · λ_D 3.5 (Case2 1.5) · P_S 50dBm (Case2 70).
+  Method critic (dòng ~1002): "TD regression vs frozen target net" — code giờ là GAE-RETURN
+    target + FULL PopArt (value-normalisation). → paper PHẢI update mô tả critic + hyper khớp
+    diagnostic work (đây là method THỰC đang chạy). Ablation chạy trên config MỚI, không phải table cũ.
+
+
+================================================================================
+  DANH SÁCH ABLATION (đã bỏ RSMA theo yêu cầu user)
+================================================================================
+  ⭐ MUST-HAVE (reviewer sẽ đòi — bám C2/C3):
+   A1. ⭐⭐ QUANTUM vs CLASSICAL actor: thay VQC bằng MLP cùng I/O cho assignment, GIỮ y hệt
+        3 sub-actor + critic + training. = ablation SỐNG-CÒN của paper lượng tử. Reviewer luôn
+        hỏi "VQC có thật giúp hay chỉ MLP trá hình?". Fair: khớp param-count hoặc ghi rõ.
+        ★ TIMING (chốt 2026-06-01): chạy A1 SAU khi VQC "hợp lý nhất có thể" (fix frozen-λ [E] +
+        readout redesign) → test quantum-AT-ITS-BEST, công bằng. (A1 sớm trên VQC-hỏng undersell quantum.)
+        Có thể chạy A1 sớm 1 lần để biết baseline-gap rẻ; A1 "chính thức cho paper" = SAU khi VQC tối ưu.
+        ★ FRAMING (honest prior): quantum nhiều khả năng KHÔNG outperform task-perf (lý thuyết QML + frozen-λ
+        + barren-plateau ngược scaling). KHÔNG over-claim advantage (=reject). Story AN TOÀN/Q1-able =
+        FEASIBILITY + PARAMETER-EFFICIENCY. ĐỪNG extrapolate ADVANTAGE lên Case 3 (chỉ extrapolate scaling đã ĐO).
+   A2. AE vs no-AE (C3): bỏ AE, encode thẳng state (hoặc projection tuyến tính) vào VQC.
+        Chứng minh AE-compression cần cho register hạn chế.
+   A3. Hierarchical/sequential vs MONOLITHIC (C2): 1 actor phẳng quyết 4 biến cùng lúc vs
+        decomposition tuần tự. Chứng minh "sequential dependency chain" đáng giá.
+   A4. Entropy-annealing on/off (C2 — paper nêu rõ): bỏ entropy / bỏ anneal → collapse sớm?
+
+  QUANTUM-DESIGN SENSITIVITY (củng cố claim lượng tử):
+   A5. n_qubits / n_var_layers / data-reuploading on-off.
+   A6. Entanglement + readout (E1/E2, R1) = CHÍNH readout A/B đã plan (VQC-Readout-Design.txt)
+        → feed thẳng vào ablation này. Monitor barren-plateau (grad qc/λ) [REV-2].
+
+  (Giá trị IRS + assignment đã do 4 baselines lo — KHÔNG cần ablation IRS riêng.)
+  (RSMA-vs-SDMA: ĐÃ BỎ theo yêu cầu user — paper là VỀ grouped-RSMA, không so SDMA.)
+
+
+================================================================================
+  PHƯƠNG PHÁP (ablation dễ sai — giữ kỷ luật)
+================================================================================
+  • ĐỔI 1 THỨ, giữ mọi thứ còn lại (same seeds, episodes, hyper). Confound = vô nghĩa.
+  • MULTI-SEED (3-5) → report MEAN ± STD. RL variance cao, 1 seed bị reviewer bác.
+  • FAIR COMPUTE: quantum-vs-classical (A1) khớp param-count hoặc nêu rõ chênh + lập luận.
+  • CÙNG METRIC mọi variant: sum-rate · QoS% · IRS-usage · convergence-speed · FINAL-STABLE
+    (KHÔNG dùng peak). Báo thêm critic-health/per-head từ Tier-2/3 = điểm cộng phân tích.
+  • CỐ ĐỊNH 1 setting headline (vd Case ở ramp báo cáo chính) — đừng ablate mọi ramp × variant
+    (nổ compute). Ablate ở config ỔN ĐỊNH (sau khi critic/PhaseMLP đã work).
+
+# ── TRÌNH BÀY (bảng + figure) ───────────────────────────────────────────────
+  Bảng chính (bold Full, mỗi dòng mean±std N seeds):
+    Variant                       Sum-rate   QoS%   IRS-use   ΔSum-rate
+    Full HQC-HAC (proposed)       [bold]     [bold]           —
+      w/o VQC (classical actor)                               −x%   (A1)
+      w/o AE                                                  −x%   (A2)
+      w/o hierarchy (joint)                                   −x%   (A3)
+      w/o entropy-anneal                                      −x%   (A4)
+  + 1 FIGURE convergence (reward/QoS curves) cho 3-4 ablation chính.
+  + (tùy) bảng/figure sensitivity riêng cho A5/A6.
+
+
+================================================================================
+  TẬN DỤNG SẴN CÓ  +  TIMING
+================================================================================
+  • Baselines DirectOnlyPolicy/AllIRSPolicy (CSI/baselines.py) + random/greedy → 4 baseline paper.
+  • probe_irs_vs_direct.py → bằng chứng physical-layer IRS-value.
+  • Oracle-sweep (sweep_oracle_critic.py) = TEMPLATE ablation sẵn (arch×clip×norm) — copy pattern.
+  • Diagnostic Tier-2/3 (critic_diag, analyze_critic_run) → metric phụ cho mọi variant.
+  TIMING: chạy SAU khi hệ ổn (Case 2 qua T3 + ≥1 ramp tốt). NHƯNG A1 (quantum-vs-classical) nên
+    chạy SỚM vì quyết định narrative cả paper. Đừng ablate khi training còn chật vật (kết quả nhiễu).
+
+  TODO khi bắt đầu ablation:
+    [ ] reconcile paper method/hyper vs code (PopArt/GAE-return/gae0.9) — update .tex
+    [ ] A1 classical-actor variant (reuse pipeline, thay quantum_actor bằng MLP cùng I/O)
+    [ ] A2/A3/A4 variants (cờ bật/tắt trong params/train)
+    [ ] điền Performance Analysis (1102) + bảng ablation vào .tex
+
+
+================================================================================
+  DATA READINESS — dữ liệu Quantum đã đủ chưa? (check 2026-06-01)
+================================================================================
+  1. DỮ LIỆU ABLATION: chỉ có BASELINE (result_1→8 đều full-quantum, KHÔNG phải variant).
+     → bảng ablation mới có 1 dòng "Full" (result_8 PopArt). MỌI variant A1-A6 phải CHẠY MỚI.
+     → "chưa đủ": ablation cần thí nghiệm mới, không đào từ run cũ.
+
+  2. LOGGING quantum trong run (đủ cho task-perf): mỗi diag có ‖∇‖qc · λ|max| y/z ·
+     λgrad mag/net/r (frozen-λ) · ent q · KL q. → đủ so sum-rate/QoS + grad-health cơ bản.
+
+  3. GAP cho quantum-ablation NGHIÊM TÚC (thêm TRƯỚC khi chạy A1/A5/A6):
+     • ⭐ Var per-parameter gradient Var_θ[∂L/∂θ] — barren plateau = grad-variance giảm MŨ
+       theo #qubit. A5(qubit-sweep)+A6(entanglement) cần để CLAIM. HIỆN: chỉ có norm ‖∇‖qc,
+       KHÔNG có variance-vs-qubit. (λgrad r=0.06 đã là barren-like cho ENCODING, thiếu scaling θ.)
+     • Param-count per variant — A1 quantum-vs-classical phải FAIR. Extract được từ model, chưa log.
+     • (tùy) shot-noise sensitivity (sweep n_shots) · (bỏ) expressibility/entangling-capability = overkill.
+
+  4. KHUYẾN NGHỊ: trước A1/A5/A6 dựng "quantum-ablation diagnostic" nhỏ (như critic_diag) log
+     (a) gradient-variance across θ, (b) param-count. A6 readout đã plan monitor barren [REV-2]
+     → mở rộng thành variance-scaling là đủ. A1/A2/A3/A4 chỉ cần sum-rate/QoS → đã đủ, không thêm gì.
+================================================================================
+
+
+================================================================================
+  ARCHITECTURE THEORY  (2026-06-01, added after reading Jerbi et al. NeurIPS 2021
+                       "Parametrized Quantum Policies for RL" + Tan et al. 2026)
+================================================================================
+  Mục đích: cung cấp THEORETICAL FOUNDATION cho A1, A6, và quyết định kiến trúc cuối.
+  Mọi quyết định arch SAU đây phải map TỚI C1/C2/C3 ở đầu file. Cross-ref:
+  docs/VQC-Readout-Design.txt (entanglement + readout spec).
+  Paper draft: Research Paper/HQC-HAC for Optimizing Sum-Rate with IRS-Assisted.tex
+
+# ── PHẦN A: 3-Architecture comparison (assignment head only) ────────────────
+  Composite function của head IRS-select cho từng arch:
+
+   (1) AE-VQC-PostNN (CURRENT, baseline cho A1):
+       f₁ = PostNN ∘ ⟨H⟩ ∘ VQC ∘ E_AE          state(d) → z(n_lat) → ⟨H⟩(|H|) → MLP → logit(|A|)
+       Params Case 2: ~55K (PostNN dominate ~50K, AE ~5K, VQC ~96)
+       Q:C ratio = 1:500  (classical dominates)
+       Attribution: LOW — PostNN có thể replicate bất kỳ quantum mapping nào
+
+   (2) AE-VQC-SoftmaxPQC (proposed, A6 chính):
+       f₂ = softmax_β ∘ W·⟨H⟩ ∘ VQC ∘ E_AE     state → z → ⟨H⟩ → linear → softmax_β
+       Params Case 2: ~5.8K (AE ~5K, VQC ~96, W |A|×|H|=750, β=1)
+       Q:C ratio = 1:8  (classical = thin linear)
+       Attribution: MEDIUM-HIGH — linear bound ép quantum làm việc thật
+
+   (3) VQC-SoftmaxPQC pure (Jerbi et al. setup):
+       f₃ = softmax_β ∘ W·⟨H⟩ ∘ VQC_re-upload(s)   state → data re-up VQC → ⟨H⟩ → linear → softmax_β
+       Params Case 2: ~1K (VQC depth↑ ~250, W 750)
+       Q:C ratio = 1:3
+       Attribution: HIGHEST — no learned compression, quantum carries all
+       ⚠ Underfit risk Case 3: 12 qubits qua 108-dim state chỉ với data re-uploading
+
+  Theory anchor: cả 3 universal approximator (Jerbi App. C.2 + Goto et al. 2021 ref [59]),
+  khác biệt là EFFICIENCY (params + samples) đạt universality. (2) là sweet spot cho
+  high-dim physical problem (cần AE bridge) + clean attribution.
+
+  Inductive bias key insight (Jerbi App. E.2 Fig 8):
+   • DNN: piece-wise linear functions
+   • PQC: oscillating Fourier-like sums
+   • Wireless physics: oscillating (|Σ e^{jφ}|² beamforming, multipath, discrete phase)
+   → (2), (3) MATCH bias với physics; (1) MISMATCH (PostNN piece-wise linear dominates).
+   → Theory argument cho paper: (2)/(3) cần ÍT SAMPLE HƠN cho wireless task. (Verify empirical.)
+
+# ── PHẦN B: Readout dimension (R1 vs current) ───────────────────────────────
+  Current readout (B4 + extra_zz): |H|=25 generic observables (Case 2).
+  R1 readout (per docs/VQC-Readout-Design.txt): |H|=42 observables CẤU TRÚC per-action:
+    R1-a Z_user_k (K=10) | R1-b Z_user_k·Z_IRS_m per-IRS (K·M=20)
+    R1-c C_k cluster aggregate (K=10) | R1-d Z_IRS_m (M=2)
+
+  Tương tác (2) AE-VQC-SoftmaxPQC × R1 readout:
+   ⭐ MẠNH NHẤT: R1 observables tự nhiên align với action structure (user k → IRS m).
+   Logit cho (k, m) ≈ tổ hợp tuyến tính 3-4 observables liên quan ({R1-a[k], R1-b[k,m],
+   R1-c[k], R1-d[m]}). SoftmaxPQC W có thể SPARSE (~100 params Case 2 với 4 obs/action).
+   → Paper claim: "Structurally-motivated quantum readout — each action logit is a sparse
+     combination of physics-meaningful observables, no nonlinear classical decision layer."
+
+  Classical bypass [B] interaction với SoftmaxPQC:
+   • Case 2 identity-map: per-user info CÒN trong R1-a → bypass redundant (pure SoftmaxPQC OK)
+   • Case 3 soft-cluster: per-user info MẤT → bypass cần thiết
+   • RECOMMENDATION cho uniform paper architecture: HYBRID SoftmaxPQC
+     input = [⟨H⟩(42) ‖ z_k_raw(2K) ‖ z_IRS(2M)] → linear W (|A|×(42+2K+2M)) → softmax_β
+     Case 2: |A|×66=1980, vẫn ~25× ít hơn current ~50K.
+
+# ── PHẦN C: nq UNIFICATION (FIX inconsistency across cases) ─────────────────
+  ⚠ CURRENT INCONSISTENCY (paper-weakness, reviewer Q1 sẽ hit):
+   Case 1: nq=8,  K+M=6,  user-qubits=7  → DƯ 2  → identity-like (ancilla)
+   Case 2: nq=12, K+M=12, user-qubits=10 → KHỚP → identity
+   Case 3: nq=16, K+M=24, user-qubits=12 → THIẾU 8 → soft-cluster
+   → 3 maps khác nhau cho 3 case, KHÔNG flexible cho (K, M) tổng quát.
+
+  PROPOSED FIX: nq cố định = 12 (= Case 2 baseline) cho TẤT CẢ cases.
+   Encoding capacity scale qua data re-uploading depth D_enc + trainable λ:
+                  K     M    nq    D_enc    Map
+     Case 1       5     1    12    2        soft-cluster (học)
+     Case 2      10     2    12    3        soft-cluster (học)
+     Case 3      20     4    12    5        soft-cluster (học)
+   Cùng VQC architecture, KHÁC depth + λ scaling chỉ.
+
+  Lợi ích:
+   1. UNIFORM method across cases → paper-clean, reviewer-defensible.
+   2. NISQ-feasibility argument: "fixed 12 qubits, near-term hardware compatible."
+   3. Biến weakness "per-case nq" thành STRENGTH "scale-invariant qubit register".
+   4. Map = soft-cluster trainable → AE đã làm dim reduction, soft-cluster làm
+      QUBIT assignment learnable — TÁCH BẠCH responsibility.
+
+  Theory support: Jerbi App. C.2 + Goto et al. 2021 (ref [59]) — data re-uploading
+  + trainable λ + sufficient depth = universal approximator độc lập số qubits.
+  Jerbi paper test n_qubits=2-6 cho state_dim 2-6 — ta state_dim 44-108 cần nq cao hơn.
+  Chọn nq=12: trade-off NISQ + 2^12=4096 simulation feasible + đủ entanglement capacity.
+
+# ── PHẦN D: VQC placement justification (single VQC at top) ─────────────────
+  ⚠ Reviewer sẽ hỏi: tại sao VQC CHỈ ở IRS-select, không ở phase/power/Ck?
+
+  Honest justification (paper Section III nên ghi rõ):
+   • IRS-select: action space (M+1)^K, per-user UNIQUE, KHÔNG có shared structure
+     → classical cần model joint distribution → combinatorial blowup
+   • Phase: action space 4^(M·N) NHƯNG PhaseMLP per-element factorization +
+     shared weights across N=24 elements → effective complexity N·log(4) tractable
+   • Power: 3-axis factored (split·common·private), softmax slots ≤ K+M+1=13 → tractable
+   • Common-rate: within-group softmax, group sizes nhỏ → tractable
+
+  → Argument: "VQC at the head where classical sharing/factorization CANNOT reduce
+     combinatorial complexity. Other heads have natural classical structure exploitable."
+
+  A/B test ablation cho paper credibility: place VQC ở phase head, đo:
+   - Performance gain (likely marginal)
+   - Compute cost 4× (4 quantum forwards per step)
+   - Param count ~+hundreds (VQC#2)
+  Predicted: marginal gain + significant cost → "negative ablation" justify single-VQC.
+  CHẠY MỘT LẦN sau A1 chính → đưa vào paper Appendix as ablation supporting design choice.
+
+# ── PHẦN E: SEQUENCING quyết định (cập nhật cho A1, A6, frozen-λ) ───────────
+  Cập nhật trên TIMING section ở trên:
+
+  GATE chain (mỗi gate gate cái sau, không bundle):
+   G1. result_10 (factored PowerMLP + bias=+0.3) ramp 0.2 settle → verdict GO/NO-GO factored
+       arch (đang chạy 2026-06-01).
+   G2. Frozen-λ [E] fix (spsa_n_reps↑ hoặc normalization) → λ|max| moves off 0.50/0.45.
+       1 fresh run trên arch (1) cũ, verify encoding learning.
+   G3. Implement R1 readout + SoftmaxPQC head (architecture 2) bundled với V1-V5 verification
+       harness (per docs/VQC-Readout-Design.txt Bước 2). 1 fresh run.
+   G4. nq=12 unification → soft-cluster trainable cho mọi case. Implement + verify trên Case 2.
+   G5. A1 ablation: (1)+old vs (2)+R1+softmaxPQC vs classical-DNN matched-params.
+       Across Case 1, 2, 3. Multi-seed (3-5).
+   G6. A5/A6 sensitivity (depth, λ-trainable on/off, entanglement E1+E2 on/off).
+   G7. VQC-at-phase-head ablation (negative result để justify design).
+
+  Mỗi gate = 1-3 fresh runs. Total ~10-15 runs cho full paper data.
+================================================================================

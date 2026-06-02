@@ -13,8 +13,8 @@ description: >-
   trigger for: "how do I stabilize training", "which hyperparameters should I
   change", "is it stable enough to raise R_LoS / advance the curriculum", checking
   a result_N run's health, scaling to a new Case (K=10/M=2 etc.), or setting up a
-  new training run. Knowledge is split across Common-Knowledge.txt (case-agnostic)
-  and Training-Case-<N>.txt (per-(K,M)-case hyperparameters) at the project root —
+  new training run. Knowledge is split across docs/Common-Knowledge.txt (case-agnostic)
+  and docs/Training-Case-<N>.txt (per-(K,M)-case hyperparameters) at the project root —
   read both, AND keep them up to date after resolving issues.
 ---
 
@@ -25,31 +25,31 @@ hyperparameter settings per case. Distilled from Case 1 (K=5,M=1, runs result_1�
 
 ## Knowledge layout (project root)
 
-- **Common-Knowledge.txt** — case-AGNOSTIC: model mechanisms, the symptom→cause→fix
+- **docs/Common-Knowledge.txt** — case-AGNOSTIC: model mechanisms, the symptom→cause→fix
   table `[A]`–`[I]`, the diagnostic-signal table, and core invariants. True for any
   (K,M) / R_LoS.
-- **Training-Case-1.txt** — K=5, M=1: hyperparameters per R_LoS ramp (0.2→0.5) + the
+- **docs/Training-Case-1.txt** — K=5, M=1: hyperparameters per R_LoS ramp (0.2→0.5) + the
   actual result_1→11 history and per-ramp lessons.
-- **Training-Case-2.txt** — K=10, M=2: setup + watch-outs (per-ramp table to fill in).
+- **docs/Training-Case-2.txt** — K=10, M=2: setup + watch-outs (per-ramp table to fill in).
 - **params.py** defines Case 1/2/3 = (K=5,M=1)/(K=10,M=2)/(K=20,M=4).
 
 ## How to use this skill (diagnose → fix → record)
 
 1. **Identify the current case** from `params.py` ACTIVE CASE (K, M) → pick the
-   matching `Training-Case-<N>.txt`.
-2. **Read both layers**: `Common-Knowledge.txt` for the mechanism + general fix, and
-   the matching `Training-Case-<N>.txt` for case/ramp-specific hyperparameter context
+   matching `docs/Training-Case-<N>.txt`.
+2. **Read both layers**: `docs/Common-Knowledge.txt` for the mechanism + general fix, and
+   the matching `docs/Training-Case-<N>.txt` for case/ramp-specific hyperparameter context
    (what was set, what worked, what to watch).
 3. **Diagnose from the log**: read the `diag[...]` blocks, the `rolling-50` line, and
    the `behaviour` line in `results/result_N/training_log.txt`. Map symptoms via the
    cheat-sheet below to a `[X]` code, then apply the fix.
 4. **RECORD what you learn** (this is essential — the playbook must compound):
-   - New insight that holds for ANY case → update **Common-Knowledge.txt** (Part 3/4/5).
-   - Hyperparameter/ramp lesson specific to a case → update that **Training-Case-<N>.txt**
+   - New insight that holds for ANY case → update **docs/Common-Knowledge.txt** (Part 3/4/5).
+   - Hyperparameter/ramp lesson specific to a case → update that **docs/Training-Case-<N>.txt**
      (the per-ramp section + the run log at the bottom).
    - When a new run finishes, append it to the case's run-log table.
 
-## Symptom → fix index (full detail in Common-Knowledge.txt Part 3)
+## Symptom → fix index (full detail in docs/Common-Knowledge.txt Part 3)
 
 - `[A]` **Collapse** (QoS peaks then falls; wc→~24%, Ck→~0.46) → `gae_lambda=0.9`.
 - `[B]` **Blind critic** (explVar≈0 / V̄ wrong scale after resume) → critic warm-up + load saved critic + `critic_target_tau=0.02`.
@@ -68,7 +68,7 @@ hyperparameter settings per case. Distilled from Case 1 (K=5,M=1, runs result_1�
 - `λ|max|` moves off 0.50/0.45 · stuck → `[E]`  |  `wc`/`Ck tot` → ~24%/~0.46 → `[A]`
 - `QoS/K` rising to ceiling · falling → `[A]`/`[C]`
 
-## Core invariants (see Common-Knowledge.txt Part 5)
+## Core invariants (see docs/Common-Knowledge.txt Part 5)
 
 gae=0.9 + critic warm-up + low β/fast-anneal + tau=0.02 from ep 1 · R_LoS curriculum
 0.2→0.5 (stabilize before advancing) · no cross-Case weight transfer · don't deepen

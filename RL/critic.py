@@ -1,22 +1,22 @@
 """
 critic.py
 ---------
-Action-conditioned MLP critic  Q(s_t, a_t; ψ)  (CTDE style).
+State-value MLP critic  V(s_t; ψ)  with PopArt value-target normalisation.
+(Supports an optional action-conditioned mode via d_action>0, but the training
+pipeline uses it as V(s) with d_action=0.)
 
 Architecture
 ------------
-  [s_t ‖ a_t]  →  LayerNorm  →  [hidden[0], ReLU]  →  …  →  scalar Q
-
-The joint action vector a_t is a fixed-size float encoding of all four
-sub-actor outputs (assignment, phase, power, C_k).  During inference each
-actor runs with only its local state; the critic is never deployed.
+  s_t  →  LayerNorm  →  [hidden[0], ReLU]  →  …  →  scalar ṽ (normalised value)
+  Real value  V = σ·ṽ + μ   (PopArt: running stats μ,σ of the return; the last
+  layer is rescaled on every stats update so V is preserved — see update_popart_stats).
 
 Hidden layer sizes are configured in params.py via  critic_hidden = [512,256,128,64].
 
 Gradient
 --------
-  TD loss  L = ½ (Q(s_t,a_t) - target)²,
-  target   = r + γ · Q(s_{t+1}, a_{t+1})  (frozen before PPO epochs)
+  MSE on the NORMALISED head:  L = ½ (ṽ − (G−μ)/σ)²,
+  where G = GAE λ-return target (Â_t + V_t), supplied by the caller (train.py).
   Standard backprop through all layers; Adam optimiser.
 """
 
@@ -114,9 +114,6 @@ class ClassicalCritic:
 
         self.opt = _Adam(lr=lr)
 
-        # Frozen target network for stable TD targets (Polyak soft update)
-        self._target_params: dict = {k: v.copy() for k, v in self._params.items()}
-
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _layer_norm(self, x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
@@ -146,23 +143,6 @@ class ClassicalCritic:
             if i < self.n_layers - 1:
                 x = _relu(x)
         return self._denorm(float(x[0]))      # ṽ → real V = σ·ṽ+μ (PopArt)
-
-    def forward_target(self, s_t: np.ndarray, a_t: np.ndarray = None) -> float:
-        """Q-value from the frozen target network (used to compute TD targets)."""
-        x  = self._sa(s_t, a_t if a_t is not None else np.empty(0))
-        Ws = [self._target_params[f'W{i}'] for i in range(self.n_layers)]
-        bs = [self._target_params[f'b{i}'] for i in range(self.n_layers)]
-        for i, (W, b) in enumerate(zip(Ws, bs)):
-            x = x @ W + b
-            if i < self.n_layers - 1:
-                x = _relu(x)
-        return self._denorm(float(x[0]))      # PopArt un-normalise
-
-    def polyak_update(self, tau: float) -> None:
-        """Soft update: target ← τ·current + (1−τ)·target."""
-        for k in self._params:
-            self._target_params[k] *= (1.0 - tau)
-            self._target_params[k] += tau * self._params[k]
 
     # ── PopArt ─────────────────────────────────────────────────────────────────
 
@@ -206,10 +186,6 @@ class ClassicalCritic:
         bL = self._params[f'b{L}']
         WL *= (sig_old / sig_new)
         bL[:] = (sig_old * bL + mu_old - mu_new) / sig_new
-        # keep target net consistent (it un-normalises with the same stats)
-        self._target_params[f'W{L}'] *= (sig_old / sig_new)
-        self._target_params[f'b{L}'][:] = (
-            sig_old * self._target_params[f'b{L}'] + mu_old - mu_new) / sig_new
 
         self.pa_mu, self.pa_nu, self.pa_sigma = mu_new, nu_new, sig_new
 
@@ -402,5 +378,4 @@ class ClassicalCritic:
         critic.pa_sigma       = c.get('pa_sigma', 1.0)
         critic.pa_initialized = c.get('pa_initialized', False)
         critic.set_params(dict(np.load(os.path.join(path, 'critic_params.npz'))))
-        critic._target_params = {k: v.copy() for k, v in critic._params.items()}
         return critic

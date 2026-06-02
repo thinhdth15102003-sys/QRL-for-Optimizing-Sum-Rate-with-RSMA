@@ -574,31 +574,41 @@ class PhaseMLP:
 
 class PowerMLP:
     """
-    Power allocation policy for G+1 common streams + K private streams.
+    Factored power-allocation policy (3-way independent softmax heads).
 
-    G = number of active IRS (those with ≥1 assigned user) — varies per step.
-    The network has fixed output size M+1+K (max possible); only G+1+K slots
-    are active per step.  w_c_vec is extracted as (G+1,) by keeping only the
-    direct-group slot (index 0) and the G active-IRS slots.
+    Decomposes the budget decision into three semantically independent factors so
+    each has its own gradient signal — fixes the gradient-bleed of a single
+    softmax over M+1+K mixed slots that caused wp-concentration (Case2 r8).
 
-    Input state
-    -----------
-    Effective channel magnitudes |h_eff[k]|, shape (K,).
+      π_split   (2 logits)        : [common_total_frac, private_total_frac]
+      π_common  (M+1 logits)      : how to split the common share across
+                                    direct + IRS groups (inactive IRS masked).
+      π_private (K logits)        : how to split the private share across K users.
 
-    Output
-    ------
-    w_c_vec : (G+1,) float  — [direct, IRS_{active[0]}, …, IRS_{active[G-1]}]
-    w_p     : (K,)   float  — private power per user
-    Σ w_c_vec + Σ w_p = P_S by construction.
+    Budget invariant
+    ----------------
+      w_c_total = π_split[0] * P_S    →  w_c_full[g] = π_common[g] * w_c_total
+      w_p_total = π_split[1] * P_S    →  w_p[k]      = π_private[k] * w_p_total
+      Σ w_c_full + Σ w_p = P_S (by construction; π_common renormalised over active).
 
-    active_irs_ids : sorted list of 1-based physical IRS gids with users.
-                     Passed at runtime; determines G and the active mask.
+    Action / PPO
+    ------------
+    Treated as 3 independent action factors:
+      log π(a) = log π_split(a_s) + log π_common(a_c) + log π_private(a_p)
+    PPO uses one joint ratio (one A_eff per transition). Each axis backprops
+    its own cross-entropy gradient: dL/dlogits_axis = -A_eff·(one_hot - probs).
+
+    Entropy bonus
+    -------------
+    `beta_entropy` applies to all 3 axes; `beta_entropy_private_extra` adds on
+    top for π_private ONLY. This is the lever for fighting wp-concentration
+    without touching the common-vs-private split or per-group common share.
 
     Parameters
     ----------
-    d_s    : state dimension  (= K)
+    d_s    : state dimension
     K      : number of users
-    M      : number of IRS panels  (sets maximum output size)
+    M      : number of IRS panels (sets common output size M+1)
     P_S    : total power budget (W)
     hidden : int or list[int]
     """
@@ -609,8 +619,17 @@ class PowerMLP:
         self.K   = K
         self.M   = M
         self.P_S = P_S
-        self._n_common = M + 1          # max common-stream slots (fixed weight dim)
-        d_out = self._n_common + K
+        self._n_split   = 2
+        self._n_common  = M + 1
+        self._n_private = K
+        d_out = self._n_split + self._n_common + self._n_private
+        self._d_out = d_out
+
+        self._sl_split   = slice(0, self._n_split)
+        self._sl_common  = slice(self._n_split,
+                                 self._n_split + self._n_common)
+        self._sl_private = slice(self._n_split + self._n_common,
+                                 self._n_split + self._n_common + self._n_private)
 
         rng = np.random.default_rng(seed)
         self.rng = rng
@@ -618,183 +637,283 @@ class PowerMLP:
         hidden_sizes      = _parse_hidden(hidden)
         self.hidden_sizes = hidden_sizes
         self.Ws, self.bs  = _build_layers(d_s, d_out, hidden_sizes, rng)
+        # [Case2 result_9 ep~250] Init SPLIT axis to constant π_split ≈ [0.57, 0.43]
+        # at t=0 (gentle common-preference) by zeroing the output-layer weights for
+        # split slots and biasing slot 0 by +0.3. Without state-dependent weights,
+        # logits_split = [0.3, 0.0] always → π_split = [0.574, 0.426]. PG learns the
+        # state-dependent weights from zero. Common/private slots keep He-init.
+        #
+        # ITERATION HISTORY (Case2 R_LoS=0.2):
+        #   bias=+1.0 (result_9): π_split=[0.73,0.27] init. wc LOCKED ~70% throughout
+        #     run (PG cannot drift it down). Per-user private starved (~3% P_S) →
+        #     PhaseMLP IDLE worse than result_8 (ent ph 61% vs 56% max). Critic
+        #     stability + PowerMLP no-idle ✅, but priority-2 PhaseMLP regressed.
+        #   bias=+0.0 (smoke result_10): no nudge → wc collapsed to 7-15% within 60ep
+        #     (single-softmax's implicit common-stream protection gone). ⚠ENTROPY-DOMINATED.
+        #   bias=+0.3 (current): split between the two; π_split start at 0.57 leaves
+        #     PG room to drift toward ~30-40% common (the result_8 healthy range).
+        # Rationale: factoring removed the implicit common-stream protection of the
+        # old shared-softmax; need SOME nudge but not a lock. PG can still drift either way.
+        self.Ws[-1][:, 0:self._n_split] = 0.0
+        self.bs[-1][0] = 0.3
+        self.bs[-1][1] = 0.0
         self._params      = _make_params(self.Ws, self.bs)
         self.opt          = _Adam(lr=lr)
         self.architecture = _arch_str(d_s, hidden_sizes, d_out)
 
-    def _active_mask(self, active_irs_ids: list) -> np.ndarray:
-        """Build (M+1,) bool mask: True for direct group + active IRS groups."""
+    # ── Mask & softmax helpers ────────────────────────────────────────────
+
+    def _common_mask(self, active_irs_ids) -> np.ndarray:
+        """(M+1,) bool: True for direct + active IRS groups."""
         mask    = np.zeros(self._n_common, dtype=bool)
-        mask[0] = True                          # direct group always active
+        mask[0] = True
         for gid in active_irs_ids:
             if 1 <= gid <= self.M:
                 mask[gid] = True
         return mask
 
-    def _masked_softmax(self, logits: np.ndarray,
-                        mask: np.ndarray) -> np.ndarray:
-        """Softmax over (M+1+K,) logits with -inf on inactive common slots."""
-        logits_m = logits.copy()
-        for g in range(self._n_common):
-            if not mask[g]:
-                logits_m[g] = -np.inf
-        return _softmax_1d(logits_m)
+    @staticmethod
+    def _masked_softmax_1d(logits: np.ndarray,
+                           mask: np.ndarray) -> np.ndarray:
+        x = logits.copy()
+        x[~mask] = -np.inf
+        return _softmax_1d(x)
 
-    def _extract_wc(self, w_full: np.ndarray,
-                    active_irs_ids: list) -> np.ndarray:
-        """
-        Extract (G+1,) w_c_vec from (M+1,) power slice.
-        Order: [direct, active_irs_ids[0], active_irs_ids[1], …]
-        """
+    def _split_logits(self, logits: np.ndarray) -> tuple:
+        return (logits[self._sl_split],
+                logits[self._sl_common],
+                logits[self._sl_private])
+
+    def _probs_from_logits(self, logits: np.ndarray,
+                           common_mask: np.ndarray) -> tuple:
+        l_s, l_c, l_p = self._split_logits(logits)
+        return (_softmax_1d(l_s),
+                self._masked_softmax_1d(l_c, common_mask),
+                _softmax_1d(l_p))
+
+    @staticmethod
+    def _extract_wc(w_full: np.ndarray,
+                    active_irs_ids) -> np.ndarray:
+        """Extract (G+1,) [direct, IRS_active...] from (M+1,) array."""
         slots = [0] + list(active_irs_ids)
         return w_full[slots]
+
+    # ── Public forward ────────────────────────────────────────────────────
 
     def forward(self, s_t: np.ndarray,
                 active_irs_ids: list) -> tuple:
         """
-        Parameters
-        ----------
-        s_t            : (K,) float   |h_eff| magnitudes
-        active_irs_ids : list[int]    1-based physical IRS gids with ≥1 user
-
         Returns
         -------
-        w_c_vec : (G+1,) float   common-stream powers
-        w_p     : (K,)   float   private powers
-        fracs   : (M+1+K,)       full softmax fractions (for gradient bookkeeping)
-        a_sel   : int            sampled action index into fracs (for PPO)
+        w_c_vec : (G+1,) float
+        w_p     : (K,)   float
+        probs   : dict {'split','common','private'} — full distributions (diagnostic)
+        action  : dict {'split': int, 'common': int (M+1 idx), 'private': int (K idx)}
         """
-        mask         = self._active_mask(active_irs_ids)
-        s_t          = _layer_norm(s_t)
-        _, _, logits = _mlp_forward(s_t, self.Ws, self.bs)
-        fracs        = self._masked_softmax(logits, mask)
-        w            = fracs * self.P_S
+        s_n          = _layer_norm(s_t)
+        _, _, logits = _mlp_forward(s_n, self.Ws, self.bs)
+        mask = self._common_mask(active_irs_ids)
+        p_s, p_c, p_p = self._probs_from_logits(logits, mask)
 
-        w_c_full = w[:self._n_common]           # (M+1,)
-        w_c_vec  = self._extract_wc(w_c_full, active_irs_ids)   # (G+1,)
-        w_p      = w[self._n_common:].copy()    # (K,)
+        w_c_total = float(p_s[0]) * self.P_S
+        w_p_total = float(p_s[1]) * self.P_S
+        w_c_full  = p_c * w_c_total                                # (M+1,)
+        w_p       = p_p * w_p_total                                # (K,)
+        w_c_vec   = self._extract_wc(w_c_full, active_irs_ids)     # (G+1,)
 
-        valid_mask  = np.isfinite(fracs) & (fracs > 0)
-        valid_idx   = np.where(valid_mask)[0]
-        valid_probs = fracs[valid_idx] / fracs[valid_idx].sum()
-        a_sel       = int(self.rng.choice(valid_idx, p=valid_probs))
-        return w_c_vec, w_p, fracs, a_sel
+        a_split   = int(self.rng.choice(self._n_split,   p=p_s))
+        valid_c   = np.where(p_c > 0)[0]
+        a_common  = int(self.rng.choice(valid_c, p=p_c[valid_c] / p_c[valid_c].sum()))
+        a_private = int(self.rng.choice(self._n_private, p=p_p))
+
+        action = {'split': a_split, 'common': a_common, 'private': a_private}
+        probs  = {'split': p_s, 'common': p_c, 'private': p_p}
+        return w_c_vec, w_p, probs, action
+
+    # ── Log-prob (single + batch) ─────────────────────────────────────────
+
+    def compute_log_prob(self, s_t: np.ndarray,
+                         active_irs_ids: list,
+                         action) -> float:
+        """Log π(a|s) = sum of 3 axis log-probs. Used for PPO ratio."""
+        _, _, logits = _mlp_forward(_layer_norm(s_t), self.Ws, self.bs)
+        mask = self._common_mask(active_irs_ids)
+        p_s, p_c, p_p = self._probs_from_logits(logits, mask)
+        return float(
+            np.log(p_s[action['split']]   + 1e-10)
+          + np.log(p_c[action['common']]  + 1e-10)
+          + np.log(p_p[action['private']] + 1e-10)
+        )
+
+    def compute_log_prob_batch(self, trans_list: list) -> np.ndarray:
+        """
+        Each transition dict must contain 's_power', 'active_irs_ids',
+        and the 3 action fields 'power_a_split' / 'power_a_common' / 'power_a_private'.
+        """
+        B = len(trans_list)
+        X = _layer_norm_batch(np.stack([t['s_power'] for t in trans_list]))
+        _, _, logits = _mlp_forward_batch(X, self.Ws, self.bs)   # (B, d_out)
+
+        lp_b = np.zeros(B)
+        for b, trans in enumerate(trans_list):
+            mask = self._common_mask(trans['active_irs_ids'])
+            p_s, p_c, p_p = self._probs_from_logits(logits[b], mask)
+            lp_b[b] = (np.log(p_s[trans['power_a_split']]   + 1e-10)
+                     + np.log(p_c[trans['power_a_common']]  + 1e-10)
+                     + np.log(p_p[trans['power_a_private']] + 1e-10))
+        return lp_b
+
+    # ── Gradient (single + batch) ─────────────────────────────────────────
 
     def compute_grads(self, s_t: np.ndarray,
                       active_irs_ids: list,
                       advantage: float,
                       beta_entropy: float = 0.0,
-                      a_sel: int = None) -> tuple:
-        """Returns (L_pg, L_ent, grads) without applying the update."""
-        mask             = self._active_mask(active_irs_ids)
-        s_t              = _layer_norm(s_t)
-        pres, hs, logits = _mlp_forward(s_t, self.Ws, self.bs)
-        probs            = self._masked_softmax(logits, mask)
+                      action=None,
+                      beta_entropy_private_extra: float = 0.0) -> tuple:
+        """Single-transition gradient. Returns (L_pg, L_ent, grads)."""
+        s_n              = _layer_norm(s_t)
+        pres, hs, logits = _mlp_forward(s_n, self.Ws, self.bs)
+        mask = self._common_mask(active_irs_ids)
+        p_s, p_c, p_p = self._probs_from_logits(logits, mask)
 
-        if a_sel is None:
-            valid_mask  = np.isfinite(probs) & (probs > 0)
-            valid_idx   = np.where(valid_mask)[0]
-            valid_probs = probs[valid_idx] / probs[valid_idx].sum()
-            a_sel       = int(self.rng.choice(valid_idx, p=valid_probs))
+        if action is None:
+            valid_c = np.where(p_c > 0)[0]
+            action  = {
+                'split':   int(self.rng.choice(self._n_split, p=p_s)),
+                'common':  int(self.rng.choice(
+                    valid_c, p=p_c[valid_c] / p_c[valid_c].sum())),
+                'private': int(self.rng.choice(self._n_private, p=p_p)),
+            }
 
-        L_pg = float(-advantage * np.log(probs[a_sel] + 1e-10))
+        a_s, a_c, a_p = action['split'], action['common'], action['private']
+        adv = float(advantage)
 
-        one_hot = np.zeros(self._n_common + self.K)
-        one_hot[a_sel] = 1.0
-        dL_pg_dlogits = -advantage * (one_hot - probs)
+        L_pg = -adv * float(
+              np.log(p_s[a_s] + 1e-10)
+            + np.log(p_c[a_c] + 1e-10)
+            + np.log(p_p[a_p] + 1e-10)
+        )
 
-        log_probs      = np.log(probs + 1e-10)
-        H_dist         = -float(np.sum(probs * log_probs))
-        L_ent          = -beta_entropy * H_dist
-        dL_ent_dlogits = beta_entropy * probs * (log_probs + H_dist)
+        oh_s = np.zeros(self._n_split);   oh_s[a_s] = 1.0
+        oh_c = np.zeros(self._n_common);  oh_c[a_c] = 1.0
+        oh_p = np.zeros(self._n_private); oh_p[a_p] = 1.0
 
-        dL_dlogits = dL_pg_dlogits + dL_ent_dlogits
+        d_s = -adv * (oh_s - p_s)
+        d_c = -adv * (oh_c - p_c)
+        d_p = -adv * (oh_p - p_p)
+
+        beta_p = beta_entropy + beta_entropy_private_extra
+
+        log_s  = np.log(p_s + 1e-10)
+        log_c  = np.log(p_c + 1e-10)
+        log_pp = np.log(p_p + 1e-10)
+        H_s = -float(np.sum(p_s * log_s))
+        H_c = -float(np.sum(np.where(mask, p_c * log_c, 0.0)))
+        H_p = -float(np.sum(p_p * log_pp))
+        L_ent = -(beta_entropy * (H_s + H_c) + beta_p * H_p)
+
+        d_s += beta_entropy * p_s * (log_s + H_s)
+        d_c += beta_entropy * np.where(mask, p_c * (log_c + H_c), 0.0)
+        d_p += beta_p       * p_p * (log_pp + H_p)
+
+        dL = np.zeros(self._d_out)
+        dL[self._sl_split]   = d_s
+        dL[self._sl_common]  = d_c
+        dL[self._sl_private] = d_p
         for g in range(self._n_common):
             if not mask[g]:
-                dL_dlogits[g] = 0.0
+                dL[self._n_split + g] = 0.0
 
-        grads = _mlp_backward(s_t, pres, hs, self.Ws, dL_dlogits)
-        return L_pg, L_ent, grads
-
-    def compute_log_prob(self, s_t: np.ndarray,
-                         active_irs_ids: list,
-                         a_sel: int) -> float:
-        """Log π(a_sel|s) under current policy. Used for PPO ratio."""
-        mask         = self._active_mask(active_irs_ids)
-        _, _, logits = _mlp_forward(_layer_norm(s_t), self.Ws, self.bs)
-        probs        = self._masked_softmax(logits, mask)
-        return float(np.log(probs[a_sel] + 1e-10))
-
-    def compute_log_prob_batch(self, trans_list: list) -> np.ndarray:
-        """
-        Vectorised log π(a_sel|s) for a mini-batch.
-
-        Each transition dict must contain 's_power', 'active_irs_ids',
-        and 'power_a_sel'.
-
-        Returns
-        -------
-        lp_b : (B,) float  per-transition log-probability
-        """
-        B    = len(trans_list)
-        X    = _layer_norm_batch(
-            np.stack([t['s_power'] for t in trans_list])
-        )                                                        # (B, d_s)
-        _, _, logits = _mlp_forward_batch(X, self.Ws, self.bs)  # (B, d_out)
-
-        lp_b = np.zeros(B)
-        for b, trans in enumerate(trans_list):
-            mask     = self._active_mask(trans['active_irs_ids'])
-            probs    = self._masked_softmax(logits[b], mask)
-            lp_b[b]  = float(np.log(probs[trans['power_a_sel']] + 1e-10))
-        return lp_b
+        grads = _mlp_backward(s_n, pres, hs, self.Ws, dL)
+        return float(L_pg), float(L_ent), grads
 
     def compute_grads_batch(self, trans_list: list,
                             eff_adv_b: np.ndarray,
-                            beta_entropy: float = 0.0) -> tuple:
+                            beta_entropy: float = 0.0,
+                            beta_entropy_private_extra: float = 0.0) -> tuple:
         """
-        Vectorised PPO gradient for PowerMLP over a mini-batch.
+        Vectorised PPO+entropy gradient over a mini-batch.
+        Returns (L_pg, L_ent, grads, axis_stats)  — all B-averaged.
 
-        Batches the MLP forward/backward; the per-sample masked-softmax
-        and gradient assembly loop is O(B × (M+K)) and is cheap.
-
-        Returns (L_pg, L_ent, grads)  — all B-averaged.
+        axis_stats : per-axis health (fractions of max entropy + policy split bias),
+                     used by the train.py diag panel to monitor the factored heads.
+            'H_split_frac'    : H(π_split)   / log(2)        ∈ [0,1]
+            'H_common_frac'   : H(π_common)  / log(G+1)      ∈ [0,1]  (per-sample G)
+            'H_private_frac'  : H(π_private) / log(K)        ∈ [0,1]
+            'pi_split_common' : mean π_split[0] (common-share decided by policy) ∈ [0,1]
         """
-        B     = len(trans_list)
-        d_out = self._n_common + self.K
-        X     = _layer_norm_batch(
-            np.stack([t['s_power'] for t in trans_list])
-        )                                                             # (B, d_s)
+        B = len(trans_list)
+        X = _layer_norm_batch(np.stack([t['s_power'] for t in trans_list]))
         pre_acts, acts, logits = _mlp_forward_batch(X, self.Ws, self.bs)  # (B, d_out)
 
-        dL_dlogits_b = np.zeros((B, d_out))
+        dL_dlogits_b = np.zeros((B, self._d_out))
         L_pg  = 0.0
         L_ent = 0.0
+        beta_p = beta_entropy + beta_entropy_private_extra
+        Hs_sum = Hcf_sum = Hp_sum = pi_s0_sum = 0.0
+        log_s_max = np.log(self._n_split)         # = log(2)
+        log_p_max = np.log(self._n_private)       # = log(K)
 
         for b, trans in enumerate(trans_list):
-            mask  = self._active_mask(trans['active_irs_ids'])
-            probs = self._masked_softmax(logits[b], mask)
-            a_sel = trans['power_a_sel']
+            mask = self._common_mask(trans['active_irs_ids'])
+            p_s, p_c, p_p = self._probs_from_logits(logits[b], mask)
+            a_s = trans['power_a_split']
+            a_c = trans['power_a_common']
+            a_p = trans['power_a_private']
+            adv = float(eff_adv_b[b])
 
-            L_pg += float(-eff_adv_b[b] * np.log(probs[a_sel] + 1e-10))
+            L_pg += -adv * float(
+                  np.log(p_s[a_s] + 1e-10)
+                + np.log(p_c[a_c] + 1e-10)
+                + np.log(p_p[a_p] + 1e-10)
+            )
 
-            one_hot = np.zeros(d_out)
-            one_hot[a_sel] = 1.0
-            dL_pg_l   = -eff_adv_b[b] * (one_hot - probs)
+            oh_s = np.zeros(self._n_split);   oh_s[a_s] = 1.0
+            oh_c = np.zeros(self._n_common);  oh_c[a_c] = 1.0
+            oh_p = np.zeros(self._n_private); oh_p[a_p] = 1.0
 
-            log_probs = np.log(probs + 1e-10)
-            H         = -float(np.sum(probs * log_probs))
-            L_ent    += -beta_entropy * H
-            dL_ent_l  = beta_entropy * probs * (log_probs + H)
+            d_s = -adv * (oh_s - p_s)
+            d_c = -adv * (oh_c - p_c)
+            d_p = -adv * (oh_p - p_p)
 
-            dl = dL_pg_l + dL_ent_l
+            log_s  = np.log(p_s + 1e-10)
+            log_c  = np.log(p_c + 1e-10)
+            log_pp = np.log(p_p + 1e-10)
+            H_s = -float(np.sum(p_s * log_s))
+            H_c = -float(np.sum(np.where(mask, p_c * log_c, 0.0)))
+            H_p = -float(np.sum(p_p * log_pp))
+            L_ent += -(beta_entropy * (H_s + H_c) + beta_p * H_p)
+
+            d_s += beta_entropy * p_s * (log_s + H_s)
+            d_c += beta_entropy * np.where(mask, p_c * (log_c + H_c), 0.0)
+            d_p += beta_p       * p_p * (log_pp + H_p)
+
+            row = dL_dlogits_b[b]
+            row[self._sl_split]   = d_s
+            row[self._sl_common]  = d_c
+            row[self._sl_private] = d_p
             for g in range(self._n_common):
                 if not mask[g]:
-                    dl[g] = 0.0
-            dL_dlogits_b[b] = dl
+                    row[self._n_split + g] = 0.0
+
+            # axis-level diagnostics (fractions of max-entropy)
+            Hs_sum    += H_s / log_s_max
+            n_active_c = int(mask.sum())
+            if n_active_c >= 2:
+                Hcf_sum += H_c / np.log(n_active_c)
+            # else G+1=1 (only direct) → H_c ≡ 0; contributes 0 to numerator (skip)
+            Hp_sum    += H_p / log_p_max
+            pi_s0_sum += float(p_s[0])
 
         grads = _mlp_backward_batch(X, pre_acts, acts, self.Ws, dL_dlogits_b)
-        return L_pg / B, L_ent / B, grads
+        axis_stats = {
+            'H_split_frac':    Hs_sum    / B,
+            'H_common_frac':   Hcf_sum   / B,
+            'H_private_frac':  Hp_sum    / B,
+            'pi_split_common': pi_s0_sum / B,
+        }
+        return L_pg / B, L_ent / B, grads, axis_stats
 
     def apply_grads(self, grads: dict) -> None:
         self.opt.step(self._params, grads)
@@ -803,9 +922,11 @@ class PowerMLP:
                active_irs_ids: list,
                advantage: float,
                beta_entropy: float = 0.0,
-               a_sel: int = None) -> tuple:
+               action=None,
+               beta_entropy_private_extra: float = 0.0) -> tuple:
         L_pg, L_ent, grads = self.compute_grads(
-            s_t, active_irs_ids, advantage, beta_entropy, a_sel)
+            s_t, active_irs_ids, advantage, beta_entropy, action,
+            beta_entropy_private_extra)
         self.apply_grads(grads)
         return L_pg, L_ent
 
@@ -828,6 +949,7 @@ class PowerMLP:
             'P_S':    self.P_S,
             'hidden': self.hidden_sizes,
             'lr':     self.opt.lr,
+            'factored': True,    # v2 marker: 3-way (split, common, private)
         }
         with open(os.path.join(path, 'power_config.json'), 'w') as f:
             json.dump(cfg_dict, f, indent=2)
@@ -837,6 +959,11 @@ class PowerMLP:
     def from_dir(cls, path: str, seed: int = None):
         with open(os.path.join(path, 'power_config.json')) as f:
             c = json.load(f)
+        if not c.get('factored', False):
+            raise ValueError(
+                f"PowerMLP at {path} is a pre-factored (v1) checkpoint — "
+                "incompatible output shape with the 3-way factored architecture. "
+                "Train fresh from R_LoS=0.2.")
         obj = cls(d_s=c['d_s'], K=c['K'], M=c['M'], P_S=c['P_S'],
                   hidden=c['hidden'], lr=c['lr'], seed=seed)
         obj.set_params(dict(np.load(os.path.join(path, 'power_params.npz'))))

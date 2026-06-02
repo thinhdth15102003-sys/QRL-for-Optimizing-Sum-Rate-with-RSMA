@@ -392,9 +392,6 @@ def _warmup_critic(env, actor, critic, phase_net, power_net, ck_net,
                 [buf_s[i] for i in mb], [None] * len(mb), rets[mb])
             critic.apply_grads(g)
 
-    # Sync target ← current (Polyak τ=1) so bootstrapped TD targets start calibrated.
-    critic.polyak_update(1.0)
-
     V_pred = np.array([critic.forward(s) for s in buf_s])
     return {
         'n_samples': n,
@@ -1225,7 +1222,7 @@ def _train_body(args, run_dir: str, run_id: int,
             h_eff   = env.rate_computer.effective_channels_all(
                           phi, proposed_Phi, env.channels)
             s_power = np.concatenate([h_eff.real, h_eff.imag, z_t])   # (2K + n_latent,)
-            w_c_vec, w_p, _, power_a_sel = power_net.forward(s_power, active_irs_ids)
+            w_c_vec, w_p, _, power_action = power_net.forward(s_power, active_irs_ids)
 
             partial = env.rate_computer.compute_rates_partial(
                 phi, proposed_Phi, env.channels, w_p, w_c_vec,
@@ -1251,7 +1248,7 @@ def _train_body(args, run_dir: str, run_id: int,
                                     w_p, C_k, cfg, env.n_phase_levels)
             V_t_collected = float(critic.forward(s_t))
             lp_old_q  = actor.compute_log_prob(s_t, phi, K)
-            lp_old_pw = power_net.compute_log_prob(s_power, active_irs_ids, power_a_sel)
+            lp_old_pw = power_net.compute_log_prob(s_power, active_irs_ids, power_action)
             lp_old_ck = ck_net.compute_log_prob(s_ck, phi, K, ck_group_sel)
             ep_buf.append({
                 's_t':             s_t.copy(),
@@ -1263,7 +1260,9 @@ def _train_body(args, run_dir: str, run_id: int,
                 's_power':         s_power.copy(),
                 'active_irs_ids':  list(active_irs_ids),
                 's_ck':            s_ck.copy(),
-                'power_a_sel':     int(power_a_sel),
+                'power_a_split':   int(power_action['split']),
+                'power_a_common':  int(power_action['common']),
+                'power_a_private': int(power_action['private']),
                 'ck_group_sel':    dict(ck_group_sel),
                 'lp_old_q':        float(lp_old_q),
                 'lp_old_ph':       float(lp_old_ph),
@@ -1320,17 +1319,6 @@ def _train_body(args, run_dir: str, run_id: int,
             t['gae_adv'] = float(gae)
             t['ret']     = float(gae + t['V_t'])   # GAE return target (for explained-variance)
 
-        # ════════════════════════════════════════════════════════════════════
-        # 4) Freeze TD targets — 1-step V target via frozen target network.
-        #    Truncated final step still bootstraps V(s_T').
-        # ════════════════════════════════════════════════════════════════════
-        for i, t in enumerate(ep_buf):
-            if i + 1 < len(ep_buf):
-                s_next = ep_buf[i + 1]['s_t']
-            else:
-                s_next = t['s_t_next']
-            t['td_target'] = t['reward'] + args.gamma * critic.forward_target(s_next)
-
         rollout_buf.extend(ep_buf)
 
         # ════════════════════════════════════════════════════════════════════
@@ -1371,6 +1359,10 @@ def _train_body(args, run_dir: str, run_id: int,
           # Detects whether the critic over-trains across the 6 PPO epochs
           # (epoch-6 grad ≫ epoch-1 grad ⇒ critic is "chasing" its own targets).
           ep_critic_gn_preclip_by_epoch = [[] for _ in range(P.ppo_epochs)]
+          # [factored PowerMLP diag] per-axis entropy & split policy bias —
+          # detects collapsed axes (low H/Hmax) or runaway uniformisation (high H/Hmax)
+          # in the new split/common/private factorisation (Case2 result_10 fix).
+          ep_pw_axis_stats: dict = {}
           for _epoch in range(P.ppo_epochs):
             rng_ppo.shuffle(ep_indices)
             for start in range(0, len(rollout_buf), P.batch_size):
@@ -1417,8 +1409,11 @@ def _train_body(args, run_dir: str, run_id: int,
 
                 _, L_ent_ph, g_phase_acc = phase_net.compute_grads_batch(
                     mini, eff_ph_b, beta)
-                _, L_ent_pw, g_power_acc = power_net.compute_grads_batch(
-                    mini, eff_pw_b, beta)
+                _, L_ent_pw, g_power_acc, pw_axis = power_net.compute_grads_batch(
+                    mini, eff_pw_b, beta,
+                    beta_entropy_private_extra=P.beta_entropy_pwr_private)
+                for _k, _v in pw_axis.items():
+                    ep_pw_axis_stats.setdefault(_k, []).append(float(_v))
                 _, L_ent_ck, g_ck_acc    = ck_net.compute_grads_batch(
                     mini, K, eff_ck_b, beta)
                 L_ent_b += L_ent_ph + L_ent_pw + L_ent_ck
@@ -1429,8 +1424,7 @@ def _train_body(args, run_dir: str, run_id: int,
                 # [Case2 result_3 fix B-2]: TD(0) (r+γV_target(s')) là target 1-bước phương
                 # sai CAO → grad V kẹt lớn (700-1000), explVar dao động 0.14-0.64, QoS kẹt.
                 # GAE-return (λ=0.9, ~7-step avg) ít nhiễu hơn + align với explVar (đo vs ret)
-                # + là value-target PPO CHUẨN → grad giảm/settle, explVar ổn. (td_target ở
-                # trên giờ dead — dọn sau, để lại vô hại.)
+                # + là value-target PPO CHUẨN → grad giảm/settle, explVar ổn.
                 td_b, g_critic_acc = critic.compute_grads_batch(
                     [t['s_t']       for t in mini],
                     [None           for _ in mini],
@@ -1533,6 +1527,15 @@ def _train_body(args, run_dir: str, run_id: int,
           _acf = '  ⚠ HIGH-VARIANCE' if adv_clip_frac > 0.02 else ''
           _flog(f"  · ent/pg (β·H/|L_pg|): q={_ed['q']:.2f} ph={_ed['ph']:.2f} "
                 f"pw={_ed['pw']:.2f} ck={_ed['ck']:.2f}{_edf}  │ adv-clip {adv_clip_frac*100:.1f}%{_acf}")
+          # [factored PowerMLP] per-axis health: H/Hmax for each axis (1.0 = uniform,
+          # 0 = collapsed); π_split(common) = policy's mean common-share decision
+          # (independent of sampled w_c; bias-init starts at ~73%, PG drifts it).
+          if ep_pw_axis_stats:
+              _ax = {k: float(np.mean(v)) for k, v in ep_pw_axis_stats.items()}
+              _flog(f"  · pw axis (H/Hmax): split={_ax['H_split_frac']*100:.0f}% "
+                    f"common={_ax['H_common_frac']*100:.0f}% "
+                    f"private={_ax['H_private_frac']*100:.0f}%  │ "
+                    f"π_split(common)={_ax['pi_split_common']*100:.0f}%")
           # [Bước 0] frozen-λ diagnostic: across this update's mini-batch λ grads,
           #   mag = mean |g| (typical push size);  net = mean_c |mean_s g| (directional
           #   component, per-component signed-mean then abs-averaged);  r = net/mag.
@@ -1595,7 +1598,6 @@ def _train_body(args, run_dir: str, run_id: int,
               _flog(f"  ┄ crit-diag[{ep}]  ERROR: {_exc}")
 
           rollout_buf = []   # clear after PPO update
-          critic.polyak_update(P.critic_target_tau)
 
         # ── Episode stats ─────────────────────────────────────────────────────
         ep_time      = time.perf_counter() - t0_ep

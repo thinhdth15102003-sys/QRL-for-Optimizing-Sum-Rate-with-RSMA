@@ -27,6 +27,12 @@ CPU-only (channels are numpy) → safe to run alongside GPU training.
 
 Usage:  python probe_irs_vs_direct.py
 """
+
+# ── path bootstrap: make project root importable when run as script ──────
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ─────────────────────────────────────────────────────────────────────────
+
 import numpy as np
 from params import make_config
 from CSI.env import ISTNEnv

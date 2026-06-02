@@ -25,8 +25,11 @@ except Exception:
 PROJECT_DIR = "/mnt/c/Project/IRS-assisted RSMA Quantum-RL"
 RESULTS_DIR = PROJECT_DIR + "/results"
 INBOX       = RESULTS_DIR + "/claude_inbox.jsonl"   # /claude messages → file queue (no tmux)
-STATUS_MIN  = 30     # gửi status định kỳ mỗi N phút
 HANG_MIN    = 12     # log đứng quá N phút → cảnh báo treo
+# Auto-push (2026-06-01): notify on EVERY new diag panel (≈ every 12 ep PPO update),
+# replacing fixed-interval 30-min status. STATUS_MIN giữ làm fallback nếu diag không
+# fire trong N phút (warmup edge case).
+STATUS_MIN  = 30     # fallback push (chỉ dùng nếu không có diag mới)
 # Lệnh /rerun dùng để chạy lại training (sửa env/episodes nếu cần):
 TRAIN_CMD   = (f'cd "{PROJECT_DIR}" && '
                '(source ~/anaconda3/etc/profile.d/conda.sh 2>/dev/null || '
@@ -77,16 +80,85 @@ def read(log):
 
 
 def parse(log) -> str:
+    """Compact status — per-diag notify (Common-Knowledge Part 5 #8 priority order)."""
     txt = read(log); name = os.path.basename(os.path.dirname(log))
-    ep  = (re.findall(r"^\s*\*?\s*(\d+)\s+-?\d", txt, re.M) or ["?"])[-1]
-    roll = re.findall(r"rolling-\d+: reward μ=\s*([-\d.]+)\s+QoS μ=\s*(\d+)%\s+Rtot μ=([\d.]+)", txt)
-    qos  = f"QoS {roll[-1][1]}% · reward {roll[-1][0]} · Rtot {roll[-1][2]}" if roll else "—"
-    ev   = re.findall(r"explVar=([+-][\d.]+)", txt)
-    gv   = re.findall(r"V=([\d.]+)\s*$", txt, re.M)
-    spe  = re.findall(r"([\d.]+)s\s*$", txt, re.M)
-    crit = (f"explVar {ev[-1]}" if ev else "") + (f" · ‖∇‖V {gv[-1]}" if gv else "")
-    sep  = f" · {spe[-1]}s/ep" if spe else ""
-    return f"📊 {name} · ep {ep}\n{qos}\n{crit}{sep}"
+    # episode: prefer latest diag header; fall back to latest episode row
+    diag_eps = re.findall(r"diag\[(\d+)\]", txt)
+    ep = diag_eps[-1] if diag_eps else (re.findall(r"^\s*\*?\s*(\d+)\s+-?\d", txt, re.M) or ["?"])[-1]
+    spe = re.findall(r"([\d.]+)s\s*$", txt, re.M)
+    spe_str = f" · {spe[-1]}s/ep" if spe else ""
+
+    # rolling-50 (task: QoS, reward, Rtot, best)
+    roll = re.findall(
+        r"rolling-\d+: reward μ=\s*([-\d.]+)\s+QoS μ=\s*(\d+)%\s+Rtot μ=([\d.]+)\s*│\s*best=([-\d.]+)\s*\((\d+)\s*ep ago\)",
+        txt)
+    qos_line = "QoS — · R — · Rtot — · best —"
+    if roll:
+        r, q, rt, best, ago = roll[-1]
+        qos_line = f"QoS {q}% · R {r} · Rtot {rt} · best {best}({ago}ep)"
+
+    # priority 1: critic
+    ev = re.findall(r"explVar=([+-][\d.]+)", txt)
+    sv = re.findall(r"σV=([\d.]+)", txt)
+    crit_line = ""
+    if ev:
+        crit_line = f"critic: explVar {ev[-1]}"
+        if sv:
+            crit_line += f" · σV {sv[-1]}"
+
+    # priority 3 quantum: λ frozen [E] + λgrad r (G2 monitor)
+    lam = re.findall(r"λ\|max\|\s+y=([\d.]+)\s+z=([\d.]+)", txt)
+    lg  = re.findall(r"λgrad:\s+mag=([\d.e+\-]+)\s+net=([\d.e+\-]+)\s+r=([\d.]+)", txt)
+    q_parts = []
+    if lam:
+        q_parts.append(f"λ y={lam[-1][0]} z={lam[-1][1]}")
+    if lg:
+        r_val = float(lg[-1][2])
+        flag = " [frozen]" if r_val < 0.2 else " [moving]"
+        q_parts.append(f"λgrad r={lg[-1][2]}{flag}")
+    qline = "quantum: " + " · ".join(q_parts) if q_parts else ""
+
+    # priority 2: PhaseMLP idle (ent ph absolute; max ~66 for M=2 N=24 → %max)
+    ent = re.findall(r"ent q=[\d.]+\s+ph=([\d.]+)\s+pw=[\d.]+\s+ck=[\d.]+", txt)
+    phline = ""
+    if ent:
+        ph_val = float(ent[-1])
+        ph_pct = int(round(ph_val / 66.0 * 100))   # rough %max for Case 2 (M=2, N=24, L=4)
+        flag = " [idle]" if ph_pct > 55 else ""
+        phline = f"phase: ent ph={ent[-1]} (~{ph_pct}%max){flag}"
+
+    # priority 3: PowerMLP factored (pw axis stats + π_split)
+    pw = re.findall(
+        r"pw axis \(H/Hmax\): split=(\d+)% common=(\d+)% private=(\d+)%\s*│\s*π_split\(common\)=(\d+)%", txt)
+    pwline = ""
+    if pw:
+        s, c, p, pi = pw[-1]
+        pwline = f"power: split={s}% common={c}% private={p}% · π_c={pi}%"
+
+    # flag line: ENTROPY-DOMINATED + other warnings
+    edpg = re.findall(r"ent/pg \(β·H/\|L_pg\|\): q=([\d.]+) ph=([\d.]+) pw=([\d.]+) ck=([\d.]+)", txt)
+    flags = []
+    if edpg:
+        q, ph, pw_v, ck = (float(x) for x in edpg[-1])
+        doms = [n for n, v in (("q", q), ("ph", ph), ("pw", pw_v), ("ck", ck)) if v > 1.0]
+        if doms:
+            flags.append("⚠ENT-DOM " + "/".join(doms))
+    flag_line = " · ".join(flags) if flags else ""
+
+    parts = [f"📊 {name} · ep {ep}{spe_str}", qos_line]
+    for x in (crit_line, qline, phline, pwline, flag_line):
+        if x:
+            parts.append(x)
+    return "\n".join(parts)
+
+
+def latest_diag_ep(log):
+    """Return the latest diag[N] episode number found in log, or None."""
+    try:
+        eps = re.findall(r"diag\[(\d+)\]", read(log))
+        return int(eps[-1]) if eps else None
+    except Exception:
+        return None
 
 
 def cmd_tail(log, n=20):
@@ -221,6 +293,7 @@ def main():
     old = get_updates(None, timeout=0)
     if old: offset = old[-1]["update_id"] + 1
     last_status, hang_alerted, stop_alerted = 0.0, False, False
+    last_diag_ep = None   # per-diag auto-push tracker (replaces fixed-interval)
     while True:
         for u in get_updates(offset, timeout=25):
             offset = u["update_id"] + 1
@@ -243,9 +316,18 @@ def main():
         if stale <= HANG_MIN: hang_alerted = False
         if not running and not stop_alerted:
             send(f"🔴 Training DỪNG.\n{parse(log)}\n→ /rerun để chạy lại"); stop_alerted = True
+            last_diag_ep = None   # reset for next run
         if running: stop_alerted = False
-        if now - last_status > STATUS_MIN * 60 and running and stale <= HANG_MIN:
-            send(parse(log)); last_status = now
+        # ── per-diag push: gửi mỗi khi diag[N] mới xuất hiện ──
+        if running and stale <= HANG_MIN:
+            cur_diag = latest_diag_ep(log)
+            if cur_diag is not None and (last_diag_ep is None or cur_diag > last_diag_ep):
+                send(parse(log))
+                last_diag_ep = cur_diag
+                last_status = now
+            elif now - last_status > STATUS_MIN * 60:
+                # Fallback: nếu không có diag mới trong STATUS_MIN phút (warmup edge case)
+                send(parse(log)); last_status = now
 
 
 if __name__ == "__main__":

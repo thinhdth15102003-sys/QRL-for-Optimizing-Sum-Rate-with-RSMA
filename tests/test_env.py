@@ -12,6 +12,11 @@ Run with:
     python test_env.py --quick    # skip slow multi-episode tests
 """
 
+# ── path bootstrap: make project root importable when run as script ──────
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ─────────────────────────────────────────────────────────────────────────
+
 import sys
 import argparse
 import numpy as np

@@ -11,8 +11,8 @@ description: >-
   or not), (2) overall agent status with a LONG-TERM view when the R_LoS curriculum
   isn't finished, plus what to change and how, and (3) whether any sub-actor/head is
   struggling or showing signs of it. For the meaning of each signal and the fixes,
-  it leans on Common-Knowledge.txt; for per-case hyperparameter context, on the
-  matching Training-Case-<N>.txt. When it finds a problem, hand off to the
+  it leans on docs/Common-Knowledge.txt; for per-case hyperparameter context, on the
+  matching docs/Training-Case-<N>.txt. When it finds a problem, hand off to the
   irs-rsma-training-playbook skill for the symptom→fix detail.
 ---
 
@@ -20,8 +20,8 @@ description: >-
 
 A repeatable procedure to read `results/result_N/training_log.txt` and produce a
 consistent health assessment. Always follow Steps 0→4 in order, then emit the report
-template. For signal meanings / fixes see `Common-Knowledge.txt`; for per-case hyper
-context see `Training-Case-<N>.txt` (match by K,M in params.py / hyperparameters.json).
+template. For signal meanings / fixes see `docs/Common-Knowledge.txt`; for per-case hyper
+context see `docs/Training-Case-<N>.txt` (match by K,M in params.py / hyperparameters.json).
 
 ## ★ PRIORITY ORDER (judge & fix in THIS order — Common-Knowledge Part 5 #8)
 **CRITIC → PhaseMLP (learning to optimize IRS) → NO-IDLE heads (esp. post-VQC:
@@ -206,7 +206,7 @@ After emitting the report, RECORD it so the knowledge base compounds. Do this ev
 time unless the user only asked for a quick glance. Use Edit/Write to actually update
 the files — don't just say you will.
 
-A) **Write the run outcome into `Training-Case-<N>.txt`** (match N by K,M in params/
+A) **Write the run outcome into `docs/Training-Case-<N>.txt`** (match N by K,M in params/
    hyperparameters.json):
    - Append a one-line entry to its "NHẬT KÝ RUN" table in the SAME terse format as the
      existing rows, e.g.:
@@ -217,7 +217,7 @@ A) **Write the run outcome into `Training-Case-<N>.txt`** (match N by K,M in par
    - **Idempotent**: if an entry for this result_N already exists, UPDATE it — don't add
      a duplicate.
 
-B) **Update `Common-Knowledge.txt` ONLY if something NEW & GENERAL emerged** (true for any
+B) **Update `docs/Common-Knowledge.txt` ONLY if something NEW & GENERAL emerged** (true for any
    case, not a per-case number):
    - A failure mode not covered by codes `[A]`–`[I]` → add the next code `[J]`/`[K]`… to
      Part 3 (symptom → cause → fix), and if it has a tell-tale signal, a row to Part 4.

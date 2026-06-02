@@ -79,7 +79,7 @@ R_LoS_km = 0.2     # satellite LoS coverage radius on ground (km)
                   # users and IRS are both placed within this circle
                   # curriculum: 0.2 → 0.3 → 0.4 → 0.45 → 0.5 (resume each step)
                   # [Case 2: START fresh at 0.2 (easiest), then ramp & resume each step.
-                  #  Read feasibility probe at each R_LoS; set λ_D per Training-Case-2.txt.]
+                  #  Read feasibility probe at each R_LoS; set λ_D per docs/Training-Case-2.txt.]
 h_IRS_km = 0.02   # IRS/building rooftop height (km) = 20 m
 
 # ── Spawn-region bounds (FRACTION of R_LoS, 0.0→centre … 1.0→full LoS disk) ──────
@@ -158,7 +158,13 @@ n_var_layers  = 3     # L: variational circuit depth — U_var = ∏_{ℓ=1}^{L}
 # ── SPSA gradient estimator  ─────────────────────────────────────────────────────────
 # spsa_n_reps = 0  : exact parameter-shift rule (16,384 circuits/update at nq=16)
 # spsa_n_reps > 0  : SPSA estimate with n_reps repetitions  (32× speedup at n_reps=4)
-spsa_n_reps   = 8     # Case 2 (nq=12): tăng từ 4 → gradient lượng tử sạch hơn (tránh λ đóng băng [E])
+spsa_n_reps   = 16    # Case 2: 8→16 (G2 attempt 1, post-result_10 2026-06-01).
+                      # λgrad r=0.04-0.09 ổn định ~0.06 ở result_10 → ZERO-MEAN NOISE pattern.
+                      # Theo Training-Case-2 Ý TƯỞNG (B): r<0.5 do NOISE → tăng SPSA reps để
+                      # gradient sạch hơn (giảm variance ~1/√n_reps). Nếu r jumps >0.2 ở result_11
+                      # → NOISE confirmed → có thể tăng nữa. Nếu r stays ~0.06 → STRUCTURAL
+                      # (z_enc layer-norm zero-mean self-cancels) → cần sửa normalization.
+                      # Cost: ~2× VQC compute per step (~60s/ep vs 30s previously).
 spsa_epsilon  = 0.1   # SPSA finite-difference step ε  (standard value; range 0.05–0.2)
 
 # ── AE Hot-start pre-training ────────────────────────────────────────────────────
@@ -187,6 +193,18 @@ lr_phase       = 1e-4  # Adam lr
 # ── Power allocation MLP  ([w_c, w_p] summing to P_S) ───────────────────────────
 n_hidden_power = [128, 128, 64]  # Case 2: nới lớp đầu (input 2K+nlat=44)
 lr_power       = 1e-4  # Adam lrLem
+# [Case2 result_8 2026-06-01] factored output (3-way: split + common + private),
+# fix coupling-induced wp-concentration. Probe (probe_power_qos): equal-split private
+# → QoS 58%→83% (+25pts) at same assignment/phase. Extra entropy bonus on π_private
+# is the LEVER that targets wp-spread INDEPENDENTLY of common-vs-private split.
+beta_entropy_pwr_private = 0.003 # added on top of global β_entropy for π_private only.
+                                  # 0.0 = neutral (all 3 axes get β only).
+                                  # ↑ = stronger spread pressure on private power.
+                                  # Tune by watching wp-top2 (target < ~35% at K=10).
+                                  # [Case2 smoke result_10 2026-06-01: 0.02 TRIGGERED
+                                  #  ⚠ENTROPY-DOMINATED on pw (ent/pg=2.43, β_p was 21×
+                                  #  global β → entropy term 8× PG). 0.02→0.003 → β_p~4×
+                                  #  global, ent/pg expected <1.0. Probe target wp-top2<35%.]
 
 # ── Common-rate split MLP  (C_k fractions, normalised within groups) ────────────
 n_hidden_ck    = [128, 128, 64, 32]     # Case 2: nới lớp đầu (input 5K=50)
@@ -240,12 +258,6 @@ lr_decay_start = 0.2   # LR stays at 100 % for this fraction of episodes, then d
                        #  policy has room to move off the plateau before decaying.]
 lr_min_frac    = 0.25  # LRs decay to at most lr_min_frac × initial_lr
                        # [result_8: 0.1→0.25 — don't let LR die too low; keep climb power.]
-
-# ── Target critic (Polyak soft update) ───────────────────────────────────────────
-critic_target_tau = 0.02    # τ: target ← τ·current + (1−τ)·target after each PPO round
-                            # [result_8: 0.005→0.02 — raising λ_D shifts the return scale;
-                            #  a faster target net lets the critic re-calibrate quickly so
-                            #  advantages stay accurate.]
 
 # ── Critic warm-up on --resume (calibrate V(s) before PPO) ────────────────────────
 # A resumed actor is near-optimal, but a fresh critic starts blind (explVar≈0);

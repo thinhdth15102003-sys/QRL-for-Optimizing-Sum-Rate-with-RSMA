@@ -14,6 +14,12 @@ Run (WSL):
   cd "/mnt/c/Project/IRS-assisted RSMA Quantum-RL"
   nohup ~/miniconda3/envs/IRS_QRL/bin/python auto_analyze.py > /dev/null 2>&1 &
 """
+
+# ── path bootstrap: make project root importable when run as script ──────
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ─────────────────────────────────────────────────────────────────────────
+
 import os, re, time, subprocess
 
 PROJ   = os.path.dirname(os.path.abspath(__file__))

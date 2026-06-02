@@ -428,11 +428,145 @@ lambda_D = THEO SCHEDULE BÊN DƯỚI  # đừng bê thẳng 4.5 từ Case 1 —
   ORACLE (2026-05-31, sweep 32 config clean data): MARGINAL spread arch 0.104 ≫ norm_tgt 0.042
         ≫ grad_clip 0.004. → arch 512 fit tốt nhất (đừng nhỏ), norm_tgt=True là lever, grad_clip vô nghĩa.
         Xác nhận độc lập H1 bác + chỉ hướng PopArt.
-  >>> RESUME ĐIỂM (2026-05-31, sau result_7+oracle): critic [B-2b] KHÔNG do grad_clip/arch.
-      Đòn bẩy critic = RETURN NORMALIZATION (PopArt). QoS kẹt = vấn đề PHA (PhaseMLP idle), KHÔNG
-      phải critic/λ_D (λ_D↑ đã bị loại — result_1). ĐÃ LOẠI: λ_D↑, grad_clip, arch-nhỏ, readout-now.
-      result_8 ĐỀ XUẤT (chờ user chốt trọng số PopArt): return z-score / reward running-std / full PopArt.
-        Giữ arch512 clip1000 λ_D1.5. Mục tiêu explVar GIỮ >0.5. Sau đó re-assess QoS → pha → readout.
-      Chi tiết ở block "KẾT QUẢ result_6+7+ORACLE — VERDICT" trên. <<<
+  L9 (result_8): FULL PopArt (one-var vs result_7: clip giữ 1000), GAE-target, fresh.
+        T1 grad O(1-5)✅ · T2 bias~0✅ · T5 POP|ΔV|=1e-15✅ · T4 track ok. T3 post-anneal(ep>400):
+        explVar mean0.45 std0.11 min0.30 frac>0.5=44% → STABLE-CAPPED (KHÔNG dip âm — khác HẲN
+        result_5/6/7 wobble −0.46). "WOBBLE" theo ngưỡng cứng mean>0.5 nhưng std+min PASS = ổn định
+        ở ~trần aleatoric K10. → PopArt ĂN: critic ỔN + agent CẢI THIỆN (QoS 51→59→giữ57% post-anneal,
+        reward âm→+50; result trước CHƯA BAO GIỜ). → critic ĐỦ TỐT, sang tier sau. (run không kill, dõi tiếp.)
+  PROBE QoS (2026-06-01, ckpt ep400):
+        • QoS-by-assignment: IRS-assigned 60.8% > direct 55.4% → IRS-routing serve TỐT (kể cả pha random,
+          IRS thắng blocked-direct). KHÔNG phải gánh nặng. NHƯNG ~40% user rớt D_k trên CẢ 2 link.
+        • ⭐ POWER-QoS counterfactual (probe_power_qos.py): wp-top2=48% (agent ôm 2 user nửa private power).
+          CHIA ĐỀU power (giữ y assignment/phase) → QoS 58%→83% (+25.5pts!), sum-rate gần như không đổi
+          (1.51→1.47). met user có 2.7× power vs unmet. → NÚT THẮT QoS = PowerMLP CONCENTRATE POWER,
+          KHÔNG phải critic/phase/assignment. PowerMLP under-optimized (ôm power max sum-rate biên → đói
+          8 user → rớt). → ⭐ LEVER QoS CHÍNH = fix PowerMLP (dàn power / QoS-aware), không phải phase.
+  DRIFT ANALYSIS (2026-06-01, result_8 ep1500 — run dừng SIGINT, model tốt = ep_00700):
+        TIMELINE NHÂN-QUẢ (explVar đáng tin từ ep924; wc/Ck đáng tin toàn run):
+          ep 300-684  : explVar 0.45-0.64 ổn · wc 19→45% · Ck 0.25→0.66 — RISE LÀNH (wc tăng dần = dùng
+                        common-stream HỢP LỆ)
+          ep 700-1020 : explVar ~0.45 còn OK · wc 36-52% · Ck 0.5-0.67 — QoS chớm slip 60→57%, reward
+                        bắt đầu giảm
+          ep 1068     : explVar −0.21 (DIP SÂU đầu) · wc 28% · Ck 0.40 — CRITIC bắt đầu loạn
+          ep 1308-1356: explVar 0.32→−0.06 · wc 44→23% — critic tụt hẳn
+          ep 1404     : explVar 0.15 · wc 71% · Ck 1.43 — POWERMLP DEGENERATE CỰC ĐOAN ← SAU critic loạn
+          ep 1500     : explVar 0.06 · wc 40% · Ck 0.60 — thoái hóa
+        ⭐ KẾT LUẬN NHÂN-QUẢ: PowerMLP KHÔNG phải nguyên nhân GỐC của drift — nó là BỀ MẶT nơi drift hiện ra.
+          BẰNG CHỨNG THỨ TỰ: critic destabilize TRƯỚC (explVar dip −0.21 @ep1068, tụt hẳn @ep1356) →
+          RỒI wc spike cực đoan 71% @ep1404. Critic loạn → advantage nhiễu → PowerMLP trôi vào mode
+          degenerate. KHÔNG phải PowerMLP tự gây loạn rồi critic theo sau.
+        3 GỐC THẬT (PowerMLP KHÔNG trong số đó):
+          1. ⭐ CRITIC NON-STATIONARITY RUN DÀI — đúng cảnh báo T3 "stable-capped 0.45 borderline".
+             Qua ep1000+ critic không bền → explVar sụp → advantage nhiễu. PopArt giữ SCALE nhưng
+             KHÔNG cứu non-stationarity policy-drift.
+          2. QoS-ABANDONMENT (λ_D=1.5 thấp) — agent đổi QoS lấy Rtot (1.60→1.76). Reward GIẢM dù
+             Rtot tăng → policy degrade, KHÔNG phải reward-hack hợp lý.
+          3. ENTROPY ANNEALED (ent q 8→4.6, đã qua sàn) — hết explore để thoát degenerate mode.
+        POWERMLP CÓ vai trò (2 cách — đừng nhầm là gốc):
+          (a) ENABLER: wc/wp output KHÔNG bị ràng buộc → có sẵn "hướng degenerate" (dồn common-stream)
+              cho drift trôi vào. Ràng buộc PowerMLP giảm BỀ MẶT drift, nhưng KHÔNG fix gốc.
+          (b) VẤN ĐỀ RIÊNG (probe_power_qos): wp-concentration → trần QoS ~58%. Cái này có Ở ĐỈNH
+              (lúc lành ep400-700) — TÁCH BIỆT với drift. PowerMLP suboptimal nhưng KHÔNG gây drift.
+        HÀM Ý:
+          • FIX PowerMLP ≠ FIX DRIFT. Sửa PowerMLP (dàn power / QoS-aware) trị TRẦN QoS, KHÔNG trị
+            drift. Drift cần: early-stop + entropy-floor↑ + (λ_D / non-stationarity lever).
+          • Drift = BẰNG CHỨNG KÉP: (i) T3-borderline critic không đủ bền run dài → cần lever
+            non-stationarity (xem Common [B-2b] "T1+T2+T4+T5 PASS NHƯNG T3 WOBBLE" branch:
+            target-net cho value / GAE-λ thấp hơn / freeze-then-fit critic). (ii) λ_D=1.5 thấp
+            cho phép QoS-abandonment ở run dài.
+  >>> RESUME ĐIỂM (2026-06-01, sau drift result_8) — CẬP NHẬT (override line trước) <<<
+      Critic PopArt = stable-capped NGẮN HẠN (post-anneal ep400-700) NHƯNG KHÔNG bền dài hạn → drift.
+      PowerMLP có 2 vai trò ĐỘC LẬP: (a) trần QoS ~58% — lever fix: dàn power / QoS-aware (chính đáng);
+      (b) bề mặt drift — fix giảm rủi ro nhưng KHÔNG đủ.
+      THỨ TỰ NEXT RUN (chốt khi user quay lại):
+        1. EARLY-STOP-BY-QoS (luôn bật từ giờ — chặn drift consume model tốt; dừng nếu QoS rolling-50
+           không vượt best sau N=200 ep)
+        2. NON-STATIONARITY LEVER cho critic (per Common [B-2b] T3-wobble branch): target-net value
+           HOẶC GAE-λ thấp hơn HOẶC freeze-then-fit
+        3. POWERMLP FIX (lever QoS trần, độc lập drift)
+        4. ENTROPY-FLOOR↑ + λ_D candidate (1.5→2.0) chống QoS-abandonment dài hạn
+      Best ckpt (QoS): ep_00700 (QoS đỉnh 60% TRƯỚC drift). result_8 stop @ ep1500 (SIGINT). <<<
+  L10 (result_10 smoke 60ep / result_9 fresh 4000ep → SIGINT @ep~270): POWERMLP FACTORED ARCH (option B)
+        Implementation: 3-way softmax (split[2] + common[M+1] + private[K]) thay single softmax[M+1+K].
+        Loss: per-axis entropy bonus, β_global cho split/common + (β_global + β_pwr_private) cho private.
+        Lý do option B (vs option A slice-entropy): single-softmax cũ ép 2 quyết định ĐỘC LẬP (budget
+        split common-vs-private + within-private allocation) vào 1 logit vector → gradient bleed. Tách
+        ra cho phép entropy bonus trên π_private TRỰC GIAO với common-vs-private split.
+        Code: RL/sub_actors.py PowerMLP rewrite. train.py: trans dict {power_a_split/common/private},
+        4-tuple unpack từ compute_grads_batch, diag panel + dòng mới "pw axis (H/Hmax)" + π_split(common).
+        params: beta_entropy_pwr_private (extra trên private axis).
+
+        ITERATION HYPERPARAM (β + init bias):
+          [smoke result_10] β_pwr_private=0.02 + bias=+1.0 (no zero-W trên split) → ⚠ENTROPY-DOMINATED
+                pw (ent/pg=2.43, β_p 21× global β), wc=7-15% (split bias không đủ chống PG về private —
+                bias yếu vì W không zero-out). FAIL. Delete result_10.
+          [result_9] β_pwr_private=0.003 (6.7× nhỏ hơn) + bias=+1.0 + ZERO W[-1][:,0:2] (bias dominate
+                init thực) → ent/pg pw=0.26-0.43 OK, NO entropy-dom; π_split(common) LOCKED ~70% (init
+                73%, PG drift không nổi 5%); wc=67-72% locked. SO RESULT_8 ep200-280 theo priority:
+                ✅ #1 CRITIC: explVar 0.34±0.06 (vs result_8 0.40±0.18) — STABLE HƠN, no wobble âm
+                ❌ #2 PHASEMLP: ent ph 61%max (vs result_8 56%) — REGRESSION, idle hơn
+                ✅ #3 NO-IDLE pw: ent pw 12-20 (vs result_8 2.0 settled-concentrated) — active spread
+                ⚖️ #3 NO-IDLE λ: y/z=0.48/0.50 vs 0.50/0.50 — đều frozen [E], không thay đổi
+                ❌ #4 QoS: 48-50% (vs 56-59%) — behind 8pts (LOW priority, đừng đọc khi #2 fail)
+                ❌ #5 Rtot: 1.38-1.46 (vs 1.48-1.51) — slightly behind
+                ROOT CAUSE PHASEMLP REGRESS: bias=+1.0 LOCK wc=70% → private 30%/K=10 = ~3% per user
+                (vs result_8 wc~30% → 7% per user, 2.3×). PhaseMLP đói tín hiệu phân biệt user gain.
+                Đổi 1 priority-3 issue lấy 1 priority-2 issue = NET NEGATIVE per Common Part5 #8.
+                SIGINT @ep~270.
+
+        VERDICT FACTORED ARCH (option B):
+          ✅ ĐÚNG PRINCIPLE: critic stability + PowerMLP no-idle là gain THẬT (cải thiện 2/5 priorities).
+          ❌ INIT BIAS +1.0 OVER-CORRECTION: lock split → starve private → PhaseMLP regress.
+          GIẢI PHÁP: hạ init bias +1.0 → +0.3 (π_split init [0.57, 0.43] thay vì [0.73, 0.27]). PG
+          có space drift split xuống ~30-40% (như result_8 healthy), per-user private ~6-7% P_S đủ cho
+          PhaseMLP có signal. Giữ factored arch + zero W + β=0.003.
+  >>> RESUME ĐIỂM (2026-06-01 sau L10) — OVERRIDE line trước <<<
+      Trạng thái: PowerMLP factored arch ĐÚNG hướng (critic+no-idle pw gains). Bottleneck là INIT BIAS
+      cường độ — sửa bias=+0.3 đã apply. Sẵn sàng fresh restart R_LoS=0.2 → result_10.
+      KỲ VỌNG result_10: priority #1 critic giữ stable (đã pass), #2 PhaseMLP HỒI PHỤC ent ≤ 56% max
+      (≈ result_8), #3 no-idle pw GIỮ active, #4 QoS có chance vượt 58% (lever wp-spread vẫn còn). <<<
+
+  L11 (result_10 SIGINT @ep119, 2026-06-01): factored PowerMLP + bias=+0.3 + β_pwr_private=0.003.
+        KẾT QUẢ THEO PRIORITY ORDER:
+          #1 CRITIC: 🟡 MARGINAL. explVar mean 0.28, dip âm -0.19 @ep71 (recover), preclip‖∇‖V 0.8-3.7
+             tight, clipfrac 0%. Borderline wobble nhưng không crash.
+          #2 PHASEMLP: ❌ REGRESS XUYÊN TIẾP. ent ph ~40 (61% max) — GIỐNG result_9 với bias=+1.0
+             → hạ init bias KHÔNG fix priority 2. ent/pg phase = 0.69-1.04 ⚠ ENTROPY-DOMINATED.
+          #3 NO-IDLE λ: ❌ λ FROZEN [E] confirmed. y/z = 0.48/0.49-0.50 (init values).
+             λgrad mag=0.24 net=0.015 r=0.04-0.09 STABLE ~0.06 → ZERO-MEAN NOISE pattern.
+          #3 POWERMLP FACTORED: ✅ SUCCESS. π_split(common) 57% (drift từ init 57%, KHÔNG locked
+             extreme như result_9 70% lock). wc=57% giữa result_9 (70%, bad) và result_8 (38%, healthy).
+             ent/pg pw = 0.42 (no ENT-DOM). pw axis split=98% common=95% private=77% — healthy spread.
+          #4 QOS: 🟡 plateau 52% (target 55%+, baseline result_8 ep50-100 ~57%).
+          #5 RTOT: 🟡 1.38-1.43 (baseline result_8 1.48-1.51) — slightly behind.
+          + Best reward POSITIVE +54.5 @ ep62 (sớm hơn baseline) — quỹ đạo OK.
+
+        ⭐ ROOT CAUSE: Init bias factored PowerMLP ĂN ở priority 3 PowerMLP. NHƯNG priority 2 PhaseMLP
+        regress KHÔNG do PowerMLP — gốc là λ FROZEN [E].
+        Logic chain: λ frozen → VQC encoding không học → state representation cố định theo λ init →
+        AE+VQC output cho PhaseMLP không có gradient signal differential → phase ent idle.
+        → Cần fix λ frozen TRƯỚC để unblock PhaseMLP. SIGINT @ep119, KEEP factored arch, proceed G2.
+
+  L12 (result_11 sẽ chạy, 2026-06-01): G2 ATTEMPT 1 — spsa_n_reps 8→16.
+        Diagnosis: λgrad r=0.06 STABLE = zero-mean noise pattern. Per Training-Case-2 Ý TƯỞNG (B):
+          - NOISE candidate: SPSA samples cancel after batch averaging → fix = ↑n_reps
+          - STRUCTURAL candidate: g_λ ∝ mean(δ·z_enc), z_enc layer-norm zero-mean self-cancel
+        First attempt: spsa_n_reps 8→16 (one-param change). Cost ~2× VQC compute/step (60s/ep
+        vs 30s), 4000 ep ≈ 55-65h.
+        Watchpoint ~ep 100-150 (Telegram monitor per-diag):
+          ✅ NOISE confirmed: λgrad r jump > 0.2 + λ|max| moves off init within ep 200 + ent ph
+                              drop < 56% max
+          ❌ STRUCTURAL: r stays ~0.06 với spsa=16 → escalate G2 attempt 2 (normalization fix)
+        Carry-over KEEP (don't touch): factored PowerMLP + bias=+0.3 + β_pwr_private=0.003,
+        critic PopArt + GAE-target + grad_clip 1000, per-axis pw diag.
+        Maps tới: C3 (VQC expressivity — encoding phải học để quantum có effect thật).
+
+  >>> RESUME ĐIỂM (2026-06-01 sau L11/L12) — OVERRIDE prior <<<
+      G1 (factored PowerMLP) verdict = PARTIAL pass (priority 3 ✅, priority 2 ❌ do λ frozen). Keep arch.
+      G2 (frozen-λ fix) = NEXT FRESH RUN. spsa_n_reps 8→16, expect ~60s/ep, 4000 ep target.
+      Monitor via Telegram (monitor_train.py updated 2026-06-01 — per-diag notify, not 30-min interval).
+      Verdict gate ~ep 100-150: λgrad r > 0.2 + λ|max| moves → success → proceed G3 (R1 readout +
+      SoftmaxPQC bundle). r stays ~0.06 → escalate G2 attempt 2 (normalization fix). <<<
   result___  ...
 ================================================================================

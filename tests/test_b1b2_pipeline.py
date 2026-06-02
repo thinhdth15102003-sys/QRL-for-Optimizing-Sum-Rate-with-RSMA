@@ -20,6 +20,11 @@ Run from project root:
     python test_b1b2_pipeline.py
 """
 
+# ── path bootstrap: make project root importable when run as script ──────
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ─────────────────────────────────────────────────────────────────────────
+
 import sys, time
 sys.path.insert(0, r'C:\Project\IRS-assisted RSMA Quantum-RL')
 

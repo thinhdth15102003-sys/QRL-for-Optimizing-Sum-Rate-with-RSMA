@@ -35,6 +35,71 @@
 
 
 ================================================================================
+  REVIEW vs KẾT QUẢ TRAINING GẦN ĐÂY (2026-05-31) — chỉnh GOAL/RISK, KHÔNG đổi arch
+================================================================================
+  Core design (E1/E2/R1/B/W_proj) VẪN ĐÚNG. Nhưng finding mới (probe, frozen-λ, PopArt)
+  chỉnh lại MỤC TIÊU + RỦI RO khi implement:
+
+  [REV-1] GOAL recalibrate (probe IRS-vs-direct 2026-05-30, viết SAU design này):
+    IRS chỉ đáng cho BLOCKED (+38dB opt, +24dB cả random) — NON-BLOCK chỉ +1.5dB opt, THUA
+    direct khi random. → mục tiêu KHÔNG phải "IRS-usage cao" mà là ASSIGNMENT CHÍNH XÁC
+    (blocked→IRS, non-block→direct). Đo R1-b bằng ĐỘ CHÍNH XÁC routing-blocked, ko phải IRS thô.
+
+  [REV-2] ⚠⚠ BARREN PLATEAU nguy hơn — vì ĐÃ có frozen-λ [E] ở mọi run:
+    Thêm E1+E2 entanglement có thể làm TỆ HƠN gradient lượng tử (λ/θ vanish). Readout có thể
+    NET-ÂM về gradient dù observable giàu. → A/B BẮT BUỘC monitor grad qc/λ + λ|max| trước/sau
+    entanglement (V5 harness). Nếu [E] tệ đi → entanglement phản tác dụng → giảm E2 / bỏ wrap.
+
+  [REV-3] Readout bị GATE bởi encoding frozen-λ:
+    Readout cải thiện OUTPUT; nếu ENCODING (λ) frozen → state kém biểu đạt → observable giàu
+    trên state nghèo → underperform. Cân nhắc fix λ [E] (spsa_n_reps↑ / normalization) ĐI ĐÔI.
+
+  [REV-4] (trấn an) o_hat scale OK: ⟨Z⟩,⟨ZZ⟩∈[−1,1] bounded → KHÔNG scale-pathology như state
+    kênh ~1e-7. Post-NN nhận o_hat well-scaled (khác critic cần PopArt). Không cần norm o_hat.
+
+  [REV-5] Lợi ích ĐẦY ĐỦ cần PhaseMLP ĐANG HỌC (chicken-egg): readout→assignment→PhaseMLP data
+    →pha tốt→IRS đáng. A/B khi PhaseMLP idle chỉ đo lợi ích TRỰC TIẾP (routing). → A/B đi kèm/sau
+    PhaseMLP-fix mới đo được lợi ích gián tiếp.
+
+  [REV-6] Status: critic đã chạy (PopArt result_8) → precondition A/B sắp thỏa (chờ T3 PASS).
+
+  [REV-7] (2026-06-01) ⭐ SoftmaxPQC compatibility + nq UNIFICATION
+    SAU khi đọc Jerbi et al. 2021 NeurIPS, có 2 cập nhật design quan trọng:
+
+    (a) R1 readout × SoftmaxPQC head (architecture 2 trong docs/Ablation-Plan.txt):
+        R1 observables (R1-a Z_user_k, R1-b Z_user_k·Z_IRS_m, R1-c C_k, R1-d Z_IRS_m)
+        ALIGN PER-ACTION với IRS-select action structure (k → m).
+        → SoftmaxPQC linear W có thể SPARSE (~4 obs/action, ~100 params Case 2)
+          thay vì dense MLP ~50K params.
+        → Paper claim: "structurally-motivated quantum readout, no nonlinear classical
+          decision layer beyond softmax".
+        → Implement BUNDLED: R1 + SoftmaxPQC head + V1-V5 verify trong 1 fresh run.
+
+    (b) Classical bypass [B] × SoftmaxPQC:
+        Bypass [B] feed z_k_raw vào post-NN. SoftmaxPQC không có post-NN.
+        ĐỀ XUẤT HYBRID: SoftmaxPQC input = [⟨H⟩(42) ‖ z_k_raw(2K) ‖ z_IRS(2M)]
+        → linear W ∈ ℝ^{|A|×(42+2K+2M)} → softmax_β
+        Case 2: |A|×66 ≈ 1980 params. UNIFORM across cases (Case 3 cần bypass cho per-user).
+
+    (c) nq UNIFICATION across cases:
+        ⚠ Current Phần 4 + Phần 5 có per-case W_proj (Case1 struct-inject, Case2 identity,
+        Case3 soft-cluster) — INCONSISTENT cho paper.
+        REVISED: nq = 12 cho TẤT CẢ cases. Soft-cluster trainable cho mọi case (kể cả
+        Case 1 dư qubit, Case 2 khớp). Encoding capacity scale qua D_enc + trainable λ:
+            Case 1: D_enc=2, soft-cluster 5→12 (dư, OK)
+            Case 2: D_enc=3, soft-cluster 10→12 (gần khớp, vẫn học)
+            Case 3: D_enc=5, soft-cluster 20→12 (compress, như Phần 4 Case 3 cũ)
+        → BIẾN per-case weakness thành STRENGTH "fixed NISQ register + adaptive depth".
+        → Phần 4 + Phần 5 + Phần 6 bảng/code touchpoints CẦN UPDATE khi implement (đánh dấu).
+
+  [REV-7 implementation impact]:
+    Phần 5 (Dimension Table) — đánh dấu CẦN UPDATE:
+      Case 1, 2 readout-unit: per-user → per-slot (vì nq=12 chung)
+      Case 1, 2 user→qubit map: struct-inject / IDENTITY → soft-cluster (uniform)
+      o_hat formula KHÔNG đổi (R1-a/b/c/d theo SLOT thay vì user, classical bypass [B] giữ per-user).
+
+
+================================================================================
   PHẦN 1 — ENTANGLEMENT (tạo tương quan trong state)
 ================================================================================
   Áp trong MỖI lớp variational ℓ, SAU rotation học được (Rz·Ry), TRƯỚC lớp kế:
@@ -205,7 +270,9 @@
     1a. params.py: extra_cz_pairs (E1 full user×IRS) + brick-wall cfg (E2) + cờ readout-mode
         + W_proj-mode. (Case 2: W_proj=IDENTITY, readout per-user.)
     1b. RL/quantum_circuit.py: _obs_from_batch (R1-a Z_i + R1-b per-IRS ZZ + R1-c aggregate C_i
-        + R1-d Z_IRS) + _n_obs/configure_topology (Case2: o_hat=42) + _build_batch (áp E1+E2).
+        + R1-d Z_IRS) + _n_obs/configure_topology (Case2: o_hat=42) + _build_batch (áp entanglement).
+        ⚠ INCREMENTAL (do REV-2): thêm E1 TRƯỚC → đo grad qc/λ + λ|max| vài chục ep → ổn mới +E2.
+        Cô lập cái nào hại [E]; nếu E1 đã làm grad sụp → barren, dừng lại / giảm.
     1c. RL/quantum_circuit.py: param_shift/spsa jacobian cho observable MỚI (R1-b/c/d) — RỦI RO
         CAO NHẤT (gradient sai = đầu độc mọi thứ).
     1d. RL/quantum_actor.py: classical bypass [B] (z_k_raw 2K vào post-NN) + N_QUANTUM mới +

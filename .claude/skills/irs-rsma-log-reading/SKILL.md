@@ -57,6 +57,10 @@ Establish before judging anything:
 - **Is the curriculum finished?** Note current R_LoS vs the 0.2→0.5 target, and episodes
   done vs target. This decides whether to judge by long-term trend (mid-ramp) or by
   final stable performance (last ramp, near done).
+- **★ READ THE RUN-SUMMARY TABLE** at the top of `docs/Training-Case-<N>.txt`
+  ("BẢNG TÓM TẮT RUN") + the "LEVER ĐÃ LOẠI" notes. This is the memory of every lever
+  ALREADY TRIED, its result, and the limitation it did NOT fix. You MUST consult it
+  before proposing any hyper change (see the DON'T-REPEAT guard in Step 4).
 
 --------------------------------------------------------------------------------
 ## STEP 1 — R_tot & QoS trend  (improving or not?)
@@ -173,6 +177,24 @@ Signs a head is **đuối / not learning**:
 Report which heads are healthy, which are borderline, which are đuối, with the evidence.
 
 --------------------------------------------------------------------------------
+## ★ DON'T-REPEAT GUARD  (run BEFORE writing any "→ ACTION: adjust hyper" line)
+--------------------------------------------------------------------------------
+Cross-check every proposed hyper change against the run-summary table + "LEVER ĐÃ LOẠI"
+in `docs/Training-Case-<N>.txt` (read in Step 0). For each lever you're about to recommend:
+- **Already tried & FAILED to fix this symptom?** → DO NOT recommend it again. Either pick
+  a different lever, or explicitly state what is DIFFERENT now that makes it worth a retry
+  (e.g. a precondition that wasn't met before). Name the prior run(s) in your reasoning.
+- **In LEVER ĐÃ LOẠI (ruled out with evidence)?** → off the table; cite the evidence.
+- **The symptom's true root is a DIFFERENT priority** (Part 5 #8 order: critic→PhaseMLP→
+  no-idle→QoS→sum-rate)? → fix the root first; don't tune a downstream knob on a broken base.
+Examples already in the Case-2 table (do NOT re-propose without a new reason):
+  λ_D↑ (penalty-dom [I-2], r1) · grad_clip as the critic lever (r7, symptom-only) ·
+  smaller critic arch (oracle) · spsa↑ alone to unfreeze λ (r11, STRUCTURAL not noise) ·
+  PowerMLP init-bias too strong (r9, locks wc → starves phase).
+State in the ACTION line that you checked the table (e.g. "not previously tried" or
+"differs from rN because …"). This keeps the knowledge base from looping.
+
+--------------------------------------------------------------------------------
 ## STEP 4 — Emit the assessment report  (ALWAYS use this template)
 --------------------------------------------------------------------------------
 ```
@@ -208,6 +230,11 @@ the files — don't just say you will.
 
 A) **Write the run outcome into `docs/Training-Case-<N>.txt`** (match N by K,M in params/
    hyperparameters.json):
+   - **★ Add/refresh the run's row in the "BẢNG TÓM TẮT RUN" quick-reference table** (top of
+     file): the lever tried (what's NEW vs prior run, use "=" for carried-over hypers) +
+     RESULT + LIMITATION columns. This is the table Step 0 / the DON'T-REPEAT guard reads —
+     keeping it current is what prevents future hyper-loops. If a new core limitation emerged
+     or one was fixed, update the "4 LIMITATION CỐT LÕI" list under the table too.
    - Append a one-line entry to its "NHẬT KÝ RUN" table in the SAME terse format as the
      existing rows, e.g.:
      `result_N  R_LoS<x> λ_D<..> gae<..> β<..> ←<resume>  → QoS<peak>%@ep<..> [sự cố/mã]`

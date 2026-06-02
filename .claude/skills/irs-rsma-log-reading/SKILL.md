@@ -177,6 +177,37 @@ Signs a head is **đuối / not learning**:
 Report which heads are healthy, which are borderline, which are đuối, with the evidence.
 
 --------------------------------------------------------------------------------
+## STEP 3.5 — CONFIRM ROOT-CAUSE WITH A TARGETED PROBE  (before proposing a fix)
+--------------------------------------------------------------------------------
+The training_log alone shows SYMPTOMS; the standalone probes in `analysis/` are cheap
+COUNTERFACTUALS that isolate the ROOT (hold the policy, swap one head / measure the
+physical layer, recompute the metric — no ablation training needed). When a symptom
+below appears and you're about to recommend a fix, RUN the matching probe first and
+report its verdict — it has repeatedly overturned a wrong diagnosis (e.g. power-qos found
+the QoS bottleneck was PowerMLP, not phase/critic). Run on the best-QoS checkpoint.
+
+  Symptom (from Steps 1-3)                              | Probe (analysis/)              | Confirms
+  -----------------------------------------------------+--------------------------------+-----------------------------
+  QoS stuck at one level ACROSS runs regardless of     | probe_power_qos.py             | is it PowerMLP power-
+  critic health (QoS ⊥ critic); users miss D_k         |  + probe_qos_by_assignment.py  | concentration? which link?
+  -----------------------------------------------------+--------------------------------+-----------------------------
+  "Is low IRS-usage optimal / should agent use IRS     | probe_irs_vs_direct.py         | physical IRS-opt vs direct
+  more?"  (IRS/K ≈ block-count, phase idle)            |  (optimal-phase, physical)     | per user (block/non-block)
+  -----------------------------------------------------+--------------------------------+-----------------------------
+  Critic loạn dai dẳng — env-bound (aleatoric) vs      | probe_critic_ceiling.py        | explVar ceiling under
+  trainable (training-dynamics)?                       |  (Tier-1 ceiling)              | random vs trained policy
+  -----------------------------------------------------+--------------------------------+-----------------------------
+  PhaseMLP: entropy dropping but IS the phase actually  | probe_phase_quality.py         | |Σφ|live/N coherence +
+  ALIGNING the channel? (priority-#2 — necessary check  |  (greedy live PhaseMLP)        | alignment% (0 rand→1 opt);
+  that arch-2 unblocked phase, not just lower entropy)  |                                | live-IRS beats direct?
+
+  PRINCIPLE: phase entropy dropping is NECESSARY but NOT SUFFICIENT for "PhaseMLP learning
+  to optimize IRS" — entropy can converge to a BAD phase. ALWAYS confirm phase QUALITY
+  (channel alignment a = (|Σφ|/N − 1/√N)/(1 − 1/√N)), not just entropy, before declaring
+  priority-#2 solved. BASELINE (result_8, old arch frozen-λ): alignment ≈ 25% (partial, far
+  from optimal) — arch-2 must raise this. a≥60% = optimizing; a≈0% = idle [F] despite entropy.
+
+--------------------------------------------------------------------------------
 ## ★ DON'T-REPEAT GUARD  (run BEFORE writing any "→ ACTION: adjust hyper" line)
 --------------------------------------------------------------------------------
 Cross-check every proposed hyper change against the run-summary table + "LEVER ĐÃ LOẠI"

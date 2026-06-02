@@ -642,7 +642,9 @@ lambda_D = THEO SCHEDULE BÊN DƯỚI  # đừng bê thẳng 4.5 từ Case 1 —
         #1 critic: explVar giữ stable (PopArt unchanged — kỳ vọng OK)
         #3 λ UNFREEZE: λ|max| y/z MOVES off 0.50/0.45 trong ep 100-300 (r đã 0.65 → λ sẽ di chuyển);
            λgrad r giữ > 0.2
-        #2 PhaseMLP: ent ph GIẢM < 56% max (λ học → encoding informative → phase có signal)
+        #2 PhaseMLP: ent ph GIẢM < 56% max + ⭐ phase-quality probe alignment% > 25% (baseline result_8)
+           (analysis/probe_phase_quality.py — entropy thấp KHÔNG đủ, phải confirm pha CĂN CHỈNH kênh:
+            coherence |Σφ|/N, alignment 0=random→1=optimal. result_8 frozen-λ = 25% partial, arch-2 phải vượt)
         #4 QoS: chance vượt result_8 60% nếu λ+phase unblock
         β_temp: theo dõi giá trị (inverse-temp tự học — kỳ vọng tăng dần = policy sharpen)
       Monitor Telegram per-diag. Gate ~ep 300: λ moved + phase ent down → SUCCESS → proceed G4/G5

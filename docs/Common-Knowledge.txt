@@ -170,6 +170,11 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     thay w_p học-được bằng CHIA ĐỀU → QoS 58%→83% (+25pts), sum-rate gần như không đổi → PowerMLP
     CONCENTRATE power (wp-top2~48%, ôm 2 user, đói 8 user) là thủ phạm QoS THẬT, KHÔNG phải phase/
     assignment. met user có 2.7× power vs unmet.) → counterfactual cô lập đúng head hỏng, rẻ hơn nhiều.
+    ⭐ BỘ PROBE (analysis/, skill log-reading STEP 3.5 — symptom→probe→confirm root TRƯỚC khi fix):
+    probe_critic_ceiling (#1 aleatoric ceiling) · probe_phase_quality (#2 PhaseMLP coherence |Σφ|/N +
+    alignment%, GREEDY live — entropy thấp KHÔNG đủ, phải confirm pha THẬT căn chỉnh; baseline result_8
+    ≈25% align) · probe_power_qos + probe_qos_by_assignment (#4 QoS head/link) · probe_irs_vs_direct
+    (#2 physical IRS-opt-vs-direct ceiling). Probe = counterfactual rẻ → cô lập root, tránh tune sai head.
     LƯU Ý: head concentrate power = agent tối đa sum-rate biên ở λ_D thấp → bỏ QoS. Lever = sửa head
     đó (power-spread / QoS-aware), HOẶC λ_D (per-ramp) — nhưng λ_D↑ phải sau khi critic ổn.
 

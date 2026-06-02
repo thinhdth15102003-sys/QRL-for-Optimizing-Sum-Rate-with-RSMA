@@ -836,6 +836,9 @@ def _build_components(args):
         extra_cz_pairs   = P.extra_cz_pairs,
         extra_zz_pairs   = P.extra_zz_pairs,
         full_zz_pairs    = getattr(P, 'full_zz_pairs', ()),
+        readout_mode     = getattr(P, 'vqc_readout_mode', 'generic'),
+        softmax_head     = getattr(P, 'vqc_softmax_head', False),
+        softmax_beta_init= getattr(P, 'vqc_softmax_beta_init', 1.0),
         seed             = args.seed,
     )
     # State-value critic V(s) — action-independent baseline (d_action=0).

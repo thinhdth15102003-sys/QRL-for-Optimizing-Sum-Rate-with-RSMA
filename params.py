@@ -153,7 +153,22 @@ n_hidden_ae   = [128, 64]                  # Case 2: d_aff=44 (was 17) → cần
                                            #   Case 2 (d_aff=34):  [128, 64]    → decoder 24→64→128→34
                                            #   Case 3 (d_aff=108): [256,128,64] → decoder 32→64→128→256→108
 n_hidden_post = [256, 128]                 # hidden-layer sizes for Post-NN after QC (list)
+                                           #   (unused when vqc_softmax_head=True)
 n_var_layers  = 3     # L: variational circuit depth — U_var = ∏_{ℓ=1}^{L} [U_ent · ∏_i Rz Ry]
+
+# ── VQC readout + head (Δ2/Δ4 architecture-2, 2026-06-01) ───────────────────────
+# [G3 core run] Architecture (2) AE-VQC-SoftmaxPQC (per docs/Ablation-Plan PHẦN A):
+#  vqc_readout_mode='r1'   : physics-structured observables (per-user Z, per-IRS
+#       Z·Z_IRS, cluster mean-ZZ, Z_IRS) instead of generic Z+NN-ZZ. N_QUANTUM auto
+#       = (nq-M)(M+2)+M (Case2 42). Jacobian observable-agnostic (auto-adapts).
+#  vqc_softmax_head=True   : replace classical post-NN MLP (~50K params) with a
+#       single linear map + trainable inverse-temperature β (Jerbi et al. SOFTMAX-PQC).
+#       logits = β·(W·[o_hat‖z_t] + b). ~2K params, clean quantum-vs-classical
+#       attribution. z_t kept in head input = classical bypass [B] (Δ5).
+# For A1 ablation, set readout_mode='generic' + softmax_head=False → recovers baseline.
+vqc_readout_mode = 'r1'      # 'r1' | 'generic'
+vqc_softmax_head = True      # True = SoftmaxPQC linear+β head; False = classical MLP post-NN
+vqc_softmax_beta_init = 1.0  # initial inverse-temperature β (trainable). softmax(β·logits).
 
 # ── SPSA gradient estimator  ─────────────────────────────────────────────────────────
 # spsa_n_reps = 0  : exact parameter-shift rule (16,384 circuits/update at nq=16)

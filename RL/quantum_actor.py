@@ -139,6 +139,9 @@ class QuantumActor:
                  extra_cz_pairs:   tuple = (),   # B3: cross-block CZ pairs
                  extra_zz_pairs:   tuple = (),   # B4: cross-block ZZ observable pairs
                  full_zz_pairs:    tuple = (),   # B1: full ZZ set (replaces NN ZZ + extra)
+                 readout_mode:     str   = 'generic',  # Δ2: 'generic' | 'r1'
+                 softmax_head:     bool  = False,       # Δ4: SoftmaxPQC linear+β head
+                 softmax_beta_init: float = 1.0,        # Δ4: initial inverse-temperature β
                  seed:             int   = None):
 
         assert n_latent == 2 * n_qubits, (
@@ -157,10 +160,16 @@ class QuantumActor:
         # Architecture dimensions (instance attrs, readable from outside)
         self.N_QUBITS      = n_qubits
         self.N_LATENT      = n_latent
-        # B1 active: N_QUANTUM = nq + len(full_zz_pairs)
-        # B4 active: N_QUANTUM = 2*nq-1 + len(extra_zz_pairs)
-        # baseline : N_QUANTUM = 2*nq-1
-        if full_zz_pairs:
+        # Δ2 R1 readout: N_QUANTUM = (nq-M)(M+2)+M  (structured per-action)
+        # B1 active   : N_QUANTUM = nq + len(full_zz_pairs)
+        # B4 active   : N_QUANTUM = 2*nq-1 + len(extra_zz_pairs)
+        # baseline    : N_QUANTUM = 2*nq-1
+        self.READOUT_MODE = str(readout_mode)
+        self.SOFTMAX_HEAD = bool(softmax_head)
+        if self.READOUT_MODE == 'r1':
+            _nu = n_qubits - cfg.M
+            self.N_QUANTUM = _nu * (cfg.M + 2) + cfg.M
+        elif full_zz_pairs:
             self.N_QUANTUM = n_qubits + len(full_zz_pairs)
         else:
             self.N_QUANTUM = 2 * n_qubits - 1 + len(extra_zz_pairs)
@@ -185,10 +194,12 @@ class QuantumActor:
         self.EXTRA_ZZ_PAIRS = tuple(extra_zz_pairs)  # B4: stored for save/load
         self.FULL_ZZ_PAIRS  = tuple(full_zz_pairs)   # B1: stored for save/load
         self.LAM_MAX        = 1.5          # B6: λ clipping bound (|λ|>1.5 → tanh grad<0.01)
+        self.SOFTMAX_BETA_INIT = float(softmax_beta_init)
         self.rng            = np.random.default_rng(seed)
 
-        # B3/B4/B1: set circuit topology BEFORE parameter init (post-NN size uses N_QUANTUM)
-        configure_topology(extra_cz_pairs, extra_zz_pairs, full_zz_pairs)
+        # B3/B4/B1 + Δ2: set circuit topology BEFORE parameter init (head size uses N_QUANTUM)
+        configure_topology(extra_cz_pairs, extra_zz_pairs, full_zz_pairs,
+                           readout_mode=self.READOUT_MODE, r1_m=cfg.M)
 
         self._init_params()
 
@@ -249,11 +260,21 @@ class QuantumActor:
         self.theta_y = self.rng.uniform(-np.pi, np.pi, (self.N_VAR_LAYERS, nNq))
         self.theta_z = self.rng.uniform(-np.pi, np.pi, (self.N_VAR_LAYERS, nNq))
 
-        # ── ξ — Post-processing NN ────────────────────────────────────────────────
-        post_dims = [nL + nObs] + self.N_HIDDEN_POST
-        self.W_post  = [_he(post_dims[i], post_dims[i+1], self.rng) for i in range(len(post_dims)-1)]
-        self.b_post  = [np.zeros(post_dims[i+1])                     for i in range(len(post_dims)-1)]
-        self.W_p_out = _he(post_dims[-1], nOut, self.rng);  self.b_p_out = np.zeros(nOut)
+        # ── ξ — Assignment head ───────────────────────────────────────────────────
+        # Input = [z_t (nL) ‖ o_hat (nObs)]  — z_t is the classical bypass [B] (Δ5).
+        if self.SOFTMAX_HEAD:
+            # Δ4 SoftmaxPQC: single linear map + trainable inverse-temperature β.
+            #   logits = β · (h_t @ W_sm + b_sm);  π = softmax(logits per user).
+            # ~ (nL+nObs)·K·nc params (Case2 66·30 ≈ 2K) vs MLP ~50K. β scalar.
+            self.W_sm = _he(nL + nObs, nOut, self.rng)
+            self.b_sm = np.zeros(nOut)
+            self.beta_temp = np.array([self.SOFTMAX_BETA_INIT], dtype=float)  # shape (1,)
+            self.W_post = [];  self.b_post = []   # unused
+        else:
+            post_dims = [nL + nObs] + self.N_HIDDEN_POST
+            self.W_post  = [_he(post_dims[i], post_dims[i+1], self.rng) for i in range(len(post_dims)-1)]
+            self.b_post  = [np.zeros(post_dims[i+1])                     for i in range(len(post_dims)-1)]
+            self.W_p_out = _he(post_dims[-1], nOut, self.rng);  self.b_p_out = np.zeros(nOut)
 
         # ── Parameter dicts for Adam (keyed by name, point to live arrays) ────────
         self._p_ae = {
@@ -271,9 +292,13 @@ class QuantumActor:
                           theta_y=self.theta_y, theta_z=self.theta_z,
                           gamma_enc=self.gamma_enc, beta_enc=self.beta_enc)
         self._p_xi = {}
-        for i, (W, b) in enumerate(zip(self.W_post, self.b_post)):
-            self._p_xi[f'W_post_{i}'] = W;  self._p_xi[f'b_post_{i}'] = b
-        self._p_xi['W_p_out'] = self.W_p_out;  self._p_xi['b_p_out'] = self.b_p_out
+        if self.SOFTMAX_HEAD:
+            self._p_xi['W_sm'] = self.W_sm;  self._p_xi['b_sm'] = self.b_sm
+            self._p_xi['beta_temp'] = self.beta_temp
+        else:
+            for i, (W, b) in enumerate(zip(self.W_post, self.b_post)):
+                self._p_xi[f'W_post_{i}'] = W;  self._p_xi[f'b_post_{i}'] = b
+            self._p_xi['W_p_out'] = self.W_p_out;  self._p_xi['b_p_out'] = self.b_p_out
 
     # ── State extraction ───────────────────────────────────────────────────────
 
@@ -392,6 +417,91 @@ class QuantumActor:
         z_enc = ln * self.gamma_enc + self.beta_enc
         return z_enc, ln, sig
 
+    # ── Δ4: assignment head (SoftmaxPQC linear+β  OR  classical MLP) ────────────
+
+    def _head_forward(self, z_t: np.ndarray, o_hat: np.ndarray):
+        """Single-sample head. Returns (logits_flat (K*nc,), cache).
+        h_t = [z_t ‖ o_hat] (z_t = classical bypass [B], Δ5)."""
+        h_t = np.concatenate([z_t, o_hat])
+        if self.SOFTMAX_HEAD:
+            pre    = h_t @ self.W_sm + self.b_sm        # (K*nc,)
+            logits = self.beta_temp[0] * pre
+            return logits, ('sm', h_t, pre)
+        acts = [h_t];  pres = [];  x = h_t
+        for W, b in zip(self.W_post, self.b_post):
+            p = x @ W + b;  pres.append(p);  x = _relu(p);  acts.append(x)
+        logits = x @ self.W_p_out + self.b_p_out
+        return logits, ('mlp', acts, pres)
+
+    def _head_backward(self, dL_dlogits: np.ndarray, cache):
+        """Single-sample head backward. dL_dlogits (K*nc,).
+        Returns (grads_xi dict, dL_dz (nL,), dL_do_hat (nObs,))."""
+        kind = cache[0]
+        if kind == 'sm':
+            _, h_t, pre = cache
+            dL_dbeta = np.array([float(np.sum(dL_dlogits * pre))])   # (1,)
+            dL_dpre  = self.beta_temp[0] * dL_dlogits
+            grads = {'W_sm': np.outer(h_t, dL_dpre),
+                     'b_sm': dL_dpre.copy(),
+                     'beta_temp': dL_dbeta}
+            dL_dh = dL_dpre @ self.W_sm.T
+        else:
+            _, acts, pres = cache
+            dL_dW_p_out = np.outer(acts[-1], dL_dlogits)
+            dL_db_p_out = dL_dlogits.copy()
+            dx = dL_dlogits @ self.W_p_out.T
+            dW = [None] * len(self.W_post);  db = [None] * len(self.b_post)
+            for i in reversed(range(len(self.W_post))):
+                dx = dx * (pres[i] > 0)
+                dW[i] = np.outer(acts[i], dx);  db[i] = dx.copy()
+                dx = dx @ self.W_post[i].T
+            grads = {'W_p_out': dL_dW_p_out, 'b_p_out': dL_db_p_out}
+            for i in range(len(self.W_post)):
+                grads[f'W_post_{i}'] = dW[i];  grads[f'b_post_{i}'] = db[i]
+            dL_dh = dx
+        return grads, dL_dh[:self.N_LATENT], dL_dh[self.N_LATENT:]
+
+    def _head_forward_batch(self, z_t_b: np.ndarray, o_hat_b: np.ndarray):
+        """Batch head. Returns (logits_b (B_s, K*nc), cache)."""
+        h_t_b = np.concatenate([z_t_b, o_hat_b], axis=1)
+        if self.SOFTMAX_HEAD:
+            pre_b    = h_t_b @ self.W_sm + self.b_sm
+            logits_b = self.beta_temp[0] * pre_b
+            return logits_b, ('sm', h_t_b, pre_b)
+        acts = [h_t_b];  pres = [];  x = h_t_b
+        for W, b in zip(self.W_post, self.b_post):
+            p = x @ W + b;  pres.append(p);  x = _relu(p);  acts.append(x)
+        logits_b = x @ self.W_p_out + self.b_p_out
+        return logits_b, ('mlp', acts, pres)
+
+    def _head_backward_batch(self, dL_dlogits_b: np.ndarray, cache, B_s: int):
+        """Batch head backward (B_s-averaged grads). dL_dlogits_b (B_s, K*nc).
+        Returns (grads_xi dict, dL_dz_b (B_s,nL), dL_do_hat_b (B_s,nObs))."""
+        kind = cache[0]
+        if kind == 'sm':
+            _, h_t_b, pre_b = cache
+            dL_dbeta = np.array([float((dL_dlogits_b * pre_b).sum() / B_s)])  # (1,)
+            dL_dpre_b = self.beta_temp[0] * dL_dlogits_b
+            grads = {'W_sm': h_t_b.T @ dL_dpre_b / B_s,
+                     'b_sm': dL_dpre_b.mean(axis=0),
+                     'beta_temp': dL_dbeta}
+            dL_dh_b = dL_dpre_b @ self.W_sm.T
+        else:
+            _, acts, pres = cache
+            dL_dW_p_out = acts[-1].T @ dL_dlogits_b / B_s
+            dL_db_p_out = dL_dlogits_b.mean(axis=0)
+            dx = dL_dlogits_b @ self.W_p_out.T
+            dW = [None] * len(self.W_post);  db = [None] * len(self.b_post)
+            for i in reversed(range(len(self.W_post))):
+                dx = dx * (pres[i] > 0)
+                dW[i] = acts[i].T @ dx / B_s;  db[i] = dx.mean(axis=0)
+                dx = dx @ self.W_post[i].T
+            grads = {'W_p_out': dL_dW_p_out, 'b_p_out': dL_db_p_out}
+            for i in range(len(self.W_post)):
+                grads[f'W_post_{i}'] = dW[i];  grads[f'b_post_{i}'] = db[i]
+            dL_dh_b = dx
+        return grads, dL_dh_b[:, :self.N_LATENT], dL_dh_b[:, self.N_LATENT:]
+
     # ── B2 dual-branch encoder helpers ────────────────────────────────────────
 
     def _dual_encode(self, a_norm: np.ndarray) -> np.ndarray:
@@ -470,12 +580,8 @@ class QuantumActor:
                                    n_var_layers=self.N_VAR_LAYERS,
                                    data_reuploading=self.DATA_REUPLOADING)  # (Nq,)
 
-        # Post-NN (variable depth)
-        h_t = np.concatenate([z_t, o_hat])             # (N_LATENT + N_QUANTUM,)
-        x = h_t
-        for W, b in zip(self.W_post, self.b_post):
-            x = _relu(x @ W + b)
-        logits = x @ self.W_p_out + self.b_p_out       # (K*(B+1),)
+        # Assignment head (Δ4: SoftmaxPQC linear+β or classical MLP)
+        logits, _ = self._head_forward(z_t, o_hat)     # (K*(B+1),)
 
         logits_2d = logits.reshape(self.K, self.n_choices)
         pi_2d     = _softmax(logits_2d)
@@ -517,11 +623,7 @@ class QuantumActor:
                                       n_var_layers=self.N_VAR_LAYERS,
                                       data_reuploading=self.DATA_REUPLOADING)
 
-        h_t = np.concatenate([z_t, o_hat])
-        x = h_t
-        for W, b in zip(self.W_post, self.b_post):
-            x = _relu(x @ W + b)
-        logits   = x @ self.W_p_out + self.b_p_out
+        logits, _ = self._head_forward(z_t, o_hat)
         pi_2d    = _softmax(logits.reshape(self.K, self.n_choices))
         return float(sum(np.log(pi_2d[k, phi[k]] + 1e-10) for k in range(K_used)))
 
@@ -551,11 +653,7 @@ class QuantumActor:
         o_hat_b = expectations_analytic_batch(
             alpha_b, delta_b, self.theta_y, self.theta_z, L, DR)
 
-        h_t_b = np.concatenate([z_t_b, o_hat_b], axis=1)
-        x = h_t_b
-        for W, b in zip(self.W_post, self.b_post):
-            x = _relu(x @ W + b)
-        logits_b    = x @ self.W_p_out + self.b_p_out      # (B_s, K*nc)
+        logits_b, _ = self._head_forward_batch(z_t_b, o_hat_b)  # (B_s, K*nc)
         logits_2d_b = logits_b.reshape(B_s, self.K, nc)
         e_b  = np.exp(logits_2d_b - logits_2d_b.max(axis=2, keepdims=True))
         pi_b = e_b / e_b.sum(axis=2, keepdims=True)        # (B_s, K, nc)
@@ -645,17 +743,8 @@ class QuantumActor:
                                       n_var_layers=self.N_VAR_LAYERS,
                                       data_reuploading=self.DATA_REUPLOADING)
 
-        # Post-NN (variable depth — store activations for backprop)
-        h_t = np.concatenate([z_t, o_hat])                 # (N_LATENT + N_QUANTUM,)
-        post_acts = [h_t]
-        post_pres = []
-        x = h_t
-        for W, b in zip(self.W_post, self.b_post):
-            pre = x @ W + b
-            post_pres.append(pre)
-            x = _relu(pre)
-            post_acts.append(x)
-        logits = post_acts[-1] @ self.W_p_out + self.b_p_out  # (K*(B+1),)
+        # Assignment head (Δ4: SoftmaxPQC linear+β or classical MLP) — cache for backward
+        logits, _head_cache = self._head_forward(z_t, o_hat)  # (K*(B+1),)
 
         logits_2d = logits.reshape(self.K, self.n_choices)
         pi_2d     = _softmax(logits_2d)                    # (K, B+1)
@@ -683,22 +772,8 @@ class QuantumActor:
 
         dL_dlogits = (dL_pg_dlogits + dL_ent_dlogits).flatten()  # (K*(B+1),)
 
-        # Post-NN backward (reversed layer order)
-        dL_dW_p_out = np.outer(post_acts[-1], dL_dlogits)
-        dL_db_p_out = dL_dlogits.copy()
-        dx = dL_dlogits @ self.W_p_out.T
-
-        dL_dW_post = [None] * len(self.W_post)
-        dL_db_post = [None] * len(self.b_post)
-        for i in reversed(range(len(self.W_post))):
-            dx = dx * (post_pres[i] > 0)
-            dL_dW_post[i] = np.outer(post_acts[i], dx)
-            dL_db_post[i] = dx.copy()
-            dx = dx @ self.W_post[i].T
-        dL_dh = dx                                               # (n_latent + n_qubits,)
-
-        dL_dz_post = dL_dh[:self.N_LATENT]                      # (n_latent,)
-        dL_do_hat  = dL_dh[self.N_LATENT:]                      # (n_qubits,)
+        # Assignment head backward (Δ4) → head grads + dL/dz_post + dL/do_hat
+        _grads_head, dL_dz_post, dL_do_hat = self._head_backward(dL_dlogits, _head_cache)
 
         # ──────────────────────────────────────────────────────────────────────
         # Backward: AE reconstruction through decoder (reversed layer order)
@@ -807,12 +882,7 @@ class QuantumActor:
         grads_qc = dict(lam_y=dL_dlam_y, lam_z=dL_dlam_z,
                         theta_y=dL_dtheta_y, theta_z=dL_dtheta_z,
                         gamma_enc=dL_dgamma_enc, beta_enc=dL_dbeta_enc)
-        grads_xi = {}
-        for i in range(len(self.W_post)):
-            grads_xi[f'W_post_{i}'] = dL_dW_post[i]
-            grads_xi[f'b_post_{i}'] = dL_db_post[i]
-        grads_xi['W_p_out'] = dL_dW_p_out
-        grads_xi['b_p_out'] = dL_db_p_out
+        grads_xi = _grads_head
         return L_pg, L_ae, L_ent, grads_ae, grads_qc, grads_xi
 
     # ── Fused Jacobian dispatcher (param-shift or SPSA) ──────────────────────
@@ -933,17 +1003,8 @@ class QuantumActor:
         o_hat_b = expectations_analytic_batch(
             alpha_b, delta_b, self.theta_y, self.theta_z, L, DR)  # (B_s, n_obs)
 
-        # ── Post-NN forward ────────────────────────────────────────────────────
-        h_t_b = np.concatenate([z_t_b, o_hat_b], axis=1)   # (B_s, N_LATENT+n_obs)
-        post_acts = [h_t_b]
-        post_pres = []
-        x = h_t_b
-        for W, b in zip(self.W_post, self.b_post):
-            pre = x @ W + b
-            post_pres.append(pre)
-            x = _relu(pre)
-            post_acts.append(x)
-        logits_b    = x @ self.W_p_out + self.b_p_out   # (B_s, K*nc)
+        # ── Assignment head forward (Δ4) — cache for backward ─────────────────
+        logits_b, _head_cache = self._head_forward_batch(z_t_b, o_hat_b)  # (B_s, K*nc)
         logits_2d_b = logits_b.reshape(B_s, K, nc)
         # row-wise softmax over last axis
         e_b  = np.exp(logits_2d_b - logits_2d_b.max(axis=2, keepdims=True))
@@ -974,21 +1035,9 @@ class QuantumActor:
             + beta_entropy * pi_b * (log_pi_b + H_b[:, :, None]) # entropy
         ).reshape(B_s, K * nc)                                   # (B_s, K*nc)
 
-        dL_dW_p_out = post_acts[-1].T @ dL_dlogits_b / B_s
-        dL_db_p_out = dL_dlogits_b.mean(axis=0)
-        dx_b        = dL_dlogits_b @ self.W_p_out.T             # (B_s, post_last)
-
-        dL_dW_post_list = [None] * len(self.W_post)
-        dL_db_post_list = [None] * len(self.b_post)
-        for i in reversed(range(len(self.W_post))):
-            dx_b = dx_b * (post_pres[i] > 0)
-            dL_dW_post_list[i] = post_acts[i].T @ dx_b / B_s
-            dL_db_post_list[i] = dx_b.mean(axis=0)
-            dx_b = dx_b @ self.W_post[i].T
-
-        dL_dh_b      = dx_b                                     # (B_s, N_LATENT+n_obs)
-        dL_dz_post_b = dL_dh_b[:, :self.N_LATENT]
-        dL_do_hat_b  = dL_dh_b[:, self.N_LATENT:]               # (B_s, n_obs)
+        # Assignment head backward (Δ4) → head grads + dL/dz_post + dL/do_hat
+        _grads_head, dL_dz_post_b, dL_do_hat_b = self._head_backward_batch(
+            dL_dlogits_b, _head_cache, B_s)
 
         # ── Decoder backward (AE) ─────────────────────────────────────────────
         dL_ds_rec_b  = ae_weight * ae_res_b                      # (B_s, d_s)
@@ -1088,12 +1137,7 @@ class QuantumActor:
                         theta_y=dL_dtheta_y, theta_z=dL_dtheta_z,
                         gamma_enc=dL_dgamma_enc, beta_enc=dL_dbeta_enc)
 
-        grads_xi = {}
-        for i in range(len(self.W_post)):
-            grads_xi[f'W_post_{i}'] = dL_dW_post_list[i]
-            grads_xi[f'b_post_{i}'] = dL_db_post_list[i]
-        grads_xi['W_p_out'] = dL_dW_p_out
-        grads_xi['b_p_out'] = dL_db_p_out
+        grads_xi = _grads_head
 
         return L_pg_avg, L_ae_avg, L_ent_avg, grads_ae, grads_qc, grads_xi
 
@@ -1181,17 +1225,8 @@ class QuantumActor:
         o_hat_b = expectations_analytic_batch(
             alpha_b, delta_b, self.theta_y, self.theta_z, L, DR)
 
-        # ── Post-NN forward ────────────────────────────────────────────────────
-        h_t_b = np.concatenate([z_t_b, o_hat_b], axis=1)
-        post_acts = [h_t_b]
-        post_pres = []
-        x = h_t_b
-        for W, b in zip(self.W_post, self.b_post):
-            pre = x @ W + b
-            post_pres.append(pre)
-            x = _relu(pre)
-            post_acts.append(x)
-        logits_b    = x @ self.W_p_out + self.b_p_out
+        # ── Assignment head forward (Δ4) — cache for backward ─────────────────
+        logits_b, _head_cache = self._head_forward_batch(z_t_b, o_hat_b)
         logits_2d_b = logits_b.reshape(B_s, K, nc)
         e_b  = np.exp(logits_2d_b - logits_2d_b.max(axis=2, keepdims=True))
         pi_b = e_b / e_b.sum(axis=2, keepdims=True)
@@ -1227,21 +1262,9 @@ class QuantumActor:
             + beta_entropy * pi_b * (log_pi_b + H_b[:, :, None])
         ).reshape(B_s, K * nc)
 
-        dL_dW_p_out = post_acts[-1].T @ dL_dlogits_b / B_s
-        dL_db_p_out = dL_dlogits_b.mean(axis=0)
-        dx_b        = dL_dlogits_b @ self.W_p_out.T
-
-        dL_dW_post_list = [None] * len(self.W_post)
-        dL_db_post_list = [None] * len(self.b_post)
-        for i in reversed(range(len(self.W_post))):
-            dx_b = dx_b * (post_pres[i] > 0)
-            dL_dW_post_list[i] = post_acts[i].T @ dx_b / B_s
-            dL_db_post_list[i] = dx_b.mean(axis=0)
-            dx_b = dx_b @ self.W_post[i].T
-
-        dL_dh_b      = dx_b
-        dL_dz_post_b = dL_dh_b[:, :self.N_LATENT]
-        dL_do_hat_b  = dL_dh_b[:, self.N_LATENT:]
+        # Assignment head backward (Δ4) → head grads + dL/dz_post + dL/do_hat
+        _grads_head, dL_dz_post_b, dL_do_hat_b = self._head_backward_batch(
+            dL_dlogits_b, _head_cache, B_s)
 
         # ── Decoder backward ──────────────────────────────────────────────────
         dL_ds_rec_b = ae_weight * ae_res_b
@@ -1335,12 +1358,7 @@ class QuantumActor:
                         theta_y=dL_dtheta_y, theta_z=dL_dtheta_z,
                         gamma_enc=dL_dgamma_enc, beta_enc=dL_dbeta_enc)
 
-        grads_xi = {}
-        for i in range(len(self.W_post)):
-            grads_xi[f'W_post_{i}'] = dL_dW_post_list[i]
-            grads_xi[f'b_post_{i}'] = dL_db_post_list[i]
-        grads_xi['W_p_out'] = dL_dW_p_out
-        grads_xi['b_p_out'] = dL_db_p_out
+        grads_xi = _grads_head
 
         return l_q_arr, L_ae_avg, L_ent_avg, grads_ae, grads_qc, grads_xi, clip_frac_q, kl_q
 
@@ -1369,6 +1387,9 @@ class QuantumActor:
             'extra_cz_pairs':   [list(p) for p in self.EXTRA_CZ_PAIRS],
             'extra_zz_pairs':   [list(p) for p in self.EXTRA_ZZ_PAIRS],
             'full_zz_pairs':    [list(p) for p in self.FULL_ZZ_PAIRS],
+            'readout_mode':     self.READOUT_MODE,
+            'softmax_head':     self.SOFTMAX_HEAD,
+            'softmax_beta_init': self.SOFTMAX_BETA_INIT,
         }
         with open(os.path.join(path, 'actor_config.json'), 'w') as f:
             json.dump(cfg_dict, f, indent=2)
@@ -1410,6 +1431,9 @@ class QuantumActor:
             extra_cz_pairs=[tuple(p) for p in c.get('extra_cz_pairs', [])],
             extra_zz_pairs=[tuple(p) for p in c.get('extra_zz_pairs', [])],
             full_zz_pairs= [tuple(p) for p in c.get('full_zz_pairs',  [])],
+            readout_mode=c.get('readout_mode', 'generic'),
+            softmax_head=c.get('softmax_head', False),
+            softmax_beta_init=c.get('softmax_beta_init', 1.0),
             seed=seed,
         )
         actor.set_params(dict(np.load(os.path.join(path, 'actor_params.npz'))))

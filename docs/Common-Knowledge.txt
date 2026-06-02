@@ -7,7 +7,9 @@
                                  [B-2b] clipfrac-trước-lr + clip-là-triệu-chứng (C2 r6/r7), [B-2c] oracle-sweep,
                                  lưu-ý QoS⊥critic (C2 r5/6/7); +PopArt-stable-capped + đọc-explVar-đúng + counterfactual
                                  power-probe (C2 r8); +code-clean gỡ TD/target-net (PopArt+GAE-return only);
-                                 +stable-capped-caveat + [B-2d] DRIFT-ATTRIBUTION timeline (C2 r8 drift ep1068→1404))
+                                 +stable-capped-caveat + [B-2d] DRIFT-ATTRIBUTION timeline (C2 r8 drift ep1068→1404);
+                                 2026-06-02: [E] frozen-λ ROOT=directionless-gradient (not noise/LN) + smoke-r-unreliable
+                                 + λ≠cause-of-PhaseMLP-idle + E-fix0/1/2 + probe-set/STEP3.5 (phase_quality probe))
 --------------------------------------------------------------------------------
   CÁCH DÙNG BỘ FILE NÀY:
    - Common-Knowledge.txt (file này): cơ chế mô hình, bảng tra lỗi, tín hiệu chẩn đoán,
@@ -189,8 +191,35 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     explore burst nhẹ (β↑ vừa, KÈM λ_D↑ để L_pg không quá nhỏ → tránh [C]); gae>0.
 
 [E] λ LƯỢNG TỬ ĐÓNG BĂNG — "λ|max| y/z" đứng yên ở init (≈0.50/0.45) suốt run.
-    Nguyên nhân: SPSA quá nhiễu / lr_qc thấp (tệ hơn ở nq lớn). KHẮC PHỤC:
-    spsa_n_reps↑ (≈8), lr_actor_qc↑ (≈2e-4). Kiểm λ|max| có nhúc nhích khỏi init.
+    Nguyên nhân ban đầu (nghĩ): SPSA quá nhiễu / lr_qc thấp. KHẮC PHỤC (thử): spsa_n_reps↑,
+    lr_actor_qc↑. Kiểm λ|max| có nhúc nhích khỏi init.
+    ⭐ ROOT THẬT (Case2, sau nhiều lần thử — 2026-06-02): KHÔNG phải noise, KHÔNG phải zero-mean-LN.
+    λgrad CÓ magnitude (mag~0.26) nhưng BATCH-MEAN ~0 (net~0.018, r=net/mag~0.06) → Adam 1st-moment≈0
+    → KHÔNG có hướng nhất quán → λ đứng yên. = DIRECTIONLESS gradient (credit-assignment / advantage-
+    decorrelation): tác động của encoding-scale lên return KHÔNG correlate nhất quán với advantage qua
+    batch (λ ở thượng nguồn, signal pha loãng qua VQC+head; mỗi state có encoding-strength tối ưu khác
+    → trung bình triệt tiêu). λ KHÔNG drift kể cả qua 1500 ep → directionless (không phải small-consistent).
+    ĐÃ THỬ & THẤT BẠI (ĐỪNG lặp — DON'T-REPEAT): spsa 8→16 (r không đổi, không phải noise) ·
+    Δ1 LayerNorm+affine γβ (r không đổi ở full-batch) · R1 readout + SoftmaxPQC head (r không đổi).
+    ⚠ SMOKE λgrad r KHÔNG ĐÁNG TIN: smoke 2-ep cho r=0.65 "should move" NHƯNG full run r=0.06 "frozen".
+    Vì r = net/mag, net = |mean qua MINI-BATCHES của g_λ|: smoke ~6 mini-batch entries → ít cancel → net
+    cao GIẢ TẠO; full rollout ~222 entries → cancel → net→0. → CHỈ đọc r ở FULL-BATCH (full rollout),
+    KHÔNG bao giờ kết luận λ từ smoke.
+    ⚠ λ-FROZEN ≠ NGUYÊN NHÂN PhaseMLP IDLE (sửa misdiagnosis L11): PhaseMLP nhận z_t (AE latent) +
+    channel, KHÔNG nhận o_hat (VQC output). λ chỉ ảnh hưởng VQC encoding (→ assignment), KHÔNG ảnh hưởng
+    z_t. → 2 vấn đề ĐỘC LẬP. "Fix λ để gỡ phase" là sai chuỗi nhân-quả. Test phase RIÊNG = probe_phase_quality.
+    HƯỚNG GỠ (ranked, chưa thử cái nào ngoài 3 cái fail trên):
+      (E-fix0 rẻ) lr riêng cho λ ↑5-10× (one-var) — confirm directionless thật: λ move→chỉ là nhỏ; không→directionless.
+                  KHẢ NĂNG THẤP vì λ không drift qua 1500 ep (Adam đã normalize, directionless thì lr cao chỉ thêm noise).
+      (E-fix1 principled) AUXILIARY ENCODING-INFORMATIVENESS LOSS: thêm term train λ TRỰC TIẾP (vd maximize
+                  variance/MI của o_hat w.r.t. action-relevant features) → gradient trực tiếp, bypass dilution
+                  policy-gradient. Đúng gốc nhưng = research sub-project + cân loss.
+      (E-fix2 ⭐ pragmatic, KHUYẾN NGHỊ cho timeline) CHẤP NHẬN λ FIXED = random feature-map (literature-
+                  consistent: Jerbi/Kruse/nhiều QRL freeze encoding). VQC vẫn expressive (data re-up + θ + readout
+                  train). Param-eff claim KHÔNG cần λ trainable. Có thể FREEZE λ hẳn (bỏ khỏi optimizer → rẻ hơn).
+                  λ-frozen thành honest limitation, KHÔNG phải dealbreaker. Quyết bằng PERFORMANCE (phase-quality
+                  + QoS), KHÔNG bằng r.
+      (LOẠI) better gradient estimator (multi-term param-shift): KHÔNG cứu được true-zero gradient → vô ích.
 
 [F] PHASE HEAD CÒN RANDOM/ĐUỐI — ent phase ~65% max, KL & grad lớn nhưng entropy
     không giảm. Phân biệt bằng GREEDY eval: greedy≈sampled → landscape pha phẳng,

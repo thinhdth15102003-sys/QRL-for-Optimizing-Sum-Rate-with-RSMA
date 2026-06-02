@@ -28,7 +28,7 @@
   r10 L11| 1.5 | =            | 16    | PopArt       | 8    | factored bias+0.3 | =                 | PowerMLP ok (π_split57% no-lock)  | phase REGRESS (root=λ frozen); QoS52%
   r11 L13| 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | =                 | task hơi tốt hơn r10              | ❌λ VẪN frozen r0.06 (spsa ko fix=STRUCTURAL); ko vượt r8
   r13*   | 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | Δ1 affine ONLY    | (partial code, dir xóa nhầm)      | thiếu Δ4+R1 → λ grad yếu ~2.8e-4 vẫn frozen
-  arch2  | 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | ⭐Δ1 affine + R1(42obs) + SoftmaxPQC head | smoke: λgrad r0.06→0.65! (CHƯA full run) | TBD — full run R_LoS=0.2 next
+  arch2  | 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | ⭐Δ1 affine + R1(42obs) + SoftmaxPQC head | full run (result_11) ep47: critic✅ PowerMLP✅ NHƯNG ❌λ VẪN frozen r0.06 | smoke r0.65 SAI (small-sample); Δ1 KHÔNG unfreeze. λ=directionless [E]. Phase/QoS chờ ep300
   -------+-----+--------------+-------+--------------+------+----------------+----------------------+----------------------------------+----------------------------------
   * r13 = run launch 15:09 GIỮA lúc sửa code → chỉ load Δ1, thiếu Δ4/R1-wiring (commit 19:22). Dir xóa nhầm, ko khôi phục.
 
@@ -36,7 +36,11 @@
   ⭐ 4 LIMITATION CỐT LÕI còn lại sau r8 (priority order Common Part5 #8):
      #1 critic drift run-dài (ep1000+) — PopArt stable ngắn hạn, cần non-stationarity lever (chưa làm)
      #2 PhaseMLP idle (ent ph ~56-61% max) — gated bởi #3
-     #3 λ FROZEN [E] — STRUCTURAL (LN zero-mean) → arch2 Δ1 affine + SoftmaxPQC nhắm fix (r=0.65 smoke)
+     #3 λ FROZEN [E] — ROOT = DIRECTIONLESS gradient (net~0, r0.06; KHÔNG phải noise/LN). spsa↑/Δ1-affine/
+        R1+SoftmaxPQC ĐỀU FAIL unfreeze (arch2 result_11 ep47 r vẫn 0.06; smoke r0.65 SAI = small-sample).
+        ⚠ λ-frozen ≠ cause PhaseMLP idle (PhaseMLP nhận z_t không nhận o_hat — ĐỘC LẬP). Hướng: E-fix0 lr_λ↑
+        (test, khả năng thấp) / E-fix1 auxiliary-loss (principled) / ⭐E-fix2 CHẤP NHẬN λ fixed feature-map
+        (literature-consistent, KHÔNG dealbreaker — quyết bằng performance không phải r). Xem Common [E].
      #3 PowerMLP wp-concentration trần QoS58% → factored arch (r9/r10) nhắm fix
 --------------------------------------------------------------------------------
 

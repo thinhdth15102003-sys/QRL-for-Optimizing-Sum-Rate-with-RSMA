@@ -233,6 +233,18 @@ class QuantumActor:
         self.lam_y = self.rng.uniform(-0.5, 0.5, nNq)
         self.lam_z = self.rng.uniform(-0.5, 0.5, nNq)
 
+        # ── Δ1 (2026-06-01): LayerNorm learnable affine on z_t_enc (unfreeze λ) ────
+        # Encoding norm: z_t_enc = LayerNorm(z_t) * gamma_enc + beta_enc.
+        # The per-sample LayerNorm (mean-subtract + std-divide) is KEPT for drift
+        # stability. The learnable affine adds a DC offset (beta) that breaks the
+        # zero-mean structure of LN(z_t) — the cause of the frozen-λ gradient
+        # cancellation: dL/dλ_i = γ_i·mean_b[g·LN] + β_i·mean_b[g], so a non-zero
+        # β recovers the DC gradient component that pure LN (β≡0) annihilates.
+        # init γ=1 (identity scale), β=tiny noise (immediate gradient path, ~no
+        # change to the encoding at init). Trained via opt_qc alongside λ, θ.
+        self.gamma_enc = np.ones(nL)
+        self.beta_enc  = self.rng.normal(0.0, 0.02, nL)
+
         # ── θ — Quantum variational angles ────────────────────────────────────────
         self.theta_y = self.rng.uniform(-np.pi, np.pi, (self.N_VAR_LAYERS, nNq))
         self.theta_z = self.rng.uniform(-np.pi, np.pi, (self.N_VAR_LAYERS, nNq))
@@ -256,7 +268,8 @@ class QuantumActor:
         self._p_ae['W_d_out'] = self.W_d_out;  self._p_ae['b_d_out'] = self.b_d_out
 
         self._p_qc = dict(lam_y=self.lam_y, lam_z=self.lam_z,
-                          theta_y=self.theta_y, theta_z=self.theta_z)
+                          theta_y=self.theta_y, theta_z=self.theta_z,
+                          gamma_enc=self.gamma_enc, beta_enc=self.beta_enc)
         self._p_xi = {}
         for i, (W, b) in enumerate(zip(self.W_post, self.b_post)):
             self._p_xi[f'W_post_{i}'] = W;  self._p_xi[f'b_post_{i}'] = b
@@ -359,6 +372,26 @@ class QuantumActor:
             out[:, sl] = (x - mu) / std
         return out
 
+    # ── Δ1: encoding normalisation (LayerNorm + learnable affine) ──────────────
+
+    def _enc_norm(self, z_t: np.ndarray):
+        """z_t_enc = LayerNorm(z_t)·γ + β.  Returns (z_enc, ln, sig) — ln & sig
+        cached for backward.  Per-sample LN kept for drift stability; affine adds
+        the DC offset that unfreezes λ (see _init_params Δ1 note)."""
+        mu  = z_t.mean()
+        sig = z_t.std() + 1e-6
+        ln  = (z_t - mu) / sig
+        z_enc = ln * self.gamma_enc + self.beta_enc
+        return z_enc, ln, sig
+
+    def _enc_norm_batch(self, z_t_b: np.ndarray):
+        """Batch version. z_t_b (B_s, nL). Returns (z_enc_b, ln_b, sig_b)."""
+        mu  = z_t_b.mean(axis=1, keepdims=True)
+        sig = z_t_b.std(axis=1, keepdims=True) + 1e-6
+        ln  = (z_t_b - mu) / sig
+        z_enc = ln * self.gamma_enc + self.beta_enc
+        return z_enc, ln, sig
+
     # ── B2 dual-branch encoder helpers ────────────────────────────────────────
 
     def _dual_encode(self, a_norm: np.ndarray) -> np.ndarray:
@@ -427,8 +460,7 @@ class QuantumActor:
         a_norm = self._group_norm(s_t)
         z_t    = self._dual_encode(a_norm)             # (n_latent,)
 
-        _z_mu  = z_t.mean();  _z_sig = z_t.std() + 1e-6
-        z_t_enc = (z_t - _z_mu) / _z_sig
+        z_t_enc, _, _ = self._enc_norm(z_t)            # Δ1: LN + affine
         alpha = np.pi * np.tanh(self.lam_y * z_t_enc[0::2])
         delta = np.pi * np.tanh(self.lam_z * z_t_enc[1::2])
 
@@ -478,8 +510,7 @@ class QuantumActor:
         a_norm = self._group_norm(s_t)
         z_t    = self._dual_encode(a_norm)
 
-        _z_mu  = z_t.mean();  _z_sig = z_t.std() + 1e-6
-        z_t_enc = (z_t - _z_mu) / _z_sig
+        z_t_enc, _, _ = self._enc_norm(z_t)            # Δ1: LN + affine
         alpha = np.pi * np.tanh(self.lam_y * z_t_enc[0::2])
         delta = np.pi * np.tanh(self.lam_z * z_t_enc[1::2])
         o_hat = expectations_analytic(alpha, delta, self.theta_y, self.theta_z,
@@ -513,9 +544,7 @@ class QuantumActor:
         a_norm_b  = self._group_norm_batch(np.array(s_t_list))
         z_t_b     = self._dual_encode_batch(a_norm_b)      # (B_s, N_LATENT)
 
-        _z_mu_b   = z_t_b.mean(axis=1, keepdims=True)
-        _z_sig_b  = z_t_b.std(axis=1, keepdims=True) + 1e-6
-        z_t_enc_b = (z_t_b - _z_mu_b) / _z_sig_b
+        z_t_enc_b, _, _ = self._enc_norm_batch(z_t_b)      # Δ1: LN + affine
         alpha_b = np.pi * np.tanh(self.lam_y * z_t_enc_b[:, 0::2])
         delta_b = np.pi * np.tanh(self.lam_z * z_t_enc_b[:, 1::2])
 
@@ -602,8 +631,8 @@ class QuantumActor:
 
         # Layer-norm z_t before VQC encoding; kept separate from raw z_t
         # (decoder and post-NN use raw z_t — only quantum angles use z_t_enc)
-        _z_mu  = z_t.mean();  _z_sig = z_t.std() + 1e-6
-        z_t_enc = (z_t - _z_mu) / _z_sig                  # (n_latent,) ≈ N(0,1)
+        # Δ1: LN + learnable affine (γ,β). _ln, _z_sig cached for backward.
+        z_t_enc, _ln, _z_sig = self._enc_norm(z_t)        # (n_latent,)
 
         # Encoding angles
         u_y   = self.lam_y * z_t_enc[0::2]                # (nq,)
@@ -717,16 +746,21 @@ class QuantumActor:
         dL_dlam_y = dL_dalpha * (np.pi * sech2_y * z_t_enc[0::2])  # (nq,)
         dL_dlam_z = dL_ddelta * (np.pi * sech2_z * z_t_enc[1::2])  # (nq,)
 
-        # ∂α_i/∂z_enc_{2i}  =  π · sech²(u_y_i) · λ^y_i
+        # ∂α_i/∂z_enc_{2i}  =  π · sech²(u_y_i) · λ^y_i  (z_enc = affine output)
         dL_dz_enc = np.zeros(self.N_LATENT)
         dL_dz_enc[0::2] = dL_dalpha * (np.pi * sech2_y * self.lam_y)
         dL_dz_enc[1::2] = dL_ddelta * (np.pi * sech2_z * self.lam_z)
 
-        # LayerNorm backward: dL/dz_enc → dL/dz_qc (chain through z_t_enc = LN(z_t))
+        # Δ1 affine backward: z_enc = ln·γ + β
+        dL_dbeta_enc  = dL_dz_enc.copy()
+        dL_dgamma_enc = dL_dz_enc * _ln
+        dL_dln        = dL_dz_enc * self.gamma_enc
+
+        # LayerNorm backward: dL/dln → dL/dz_qc  (ln = (z − μ)/σ)
         _n   = self.N_LATENT
-        _sg  = dL_dz_enc.sum()
-        _sgz = (dL_dz_enc * z_t_enc).sum()
-        dL_dz_qc = (dL_dz_enc - _sg / _n - z_t_enc * _sgz / _n) / _z_sig
+        _sg  = dL_dln.sum()
+        _sgz = (dL_dln * _ln).sum()
+        dL_dz_qc = (dL_dln - _sg / _n - _ln * _sgz / _n) / _z_sig
 
         # ──────────────────────────────────────────────────────────────────────
         # Total gradient on z  →  backprop through encoder (reversed layer order)
@@ -771,7 +805,8 @@ class QuantumActor:
         grads_ae['W_d_out'] = dL_dW_d_out
         grads_ae['b_d_out'] = dL_db_d_out
         grads_qc = dict(lam_y=dL_dlam_y, lam_z=dL_dlam_z,
-                        theta_y=dL_dtheta_y, theta_z=dL_dtheta_z)
+                        theta_y=dL_dtheta_y, theta_z=dL_dtheta_z,
+                        gamma_enc=dL_dgamma_enc, beta_enc=dL_dbeta_enc)
         grads_xi = {}
         for i in range(len(self.W_post)):
             grads_xi[f'W_post_{i}'] = dL_dW_post[i]
@@ -885,10 +920,8 @@ class QuantumActor:
         a_rec_b  = x @ self.W_d_out + self.b_d_out              # (B_s, d_aff)
         ae_res_b = a_rec_b - a_norm_b
 
-        # ── Layer-norm z_t before VQC encoding ────────────────────────────────
-        _z_mu_b   = z_t_b.mean(axis=1, keepdims=True)       # (B_s, 1)
-        _z_sig_b  = z_t_b.std(axis=1,  keepdims=True) + 1e-6
-        z_t_enc_b = (z_t_b - _z_mu_b) / _z_sig_b            # (B_s, N_LATENT)
+        # ── Layer-norm z_t before VQC encoding (Δ1: LN + affine) ──────────────
+        z_t_enc_b, _ln_b, _z_sig_b = self._enc_norm_batch(z_t_b)  # (B_s, N_LATENT)
 
         # ── Encoding angles ────────────────────────────────────────────────────
         u_y_b   = self.lam_y * z_t_enc_b[:, 0::2]           # (B_s, nq)
@@ -997,12 +1030,17 @@ class QuantumActor:
         dL_dz_enc_b[:, 0::2] = dL_dalpha_b * (np.pi * sech2_y_b * self.lam_y)
         dL_dz_enc_b[:, 1::2] = dL_ddelta_b * (np.pi * sech2_z_b * self.lam_z)
 
-        # LayerNorm backward: dL/dz_enc_b → dL/dz_qc_b
+        # Δ1 affine backward: z_enc = ln·γ + β  (γ,β shared → B_s-mean like lam)
+        dL_dbeta_enc  = dL_dz_enc_b.mean(axis=0)                      # (N_LATENT,)
+        dL_dgamma_enc = (dL_dz_enc_b * _ln_b).mean(axis=0)           # (N_LATENT,)
+        dL_dln_b      = dL_dz_enc_b * self.gamma_enc                  # (B_s, N_LATENT)
+
+        # LayerNorm backward: dL/dln_b → dL/dz_qc_b  (ln = (z − μ)/σ)
         _n     = self.N_LATENT
-        _sg_b  = dL_dz_enc_b.sum(axis=1, keepdims=True)               # (B_s, 1)
-        _sgz_b = (dL_dz_enc_b * z_t_enc_b).sum(axis=1, keepdims=True) # (B_s, 1)
-        dL_dz_qc_b = (dL_dz_enc_b - _sg_b / _n
-                       - z_t_enc_b * _sgz_b / _n) / _z_sig_b          # (B_s, N_LATENT)
+        _sg_b  = dL_dln_b.sum(axis=1, keepdims=True)                  # (B_s, 1)
+        _sgz_b = (dL_dln_b * _ln_b).sum(axis=1, keepdims=True)        # (B_s, 1)
+        dL_dz_qc_b = (dL_dln_b - _sg_b / _n
+                       - _ln_b * _sgz_b / _n) / _z_sig_b              # (B_s, N_LATENT)
 
         # ── B2 dual-branch encoder backward (B5: no post-NN gradient) ──────────
         dL_dz_b    = dL_dz_qc_b + dL_dz_ae_b                    # (B_s, N_LATENT)
@@ -1047,7 +1085,8 @@ class QuantumActor:
         grads_ae['b_d_out'] = dL_db_d_out
 
         grads_qc = dict(lam_y=dL_dlam_y, lam_z=dL_dlam_z,
-                        theta_y=dL_dtheta_y, theta_z=dL_dtheta_z)
+                        theta_y=dL_dtheta_y, theta_z=dL_dtheta_z,
+                        gamma_enc=dL_dgamma_enc, beta_enc=dL_dbeta_enc)
 
         grads_xi = {}
         for i in range(len(self.W_post)):
@@ -1129,10 +1168,8 @@ class QuantumActor:
         a_rec_b  = x @ self.W_d_out + self.b_d_out
         ae_res_b = a_rec_b - a_norm_b
 
-        # ── Layer-norm z_t before VQC encoding ────────────────────────────────
-        _z_mu_b   = z_t_b.mean(axis=1, keepdims=True)
-        _z_sig_b  = z_t_b.std(axis=1,  keepdims=True) + 1e-6
-        z_t_enc_b = (z_t_b - _z_mu_b) / _z_sig_b
+        # ── Layer-norm z_t before VQC encoding (Δ1: LN + affine) ──────────────
+        z_t_enc_b, _ln_b, _z_sig_b = self._enc_norm_batch(z_t_b)
 
         # ── Encoding angles ────────────────────────────────────────────────────
         u_y_b   = self.lam_y * z_t_enc_b[:, 0::2]
@@ -1243,12 +1280,17 @@ class QuantumActor:
         dL_dz_enc_b[:, 0::2] = dL_dalpha_b * (np.pi * sech2_y_b * self.lam_y)
         dL_dz_enc_b[:, 1::2] = dL_ddelta_b * (np.pi * sech2_z_b * self.lam_z)
 
-        # LayerNorm backward: dL/dz_enc_b → dL/dz_qc_b
+        # Δ1 affine backward: z_enc = ln·γ + β  (γ,β shared → B_s-mean like lam)
+        dL_dbeta_enc  = dL_dz_enc_b.mean(axis=0)
+        dL_dgamma_enc = (dL_dz_enc_b * _ln_b).mean(axis=0)
+        dL_dln_b      = dL_dz_enc_b * self.gamma_enc
+
+        # LayerNorm backward: dL/dln_b → dL/dz_qc_b  (ln = (z − μ)/σ)
         _n     = self.N_LATENT
-        _sg_b  = dL_dz_enc_b.sum(axis=1, keepdims=True)
-        _sgz_b = (dL_dz_enc_b * z_t_enc_b).sum(axis=1, keepdims=True)
-        dL_dz_qc_b = (dL_dz_enc_b - _sg_b / _n
-                       - z_t_enc_b * _sgz_b / _n) / _z_sig_b
+        _sg_b  = dL_dln_b.sum(axis=1, keepdims=True)
+        _sgz_b = (dL_dln_b * _ln_b).sum(axis=1, keepdims=True)
+        dL_dz_qc_b = (dL_dln_b - _sg_b / _n
+                       - _ln_b * _sgz_b / _n) / _z_sig_b
 
         # ── B2 dual-branch encoder backward (B5: no post-NN gradient) ──────────
         dL_dz_b    = dL_dz_qc_b + dL_dz_ae_b                    # (B_s, N_LATENT)
@@ -1290,7 +1332,8 @@ class QuantumActor:
         grads_ae['b_d_out'] = dL_db_d_out
 
         grads_qc = dict(lam_y=dL_dlam_y, lam_z=dL_dlam_z,
-                        theta_y=dL_dtheta_y, theta_z=dL_dtheta_z)
+                        theta_y=dL_dtheta_y, theta_z=dL_dtheta_z,
+                        gamma_enc=dL_dgamma_enc, beta_enc=dL_dbeta_enc)
 
         grads_xi = {}
         for i in range(len(self.W_post)):

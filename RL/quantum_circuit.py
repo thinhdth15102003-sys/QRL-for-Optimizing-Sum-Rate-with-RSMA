@@ -106,12 +106,27 @@ _EXTRA_ZZ_PAIRS: tuple = ()   # B4: extra ⟨Z_i Z_j⟩ observables appended to 
 _FULL_ZZ_PAIRS:  tuple = ()   # B1: full ZZ set — when non-empty, REPLACES NN ZZ + extra ZZ
                                #     n_obs = nq + len(_FULL_ZZ_PAIRS)
 
+# ── R1 structured readout (Δ2, 2026-06-01) ─────────────────────────────────────
+# readout_mode == 'r1' → _obs_from_batch produces physics-structured observables
+# aligned with the IRS-assignment action (user k → IRS m). Qubit layout (Option-A):
+# user qubits 0..nq-M-1, IRS qubits nq-M..nq-1.  Observable order:
+#   R1-a ⟨Z_u⟩  per user qubit (nq-M) | R1-b ⟨Z_u·Z_r⟩ user×IRS user-major (nq-M)·M
+#   R1-c C_u = Σ_{u'≠u}⟨Z_u Z_u'⟩ cluster (nq-M) | R1-d ⟨Z_r⟩ per IRS (M)
+# Total = (nq-M)(M+2)+M.  (Case2 nq12 M2 → 42; Case3 nq16 M4 → 76.)
+# CAVEAT: R1-b/c carry real correlation only where qubits are entangled. Current
+# circuit entangles via NN-chain CZ (+ extra_cz bridges); full R1-b value needs E1
+# entanglement (Δ3, a follow-up). This core run tests R1 with EXISTING entanglement.
+_READOUT_MODE: str = 'generic'   # 'generic' | 'r1'
+_R1_M:         int = 0           # number of IRS qubits (= M) when r1 mode active
+
 
 def configure_topology(extra_cz_pairs: tuple = (),
                        extra_zz_pairs: tuple = (),
-                       full_zz_pairs:  tuple = ()) -> None:
+                       full_zz_pairs:  tuple = (),
+                       readout_mode:   str   = 'generic',
+                       r1_m:           int   = 0) -> None:
     """
-    Configure cross-block entanglement topology.
+    Configure cross-block entanglement topology + readout mode.
 
     Call once at actor init (before any circuit evaluation) to set the
     module-global topology used by all circuit functions.
@@ -122,18 +137,35 @@ def configure_topology(extra_cz_pairs: tuple = (),
                      appended to NN ZZ.  N_QUANTUM += len(extra_zz_pairs).
     full_zz_pairs  : (B1) when non-empty, REPLACES the NN ZZ loop and extra_zz_pairs
                      entirely.  N_QUANTUM = nq + len(full_zz_pairs).
+    readout_mode   : 'generic' (Z + NN-ZZ + extra/full) | 'r1' (structured per-action).
+    r1_m           : number of IRS qubits (= M) when readout_mode == 'r1'.
     """
-    global _EXTRA_CZ_PAIRS, _EXTRA_ZZ_PAIRS, _FULL_ZZ_PAIRS
+    global _EXTRA_CZ_PAIRS, _EXTRA_ZZ_PAIRS, _FULL_ZZ_PAIRS, _READOUT_MODE, _R1_M
     _EXTRA_CZ_PAIRS = tuple(extra_cz_pairs)
     _EXTRA_ZZ_PAIRS = tuple(extra_zz_pairs)
     _FULL_ZZ_PAIRS  = tuple(full_zz_pairs)
+    _READOUT_MODE   = str(readout_mode)
+    _R1_M           = int(r1_m)
 
 
 def _n_obs(nq: int) -> int:
     """Number of observables given current topology settings."""
+    if _READOUT_MODE == 'r1':
+        nu = nq - _R1_M                  # user qubits
+        return nu * (_R1_M + 2) + _R1_M  # R1-a + R1-b + R1-c + R1-d
     if _FULL_ZZ_PAIRS:
         return nq + len(_FULL_ZZ_PAIRS)
     return 2 * nq - 1 + len(_EXTRA_ZZ_PAIRS)
+
+
+def _r1_pairs(nq: int, M: int):
+    """Qubit-index lists for R1-b / R1-c observables (user qubits 0..nq-M-1)."""
+    nu       = nq - M
+    user_q   = list(range(nu))
+    irs_q    = list(range(nu, nq))
+    b_pairs  = [(u, r) for u in user_q for r in irs_q]          # (nq-M)·M, user-major
+    c_groups = [[(u, up) for up in user_q if up != u] for u in user_q]
+    return b_pairs, c_groups
 
 # ── Flat-index gate application ───────────────────────────────────────────────
 # All functions operate in-place on psi_b : (B, 2^nq) complex (on device).
@@ -245,10 +277,32 @@ def _obs_from_batch(psi_b, nq: int):
     probs  = _xp.abs(psi_b) ** 2                        # (B, dim)
     basis  = _xp.arange(dim, dtype=_xp.int32)           # (dim,)
 
+    # Per-qubit Z eigenvalue sign vectors: S[i] = (1 - 2·bit_i(x)) ∈ {±1}^dim
+    sign = [(1 - 2 * ((basis >> (nq - 1 - i)) & 1)) for i in range(nq)]
+
     z_exp = _xp.empty((B, nq), dtype=float)
     for i in range(nq):
-        bit_i       = (basis >> (nq - 1 - i)) & 1
-        z_exp[:, i] = (probs * (1 - 2 * bit_i)).sum(axis=1)
+        z_exp[:, i] = (probs * sign[i]).sum(axis=1)
+
+    if _READOUT_MODE == 'r1':                            # Δ2: structured per-action readout
+        M  = _R1_M
+        nu = nq - M
+        b_pairs, c_groups = _r1_pairs(nq, M)
+        # R1-a: ⟨Z_u⟩ user qubits  | R1-d: ⟨Z_r⟩ IRS qubits
+        r1a = z_exp[:, :nu]                              # (B, nu)
+        r1d = z_exp[:, nu:]                              # (B, M)
+        # R1-b: ⟨Z_u·Z_r⟩ user×IRS (user-major)
+        r1b = _xp.empty((B, len(b_pairs)), dtype=float)
+        for k, (u, r) in enumerate(b_pairs):
+            r1b[:, k] = (probs * sign[u] * sign[r]).sum(axis=1)
+        # R1-c: C_u = mean_{u'≠u} ⟨Z_u Z_u'⟩  (cluster aggregate, MEAN → bounded [-1,1])
+        r1c = _xp.zeros((B, nu), dtype=float)
+        for u, members in enumerate(c_groups):
+            acc = _xp.zeros(B, dtype=float)
+            for (_u, up) in members:
+                acc = acc + (probs * sign[_u] * sign[up]).sum(axis=1)
+            r1c[:, u] = acc / max(len(members), 1)
+        return _xp.concatenate([r1a, r1b, r1c, r1d], axis=1)  # (B, (nu)(M+2)+M)
 
     if _FULL_ZZ_PAIRS:                                   # B1: full ZZ replaces NN ZZ + extra
         full = _xp.empty((B, len(_FULL_ZZ_PAIRS)), dtype=float)
@@ -320,10 +374,23 @@ def expectations_shots(alpha: np.ndarray, delta: np.ndarray,
     probs  = np.clip(probs, 0, None);  probs /= probs.sum()
     samples = rng.choice(dim, size=n_shots, p=probs)
 
-    z_exp = np.empty(nq)
-    for i in range(nq):
-        bit_i    = (samples >> (nq - 1 - i)) & 1
-        z_exp[i] = 1.0 - 2.0 * bit_i.mean()
+    # Per-qubit Z eigenvalue signs per shot: s[i] = (1 - 2·bit_i) ∈ {±1}^n_shots
+    s_shot = [(1 - 2 * ((samples >> (nq - 1 - i)) & 1)) for i in range(nq)]
+    z_exp  = np.array([s_shot[i].mean() for i in range(nq)])
+
+    if _READOUT_MODE == 'r1':                            # Δ2: structured per-action readout
+        M  = _R1_M
+        nu = nq - M
+        b_pairs, c_groups = _r1_pairs(nq, M)
+        r1a = z_exp[:nu]
+        r1d = z_exp[nu:]
+        r1b = np.array([(s_shot[u] * s_shot[r]).mean() for (u, r) in b_pairs])
+        r1c = np.array([
+            float(np.mean([(s_shot[_u] * s_shot[up]).mean() for (_u, up) in members]))
+            if members else 0.0
+            for members in c_groups
+        ])
+        return np.concatenate([r1a, r1b, r1c, r1d])
 
     if _FULL_ZZ_PAIRS:                                   # B1: full ZZ replaces NN ZZ + extra
         full = np.empty(len(_FULL_ZZ_PAIRS))

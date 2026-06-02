@@ -207,6 +207,16 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     cos (bỏ advantage-sign) cũng ≈0 (+0.005) → interference NỘI TẠI ở encoding-sensitivity (nhân tử
     z_enc data-dependent), KHÔNG chỉ advantage-sign. → DỨT KHOÁT: interference, KHÔNG phải barren-
     plateau/vanishing/depth. Probe này = chẩn đoán chuẩn (mean cos + ||g_b|| + ρ phân biệt 2 cơ chế).
+    ⭐⭐ H1/H2/H3 DISCRIMINATOR (analysis/probe_lambda_landscape.py, OFFLINE no-train): interference
+    probe chứng minh CƠ CHẾ (freeze) nhưng KHÔNG phân biệt ROOT. 3 giả thuyết: H1 λ*(s) khác theo state
+    (conflict bản chất → fix λ(s)/MoE) · H2 có λ* global tốt nhưng PG không tìm ra (→ representation
+    objective) · H3 λ init đã near-optimal / λ ít ảnh hưởng (→ E-fix2 không làm gì). Method: giữ ckpt cố
+    định, SCALE λ, đo greedy-assignment reward/QoS trên batch states (downstream cố định). Test A global
+    sweep · Test B per-state-oracle gap · Test C cluster-vs-blockage.
+    KẾT QUẢ (result_8, MLP head): λ-landscape PHẲNG (reward ×0.1→×3.0 chỉ đổi ~0.1) + gap per-state≈0.04
+    → ⭐ H3: λ-frozen HARMLESS, λ ít ảnh hưởng → KHÔNG cần fix (E-fix2). ⚠ CAVEAT: MLP head capacity cao
+    có thể HẤP THỤ λ-variation → λ trông irrelevant. PHẢI re-run trên arch-2 (SoftmaxPQC LINEAR head):
+    nếu vẫn phẳng → frozen-λ thật harmless. → ƯU TIÊN chạy discriminator TRƯỚC khi đầu tư bất kỳ λ-fix.
     ⚠ SMOKE λgrad r KHÔNG ĐÁNG TIN: smoke 2-ep cho r=0.65 "should move" NHƯNG full run r=0.06 "frozen".
     Vì r = net/mag, net = |mean qua MINI-BATCHES của g_λ|: smoke ~6 mini-batch entries → ít cancel → net
     cao GIẢ TẠO; full rollout ~222 entries → cancel → net→0. → CHỈ đọc r ở FULL-BATCH (full rollout),

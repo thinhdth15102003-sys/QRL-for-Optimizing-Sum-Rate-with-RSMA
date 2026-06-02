@@ -197,6 +197,10 @@ the QoS bottleneck was PowerMLP, not phase/critic). Run on the best-QoS checkpoi
   Critic loạn dai dẳng — env-bound (aleatoric) vs      | probe_critic_ceiling.py        | explVar ceiling under
   trainable (training-dynamics)?                       |  (Tier-1 ceiling)              | random vs trained policy
   -----------------------------------------------------+--------------------------------+-----------------------------
+  λ frozen [E] (λ|max| đứng init, λgrad r low) —        | probe_lam_interference.py      | per-sample ||g_b|| + mean
+  INTERFERENCE (random dirs cancel) vs VANISHING       |  (mean pairwise cos)           | pairwise cos: cos≈0+mag OK
+  (barren-plateau)? confirm BEFORE any λ lever          |                                | =interference; small mag=vanish
+  -----------------------------------------------------+--------------------------------+-----------------------------
   PhaseMLP: entropy dropping but IS the phase actually  | probe_phase_quality.py         | |Σφ|live/N coherence +
   ALIGNING the channel? (priority-#2 — necessary check  |  (greedy live PhaseMLP)        | alignment% (0 rand→1 opt);
   that arch-2 unblocked phase, not just lower entropy)  |                                | live-IRS beats direct?

@@ -201,6 +201,12 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     → trung bình triệt tiêu). λ KHÔNG drift kể cả qua 1500 ep → directionless (không phải small-consistent).
     ĐÃ THỬ & THẤT BẠI (ĐỪNG lặp — DON'T-REPEAT): spsa 8→16 (r không đổi, không phải noise) ·
     Δ1 LayerNorm+affine γβ (r không đổi ở full-batch) · R1 readout + SoftmaxPQC head (r không đổi).
+    ⭐⭐ PROVEN INTERFERENCE (analysis/probe_lam_interference.py, result_8 2026-06-02): per-sample
+    ||g_b||=12.35 (KHỎE, KHÔNG vanishing) NHƯNG mean pairwise cos(g_b,g_b')=−0.001≈0 → per-sample
+    λ-grads hướng NGẪU NHIÊN → batch-mean triệt tiêu → Adam 1st-moment≈0 → frozen. Direction-only
+    cos (bỏ advantage-sign) cũng ≈0 (+0.005) → interference NỘI TẠI ở encoding-sensitivity (nhân tử
+    z_enc data-dependent), KHÔNG chỉ advantage-sign. → DỨT KHOÁT: interference, KHÔNG phải barren-
+    plateau/vanishing/depth. Probe này = chẩn đoán chuẩn (mean cos + ||g_b|| + ρ phân biệt 2 cơ chế).
     ⚠ SMOKE λgrad r KHÔNG ĐÁNG TIN: smoke 2-ep cho r=0.65 "should move" NHƯNG full run r=0.06 "frozen".
     Vì r = net/mag, net = |mean qua MINI-BATCHES của g_λ|: smoke ~6 mini-batch entries → ít cancel → net
     cao GIẢ TẠO; full rollout ~222 entries → cancel → net→0. → CHỈ đọc r ở FULL-BATCH (full rollout),
@@ -209,8 +215,9 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     channel, KHÔNG nhận o_hat (VQC output). λ chỉ ảnh hưởng VQC encoding (→ assignment), KHÔNG ảnh hưởng
     z_t. → 2 vấn đề ĐỘC LẬP. "Fix λ để gỡ phase" là sai chuỗi nhân-quả. Test phase RIÊNG = probe_phase_quality.
     HƯỚNG GỠ (ranked, chưa thử cái nào ngoài 3 cái fail trên):
-      (E-fix0 rẻ) lr riêng cho λ ↑5-10× (one-var) — confirm directionless thật: λ move→chỉ là nhỏ; không→directionless.
-                  KHẢ NĂNG THẤP vì λ không drift qua 1500 ep (Adam đã normalize, directionless thì lr cao chỉ thêm noise).
+      (E-fix0) lr riêng cho λ ↑5-10× — ❌ ĐÃ BÁC bằng probe_lam_interference: gradient directionless
+                  (mean cos≈0) → lr cao chỉ scale 1 vector batch-mean≈0 = thêm noise. Probe = E-fix0
+                  rẻ hơn (không cần train run). SKIP train run, dùng probe kết luận.
       (E-fix1 principled) AUXILIARY ENCODING-INFORMATIVENESS LOSS: thêm term train λ TRỰC TIẾP (vd maximize
                   variance/MI của o_hat w.r.t. action-relevant features) → gradient trực tiếp, bypass dilution
                   policy-gradient. Đúng gốc nhưng = research sub-project + cân loss.

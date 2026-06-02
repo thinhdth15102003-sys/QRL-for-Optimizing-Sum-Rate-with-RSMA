@@ -1141,6 +1141,52 @@ class QuantumActor:
 
         return L_pg_avg, L_ae_avg, L_ent_avg, grads_ae, grads_qc, grads_xi
 
+    # ── Diagnostic: per-sample λ gradient (frozen-λ interference vs vanishing) ──
+
+    def lam_grad_per_sample(self, s_t_list, phi_list, advantages,
+                            beta_entropy: float = 0.0, K_active: int = None) -> np.ndarray:
+        """Per-sample λ-gradient matrix G (B_s, 2·nq) — the terms BEFORE the batch-mean
+        in dL_dlam (cols [0:nq]=λ_y, [nq:2nq]=λ_z, one row per sample). Diagnoses
+        frozen-λ [E]: compute mean pairwise cos(G_b, G_b') across the batch.
+          mean cos ≈ 0 + healthy ||G_b|| → INTERFERENCE (per-sample dirs random → batch-mean
+                                            cancels → Adam stalls). NOT a barren-plateau.
+          small ||G_b||                  → VANISHING (depth/qubit barren plateau).
+        Mirrors the first half of compute_logprobs_grads_batch (analytic, no PPO clip)."""
+        B_s = len(s_t_list); L = self.N_VAR_LAYERS; DR = self.DATA_REUPLOADING
+        nq = self.N_QUBITS; K = self.K; nc = self.n_choices
+        K_used = K_active if K_active is not None else K
+        adv_b = np.asarray(advantages, dtype=float)
+
+        a_norm_b  = self._group_norm_batch(np.array(s_t_list))
+        z_t_b     = self._dual_encode_batch(a_norm_b)
+        z_t_enc_b, _ln_b, _sig_b = self._enc_norm_batch(z_t_b)
+        u_y_b = self.lam_y * z_t_enc_b[:, 0::2]
+        u_z_b = self.lam_z * z_t_enc_b[:, 1::2]
+        alpha_b = np.pi * np.tanh(u_y_b)
+        delta_b = np.pi * np.tanh(u_z_b)
+        o_hat_b = expectations_analytic_batch(alpha_b, delta_b, self.theta_y, self.theta_z, L, DR)
+
+        logits_b, cache = self._head_forward_batch(z_t_b, o_hat_b)
+        pi_b = _softmax(logits_b.reshape(B_s, K, nc).reshape(B_s * K, nc)).reshape(B_s, K, nc)
+        log_pi_b = np.log(pi_b + 1e-10)
+        phi_np = np.array(phi_list)
+        one_hot_b = np.zeros_like(pi_b)
+        one_hot_b[np.arange(B_s)[:, None], np.arange(K)[None, :], phi_np] = 1.0
+        H_b = -(pi_b * log_pi_b).sum(axis=2)
+        dL_dlogits_b = (-adv_b[:, None, None] * (one_hot_b - pi_b)
+                        + beta_entropy * pi_b * (log_pi_b + H_b[:, :, None])).reshape(B_s, K * nc)
+        # per-sample dL/do_hat (head backward gives it un-averaged)
+        _, _, dL_do_hat_b = self._head_backward_batch(dL_dlogits_b, cache, B_s)
+
+        J_ty, J_tz, J_a, J_d = self._jacobian_all_batch(alpha_b, delta_b)
+        dL_dalpha_b = np.einsum('sop,so->sp', J_a, dL_do_hat_b)   # (B_s, nq)
+        dL_ddelta_b = np.einsum('sop,so->sp', J_d, dL_do_hat_b)
+        sech2_y_b = 1.0 - np.tanh(u_y_b) ** 2
+        sech2_z_b = 1.0 - np.tanh(u_z_b) ** 2
+        G_y = dL_dalpha_b * (np.pi * sech2_y_b * z_t_enc_b[:, 0::2])   # (B_s, nq)
+        G_z = dL_ddelta_b * (np.pi * sech2_z_b * z_t_enc_b[:, 1::2])
+        return np.concatenate([G_y, G_z], axis=1)                     # (B_s, 2nq)
+
     # ── Fused log-prob + gradient (single quantum forward pass) ───────────────
 
     def compute_logprobs_grads_batch(self,

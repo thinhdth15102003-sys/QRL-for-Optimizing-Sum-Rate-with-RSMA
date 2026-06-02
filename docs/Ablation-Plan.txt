@@ -45,6 +45,9 @@
         ★ FRAMING (honest prior): quantum nhiều khả năng KHÔNG outperform task-perf (lý thuyết QML + frozen-λ
         + barren-plateau ngược scaling). KHÔNG over-claim advantage (=reject). Story AN TOÀN/Q1-able =
         FEASIBILITY + PARAMETER-EFFICIENCY. ĐỪNG extrapolate ADVANTAGE lên Case 3 (chỉ extrapolate scaling đã ĐO).
+        ★★ DESIGN CHI TIẾT: xem "A1 FAIR-COMPARISON DESIGN" (2-axis iso-param A1a/A1b + iso-perf + scaling
+        + amortized inference) ở cuối file. Param table 3 case + fairness controls (grid-search classical,
+        KHÔNG strawman) đã ghi ở đó.
    A2. AE vs no-AE (C3): bỏ AE, encode thẳng state (hoặc projection tuyến tính) vào VQC.
         Chứng minh AE-compression cần cho register hạn chế.
    A3. Hierarchical/sequential vs MONOLITHIC (C2): 1 actor phẳng quyết 4 biến cùng lúc vs
@@ -250,4 +253,138 @@
    G7. VQC-at-phase-head ablation (negative result để justify design).
 
   Mỗi gate = 1-3 fresh runs. Total ~10-15 runs cho full paper data.
+================================================================================
+
+
+================================================================================
+  PAPER RESULTS STRUCTURE  (3 phần — chốt 2026-06-02)
+================================================================================
+  PHẦN 1 — MAIN RESULT: vượt baseline Tan et al. (classical optimization).
+    • Headline: ΣR_tot của HQC-HAC > Tan et al. Case 1 ≈ 1.7 (ĐÃ vượt) + Case 2/3.
+    • Kèm 4 baselines có sẵn (random/greedy/direct-only/all-IRS) — đặt agent trong context.
+    • Metric: ΣR_tot + QoS-satisfaction%, GREEDY eval, multi-seed mean±std.
+    • Đây là contribution C1 (problem) + C2 (framework hoạt động). ĐƠN GIẢN, đã gần xong.
+
+  PHẦN 2 — QUANTUM vs CLASSICAL (A1): claim chính = PARAM-EFFICIENCY + AMORTIZED INFERENCE.
+    • Hy vọng (không bắt buộc) task-perf ≥ classical. NHƯNG claim AN TOÀN = efficiency, KHÔNG
+      phải advantage (honest prior: PQC≈DNN trên natural physics RL).
+    • 3 trục đo (chi tiết "A1 FAIR-COMPARISON DESIGN" bên dưới): iso-param · iso-perf · scaling.
+    • + AMORTIZED INFERENCE: wall-clock/state RL O(1) vs Tan et al. O(K^∗) per-state (đo bên dưới).
+
+  PHẦN 3 — COMPONENT ABLATIONS + HYPER IMPORTANCE: chứng minh từng design choice đáng giá.
+    • A2 (AE) · A3 (hierarchy) · A4 (entropy-anneal) · A5/A6 (quantum design) · A7 (VQC placement).
+    • + HYPER IMPORTANCE (mới — xem dưới): chứng minh hyper KHÔNG tùy tiện, mỗi cái có vai trò.
+
+
+================================================================================
+  A1 FAIR-COMPARISON DESIGN  (Quantum vs Classical — 2-axis, chốt 2026-06-02)
+================================================================================
+  Nền: Jerbi 2021 (report param-count, PQC nhỏ) + Kruse 2023 (grid-search DNN 117 config,
+  best 2×64=4416 params vs VQC 176; honest gap=param-count). Bài học: KHÔNG có 1 "fair" số
+  duy nhất → báo cáo ĐA TRỤC + trung thực param ratio.
+
+  ⚠ KEY: VQC block của ta RẤT NHỎ = 12·nq params (Case1 96 / Case2 144 / Case3 192) = O(n).
+     Head SoftmaxPQC scale theo action space K·(M+1) — BẮT BUỘC cho MỌI model → KHÔNG phải
+     differentiator. "Quantum vs classical" = về FEATURE EXTRACTOR (VQC tạo n_obs features).
+
+  PARAM TABLE (architecture-2, 3 case):
+    Phần                         | Case1 (K5,M1,nq8) | Case2 (K10,M2,nq12) | Case3 (K20,M4,nq16)
+    -----------------------------+-------------------+---------------------+--------------------
+    VQC block (λ+θ+Δ1 affine)    | 96   (12·nq)      | 144                 | 192      ← O(n)
+    SoftmaxPQC head              | 391               | 2011                | 10901    ← O(K·M·nq)
+    AE (shared, giữ constant)    | ~5K               | ~5K                 | ~8K
+    total post-AE (VQC+head)     | 487               | 2155                | 11093
+
+  ── A1a — ISO-VQC-PARAM (HEADLINE, cô lập lượng tử) ⭐ ─────────────────────────
+    Thay CHỈ VQC block (z_t→o_hat) bằng classical block CÙNG params (12·nq); GIỮ NGUYÊN
+    AE + SoftmaxPQC head + critic + mọi hyper. Classical block = MLP n_lat→h→n_obs với
+    n_lat·h+h·n_obs ≈ 12·nq (Case2: 24→h→42, 66h≈144 → h≈2 bottleneck).
+    → Trả lời: "cùng param budget, function-class lượng tử tạo features tốt hơn classical?"
+    Attribution SẠCH NHẤT. Caveat h≈2 strawman → bù bằng iso-perf + A1b.
+
+  ── A1b — ISO-TOTAL-PARAM (robustness, "model cùng độ lớn") ──────────────────
+    Thay TOÀN BỘ VQC+head (z_t→logits) bằng 1 MLP cùng tổng post-AE params; GIỮ AE+critic.
+    MLP n_lat→h→K·nc (Case2: 24→h→30, 54h≈2155 → h≈40 — MLP bình thường, KHÔNG strawman).
+    → Khớp "model độ lớn tương tự VQC" + giống Kruse so whole-actor. h: Case1≈19, C2≈40, C3≈84.
+
+  ── ISO-PERFORMANCE (trục 3, kiểu Kruse — bắt buộc honesty) ──────────────────
+    Grid-search classical to DẦN đến khi match VQC perf → report PARAM RATIO (VQC X đạt cùng
+    perf với DNN Y; nếu Y≫X = param-eff mạnh). Đây là claim efficiency chính nếu task-perf hòa.
+
+  ── SCALING figure (feasibility/Case-3 story) ───────────────────────────────
+    Param-count vs K (Case1→2→3): VQC block O(n) (96→144→192) vs classical block cần để match.
+    Map: Case 3 nơi Tan et al. classical-opt infeasible → ta vẫn train được.
+
+  ── FAIRNESS CONTROLS (kỷ luật — KHÔNG strawman classical) ───────────────────
+    1. GIỮ NGUYÊN: AE, critic PopArt, PPO/GAE/entropy/PopArt, seeds, episodes, R_LoS. Chỉ đổi VQC↔classical.
+    2. GRID-SEARCH classical (depth 1-2, width quanh budget, activation ReLU/tanh — task oscillatory
+       nên thêm tanh, LR) → cho DNN "best shot" (Kruse: 117 config). Chọn best-at-budget.
+    3. MULTI-SEED 3-5, mean±std, FINAL-STABLE (không peak).
+    4. Report cả iso-param (A1a/A1b) VÀ iso-perf (ratio). KHÔNG claim task-advantage.
+
+  ── AMORTIZED INFERENCE (đo cho PHẦN 2) ─────────────────────────────────────
+    Tan et al.: mỗi channel-state GIẢI LẠI (SDR+POA+RMCG+SA, 4 subproblem lặp đến hội tụ) =
+    O(K^∗) phút-giờ. Ta: TRAIN 1 LẦN (offline đắt) → inference = 1 forward pass mili-giây/state.
+    ĐO: (a) wall-clock inference/state @ K=5/10/20; (b) cumulative compute qua 1 deployment
+    session (vd 10k channel realizations) — vẽ classical exponential blow-up vs ours flat;
+    (c) so với Tan et al. complexity O(K^∗) (trích từ paper họ). → deployment/feasibility argument,
+    đúng BẤT KỂ quantum thắng/không về task-perf.
+
+  IMPLEMENTATION: cần thêm actor_mode='classical' (ClassicalActor = MLP thay VQC block, cùng
+    I/O z_t→o_hat cho A1a / z_t→logits cho A1b). Tái dùng pipeline (AE/critic/PPO). Flags đã có
+    vqc_softmax_head + vqc_readout_mode cho 1 baseline; thêm 1 flag actor backbone.
+
+
+================================================================================
+  HYPER IMPORTANCE  (PHẦN 3 — chứng minh hyper không tùy tiện, chốt 2026-06-02)
+================================================================================
+  Mục đích: reviewer hỏi "hyper chọn tùy tiện?". Chứng minh MỖI lever quan trọng có evidence
+  từ run-log (đã có sẵn — KHÔNG cần chạy lại nhiều). Lấy từ docs/Training-Case-2.txt BẢNG TÓM TẮT.
+  Trình bày dạng "lever → on/off → Δ metric" (1 figure hoặc bảng):
+    • gae_lambda 0 vs 0.9    : 0→collapse [A] (credit dài hạn). ĐÃ có evidence (Case1 log).
+    • PopArt on/off          : off→critic wobble explVar âm; on→stable. ĐÃ có (r7 vs r8).
+    • β-entropy anneal on/off : fixed→entropy-dom collapse [C]; anneal→ổn. ĐÃ có (r2/r3).
+    • λ_D calibration         : quá cao→penalty-dom critic mù [I-2] (r1 λ_D3.0). ĐÃ có.
+    • reward_noise_avg 8 vs 16: 8→critic khó fit; 16→explVar leo. ĐÃ có (r2→r3).
+    • Δ1 affine (λ unfreeze)  : off→λ frozen r0.06; on→r0.65. ĐÃ có (r11 vs arch2 smoke).
+  → PHẦN LỚN evidence ĐÃ CÓ trong run-log → chỉ cần 1-2 confirm run (A4 entropy on/off rõ ràng).
+  → KHÔNG cần full grid — dùng các run TỰ NHIÊN đã chạy (mỗi run = 1 lever đổi) như ablation.
+
+
+================================================================================
+  SUGGESTED RUNS / DATA  (chốt thứ tự chạy để lấp ablation — 2026-06-02)
+================================================================================
+  ƯU TIÊN (gate nhau; mỗi dòng = data cho 1 phần paper):
+
+  [R0] ⭐ ĐANG CHẠY: arch-2 full run Case 2 R_LoS=0.2 (verify λ unfreeze + phase học). Gate mọi thứ.
+       Data: PHẦN 1 (Case-2 perf) + verify architecture trước khi ablate trên nó.
+
+  [R1] PHẦN 1 — MAIN: full curriculum 0.2→0.5 Case 1,2 trên arch-2 (resume mỗi ramp), multi-seed 3.
+       Data: ΣR_tot/QoS vs Tan et al. baseline + 4 baselines. → bảng+figure headline.
+       Case 1 đạt ~1.7 (đã có sơ bộ) → confirm trên arch-2 final.
+
+  [R2] PHẦN 2 — A1 quantum-vs-classical: cần ClassicalActor (impl trước).
+       • A1a iso-VQC-param: 3 case × 3 seed = 9 run (classical block ~12·nq)
+       • A1b iso-total-param: 3 case × 3 seed = 9 run (classical MLP ~total)
+       • iso-perf grid: classical width sweep đến match (Case 2 đủ, ~4-5 run)
+       • amortized inference: ĐO wall-clock (KHÔNG cần train — chạy inference trên ckpt) — RẺ.
+       Data: param-efficiency table + iso-perf ratio + scaling figure + inference-time figure.
+
+  [R3] PHẦN 3 — component ablations (Case 2 headline ramp, seed 2-3 mỗi cái):
+       • A2 no-AE (encode thẳng/linear vào VQC)        — 2-3 run
+       • A3 monolithic (1 flat actor 4 biến)            — 2-3 run
+       • A4 entropy-anneal off                          — 1-2 run (collapse nhanh, rẻ)
+       • A5 qubit/depth sweep (nq 8/12/16, L 2/3/5)     — dùng chung data 3-case + vài run
+       • A6 entanglement E1+E2 on/off, λ-trainable on/off — 2-3 run (cần Δ3 impl)
+       • A7 VQC-at-phase-head (negative ablation)        — 1 run
+
+  [R4] HYPER IMPORTANCE: phần lớn lấy từ run-log có sẵn (bảng tóm tắt). Confirm run nếu thiếu:
+       chủ yếu A4 (entropy) + PopArt on/off (có thể đã đủ từ r7/r8). ~1-2 run bù.
+
+  TỔNG: R0(đang) + R1(~6 run curriculum×seed) + R2(~22 run + inference đo) + R3(~12 run) +
+        R4(~2 run) ≈ 40+ run-equivalents. NHƯNG nhiều cái ngắn (A4 collapse nhanh, inference ko train).
+        Thực tế ~3-4 tuần compute. Ưu tiên R0→R1→R2 (3 phần chính), R3/R4 bổ sung.
+
+  ⚠ ĐIỀU KIỆN: ablate trên arch-2 ĐÃ ỔN (R0 pass: λ moved + critic stable). Ablate trên nền chưa
+     ổn = data nhiễu vô nghĩa (xem PHƯƠNG PHÁP). DON'T-REPEAT guard: check bảng tóm tắt trước mỗi tune.
 ================================================================================

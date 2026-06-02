@@ -3,9 +3,41 @@
 ================================================================================
   Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
   Bài học gốc kế thừa từ Case 1 → Training-Case-1.txt.
-  File này: setup Case 2 (forward-looking) + những điểm cần chú ý. Bảng ramp để TRỐNG,
-  điền khi train thực tế.
-  Trạng thái: CHƯA TRAIN (chuẩn bị). Cập nhật lần cuối: 2026-05-29
+  File này: setup Case 2 + BẢNG TÓM TẮT RUN (dưới) + nhật ký chi tiết (L1-L14 cuối file).
+  Trạng thái: R_LoS=0.2 đang tinh chỉnh kiến trúc (architecture-2). Cập nhật: 2026-06-02
+--------------------------------------------------------------------------------
+
+================================================================================
+  BẢNG TÓM TẮT RUN  (quick-reference — chi tiết xem L1-L14 ở "NHẬT KÝ RUN" cuối file)
+================================================================================
+  Tất cả ở R_LoS=0.2, K10 M2 nq12. "=" = giữ như run trước. Lever = thứ MỚI thử mỗi run.
+  Cột: λ_D | β(entropy) | noise(reward_avg) | critic | spsa | PowerMLP | enc/readout/head
+
+  Run    | λ_D | β anneal      | noise | critic        | spsa | PowerMLP        | enc/readout/head      | → RESULT                          | LIMITATION (chưa fix)
+  -------+-----+--------------+-------+--------------+------+----------------+----------------------+----------------------------------+----------------------------------
+  r1 L1  | 3.0 | 0.002        | 8     | TD0 warmup   | 8    | single-softmax | LN/generic25/MLP     | STUCK QoS54%, critic mù explVar.1 | λ_D quá cao→penalty-dom [I-2]
+  r1 L2  | 1.5 | 0.002        | 8     | =            | =    | =              | =                    | reward bớt âm, QoS60%; critic mù  | critic explVar0.07 + entropy-dom
+  r2 L3  | 1.5 | 0.001/anneal | 8     | =            | =    | =              | =                    | entropy-dom TẮT; phase 40→35      | critic VẪN mù explVar0.08 (H1 bác)
+  r3 L4  | 1.5 | =            | 16    | +warmup fresh| =    | =              | =                    | explVar 0.08→0.4-0.6 (1 phần)     | critic bất ổn: grad-plateau, wobble
+  r4 L5  | 1.5 | =            | 16    | TD0→GAE-ret  | =    | =              | =                    | grad V giảm (tích cực)            | TREO ep96 (CUDA/game [H]) inconcl.
+  r5 L6  | 1.5 | =            | 16    | GAE-ret      | =    | =              | =                    | —                                 | GAE 1 mình ko đủ: explVar wobble±, QoS thoái hóa
+  r6 L7  | 1.5 | =            | 16    | lr_crit→3e-4 | =    | =              | =                    | —                                 | lr↓ đơn lẻ ko fix (clipfrac~100%)
+  r7 L8  | 1.5 | =            | 16    | grad_clip→1k | =    | =              | =                    | clipfrac 100%→0%                  | explVar VẪN wobble (clip=triệu chứng)
+  r8 L9  | 1.5 | =            | 16    | +FULL PopArt | =    | =              | =                    | ⭐GOLD: critic stable .45, QoS51→60%, best233, reward âm→+ | drift @ep1500; trần QoS58% (wp-conc); λ frozen; phase idle
+  r9     | 1.5 | =            | 16    | PopArt       | 8    | factored bias+1.0 | =                 | priority3 PowerMLP ok             | bias quá mạnh: wc LOCK70%→starve phase
+  r10 L11| 1.5 | =            | 16    | PopArt       | 8    | factored bias+0.3 | =                 | PowerMLP ok (π_split57% no-lock)  | phase REGRESS (root=λ frozen); QoS52%
+  r11 L13| 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | =                 | task hơi tốt hơn r10              | ❌λ VẪN frozen r0.06 (spsa ko fix=STRUCTURAL); ko vượt r8
+  r13*   | 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | Δ1 affine ONLY    | (partial code, dir xóa nhầm)      | thiếu Δ4+R1 → λ grad yếu ~2.8e-4 vẫn frozen
+  arch2  | 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | ⭐Δ1 affine + R1(42obs) + SoftmaxPQC head | smoke: λgrad r0.06→0.65! (CHƯA full run) | TBD — full run R_LoS=0.2 next
+  -------+-----+--------------+-------+--------------+------+----------------+----------------------+----------------------------------+----------------------------------
+  * r13 = run launch 15:09 GIỮA lúc sửa code → chỉ load Δ1, thiếu Δ4/R1-wiring (commit 19:22). Dir xóa nhầm, ko khôi phục.
+
+  ⭐ GOLD BASELINE = r8 (best reward 233, QoS peak 60%). Mọi arch mới phải VƯỢT r8.
+  ⭐ 4 LIMITATION CỐT LÕI còn lại sau r8 (priority order Common Part5 #8):
+     #1 critic drift run-dài (ep1000+) — PopArt stable ngắn hạn, cần non-stationarity lever (chưa làm)
+     #2 PhaseMLP idle (ent ph ~56-61% max) — gated bởi #3
+     #3 λ FROZEN [E] — STRUCTURAL (LN zero-mean) → arch2 Δ1 affine + SoftmaxPQC nhắm fix (r=0.65 smoke)
+     #3 PowerMLP wp-concentration trần QoS58% → factored arch (r9/r10) nhắm fix
 --------------------------------------------------------------------------------
 
 # ── CẤU HÌNH CASE 2 (params.py ACTIVE CASE) ─────────────────────────────────

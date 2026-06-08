@@ -6,7 +6,7 @@
   (result_1→11) và "set thế này → ra sao".
   Cập nhật lần cuối: 2026-06-08 (G4 nq=12 UNIFIED: Case 1 now nq=12 D_enc=2 W_proj 10→22 EXPANSION).
                   Pre-2026-06-08: Case 1 had nq=8 (historical), see params_pre_unify_backup.py.
-                  result_17 (arch-2 Case 1 nq=8 retry @λ=2, ep_00935 oracle) — historical reference.
+                  result_12 (đĩa: results/result_17) (arch-2 Case 1 nq=8 retry @λ=2, ep_00935 oracle) — historical reference.
                   Future Case 1 runs: K=5, M=1, nq=12, n_var_layers=2, n_hidden_ae=[32].
 --------------------------------------------------------------------------------
 
@@ -39,6 +39,9 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
    - λ_D=1.5 fresh (Case 2 r11 baseline, Case 1 r5 ongoing): healthy climb, mild drift
    - λ_D=2.0 fresh (r17, r1 Case 1+2): peak early then DRIFT -350% to -420% from peak
    - λ_D=3.0 (resume + bump): LAMBDA-BUMP-COLLAPSE [K] catastrophic
+   - ⭐ NHƯNG ổn-định-của-λ=1.5 PHỤ THUỘC UNIFY (nq=12): nq=8 @λ1.5 (result_13/đĩa r3) VẪN drift
+     QoS54→38% + QoS thấp; nq=12 @λ1.5 (result_14/đĩa r5) QoS 73% leo ổn định (+28pt matched-ep).
+     → REFINEMENT [I-4]: sweet-spot λ=1.5 chỉ thật-sự ổn-định khi representation đủ (xem NHẬT KÝ r13/r14).
    → λ_D=1.5 = OPTIMAL starting point cho ramp=0.2 (both Case 1 + 2). KHÔNG dùng λ≥2.
    → Per [I-3] curriculum rule: λ_D scale gently với R_LoS, nâng dần (gợi ý 1.5→1.8→2.2→2.6).
    → KHÔNG bump λ mid-resume — gây cascade Ck collapse [K]. Fresh restart nếu cần λ change.
@@ -119,8 +122,9 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
   result_10 R_LoS0.45 λ_D4.5 gae0.9 β0.004 ←r9/ep400 → 88% (β đánh tụt) [thay bằng r11]
   result_11 R_LoS0.5  λ_D4.5 gae0.9 β0.001 ←r9/ep400 → ep254 QoS83% rồi GPU-hang; có ep_200
   ── ARCH-2 RETRY (2026-06-05/06, fresh K=5 M=1 nq=8) ──
-  result_17 R_LoS0.2 λ_D=2 gae0.9 β0.001 + PopArt + R1readout + SoftmaxPQC + Δ1 fresh
-            → ep~935 RUNNING. Critic ⭐⭐ explVar+0.84 corr+0.92 (vs r1 blind = MAJOR arch win).
+  result_12 R_LoS0.2 λ_D=2 gae0.9 β0.001 + PopArt + R1readout + SoftmaxPQC + Δ1 fresh  (thư mục đĩa: results/result_17)
+            → ep~935 reached oracle RỒI STOPPED 2026-06-08 (drift −419% từ peak = λ=2 instability; xem r13/r14).
+              Critic ⭐⭐ explVar+0.84 corr+0.92 (vs r1 blind = MAJOR arch win).
             R_tot climbing 1.17→2.91 STRONG (vs r1@1447: 2.13), QoS 45→49% (rate-favoring equilibrium
             vs r1's QoS-favoring; same reward objective, different Pareto point).
             ⭐⭐⭐ IRS/K vs Blk/K BEHAVIORAL MILESTONE: ep~311 first crossover IRS>Blk; ep~700+
@@ -133,4 +137,25 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
             CONTRAST: Case 2 (K=10 M=2, 3^10=59049 combinatorial) has +0.36 reward gap (F2 51%
             + F4 49% per distill probe). → Hierarchical decomposition is SCALE-LIMITED.
             Report: results/result_17/assignment_oracle_ep00900.txt.
+  ── nq=8 vs nq=12 (UNIFY G4) CONTROLLED COMPARISON @ R_LoS0.2 λ_D=1.5 (2026-06-08) ──
+  result_13 R_LoS0.2 λ_D1.5 gae0.9 β0.001 nq=8 n_lat16 n_var3 fresh  (thư mục đĩa: results/result_3)
+            → STOPPED 2026-06-07 @ep~1728. nq=8 @ λ=1.5 (CÙNG λ result_14 → đối chứng sạch tách nq).
+              Critic ⭐ explVar 0.81-0.90 stable suốt (corr 0.91) — KHỎE hơn cả result_14, nhưng policy
+              vẫn yếu ⇒ nút thắt = actor/VQC nq=8, KHÔNG phải critic.
+              QoS đỉnh CHỈ ~54% @ep~1600 rồi DRIFT về 38%; R_tot phình 0.95→3.0+ (greedy). best reward 191.
+              ⇒ nq=8 KHÔNG đạt QoS cao ở λ=1.5 ổn định (cần λ=2 như result_12, nhưng λ=2 thì drift).
+  result_14 R_LoS0.2 λ_D1.5 gae0.9 β0.001 nq=12 n_lat24 n_var2 W_proj10→22 EXPANSION fresh  (thư mục đĩa: results/result_5)
+            → RUNNING @ep~311 (2026-06-08). nq=12 (UNIFY) @ λ=1.5. Critic explVar 0.62-0.83.
+              QoS 51→73% leo, R_tot 1.5 (QoS-serving regime), best reward 259 @ep303 (vượt r13 191 + baseline cũ).
+              ⭐⭐ MATCHED-EP @ep~300: r14 QoS μ~73% vs r13 QoS μ~45% = +28pt CHỈ từ unify (cùng λ, env, ep).
+              IRS-usage aggregate ~BẰNG nhau (2.6-2.8/5) → unify route IRS cho ĐÚNG user (corr user↔IRS),
+              KHÔNG dùng IRS nhiều hơn.
+  ⭐⭐⭐ FINDING (unify materially helps Case 1 — củng cố paper C3 AE-VQC representation):
+     - Unify (nq8→12 + n_lat16→24 + W_proj EXPANSION) TÁCH RỜI "QoS cao" khỏi "λ cao gây drift".
+       nq=8 lưỡng nan: λ1.5→QoS yếu (r13 54%); λ2→QoS đỉnh tốt (r12/result_1 96%) NHƯNG drift.
+       nq=12 đạt QoS cao NGAY ở λ=1.5 ổn định → phá thế lưỡng nan.
+     - Cơ chế: nq=12 cho agent "thấy" assignment đúng từ gradient representation → không cần λ ép mạnh;
+       nq=8 nén → không thấy → cần λ=2 ép → λ mạnh thì destabilize.
+     - CAVEAT: "unify" = CẢ GÓI (chưa tách riêng nq vs n_lat vs n_var); r14 mới ep311, chưa kiểm
+       long-run drift — canh thêm ~1000ep mới khẳng định nó GIỮ QoS không drift muộn.
 ================================================================================

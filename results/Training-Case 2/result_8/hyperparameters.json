@@ -1,0 +1,122 @@
+{
+  "run_id": 8,
+  "timestamp": "2026-05-31T18:54:11",
+  "system": {
+    "K": 10,
+    "M": 2,
+    "N": 24,
+    "P_S_dBm": 70.0,
+    "f_GHz": 1.58,
+    "h_SR_km": 800.0,
+    "G_S_dBi": 60.0,
+    "G_U_dBi": 60.0,
+    "noise_mean_dBW": -30.0,
+    "noise_var_dBW": 10.0,
+    "kappa": 0.05,
+    "R_LoS_km": 0.2,
+    "irs_spawn_radius_frac": 0.667,
+    "user_free_radius_frac": 0.4,
+    "h_IRS_km": 0.02,
+    "beta_IRS": 1.0,
+    "beta_blocking": 0.1,
+    "d_block_km": 0.02,
+    "path_loss_exp": 3.5,
+    "user_speed_mps": 1.5,
+    "D_k_bps_hz": 0.1,
+    "lambda_D": 1.5,
+    "epsilon_qp": 0.001
+  },
+  "training": {
+    "n_episodes": 4000,
+    "n_steps_per_ep": 200,
+    "gamma": 0.95,
+    "ae_weight": 0.5,
+    "beta_entropy": 0.001,
+    "beta_entropy_min": 0.0003,
+    "beta_entropy_anneal_end": 0.1,
+    "lr_decay_start": 0.2,
+    "lr_min_frac": 0.25,
+    "batch_size": 64,
+    "ppo_epsilon": 0.2,
+    "ppo_epochs": 6,
+    "lr_actor_ae": 0.0001,
+    "lr_actor_qc": 0.0001,
+    "lr_actor_xi": 0.0003,
+    "lr_critic": 0.0003,
+    "n_shots_train": 1500,
+    "n_shots_eval": 3000,
+    "eval_interval": 20,
+    "gae_lambda": 0.9,
+    "reward_noise_avg": 16,
+    "ae_pretrain_epochs": 5000,
+    "ae_pretrain_lr": 0.001,
+    "seed": 0
+  },
+  "actor": {
+    "d_s": 44,
+    "n_latent": 24,
+    "n_qubits": 12,
+    "n_var_layers": 3,
+    "n_shots": 1500,
+    "hidden_ae": [
+      128,
+      64
+    ],
+    "hidden_post": [
+      256,
+      128
+    ],
+    "n_choices": 3,
+    "data_reuploading": true,
+    "architecture": "44 \u2192 LN \u2192 128\u219264 \u2192 24(z) | QC(12q,L=3) \u2192 25(o) \u2192 49 \u2192 256\u2192128 \u2192 10\u00d73"
+  },
+  "critic": {
+    "d_state": 44,
+    "d_action": 0,
+    "d_in": 44,
+    "hidden": [
+      512,
+      256,
+      128,
+      64
+    ],
+    "gamma": 0.95,
+    "architecture": "44 \u2192 512 \u2192 256 \u2192 128 \u2192 64 \u2192 1"
+  },
+  "phase_net": {
+    "d_s": 20,
+    "M": 2,
+    "N": 24,
+    "n_levels": 4,
+    "hidden": [
+      64,
+      128,
+      256,
+      128
+    ],
+    "lr": 0.0001
+  },
+  "power_net": {
+    "d_s": 10,
+    "K": 10,
+    "M": 2,
+    "P_S": 10000.0,
+    "hidden": [
+      128,
+      128,
+      64
+    ],
+    "lr": 0.0001
+  },
+  "ck_net": {
+    "d_s": 30,
+    "K": 10,
+    "hidden": [
+      128,
+      128,
+      64,
+      32
+    ],
+    "lr": 0.0001
+  }
+}

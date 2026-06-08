@@ -69,6 +69,34 @@ Extract the trajectory:
 `grep -nE "rolling-(50|[1-4][0-9]): reward" .../training_log.txt | awk 'NR%5==1'`
 (also read the last few raw `diag` blocks for the current state.)
 
+### ★★ EARLY-FLAT PATTERN — compare against baseline result_11 BEFORE calling failure
+⚠ DO NOT diagnose "policy fail" from a flat early trajectory alone. The known-good
+baseline result_11 (D_k=0.10, R_LoS=0.2, Case 2 main reference) was ALSO flat for
+~400 episodes before climbing:
+  ep~50    QoS 52%  R_tot 1.37  reward -286
+  ep~250   QoS 52%  R_tot 1.40  reward -243   ← STILL FLAT after 200 ep
+  ep~350   QoS 53%  R_tot 1.43  reward -215   ← still flat
+  ep~500+  QoS 53→60% climbing begins
+  ep~1200  QoS 60%  R_tot 1.75  PEAK
+That's ~400 episodes of "looking failed" before genuine learning kicked in.
+
+Protocol when assessing a run at < ep600 with flat QoS:
+  1. Compare the run's (QoS, R_tot, reward μ) trajectory shape to result_11's same-ep
+     range. If the SHAPES match (both flat, both slowly drifting), the run is in the
+     normal early-learning phase — NOT failed.
+  2. Only call "policy fail" if EITHER:
+     • QoS / R_tot / reward is STRICTLY WORSE than result_11 at the same ep, AND the
+       gap is widening (not closing); OR
+     • the run has run ≥ 600 ep and is still flat (result_11 had started climbing
+       by then).
+  3. Different regimes (D_k, R_LoS) shift the absolute floor — what matters is the
+     SHAPE OF THE CURVE relative to baseline, not the absolute value at any one ep.
+  4. Cross-check with critic health (Step 2): if explVar trending up and ‖∇‖V
+     decreasing, the policy is still learning even if QoS is flat — wait it out.
+
+This guard prevents premature SIGINT + wasted re-runs (real cost). ALWAYS reference
+result_11's early-flat phase before declaring early-stop on a < ep600 run.
+
 ### ★ EARLY-RAMP IRS CHECK (always run on R_LoS=0.2/0.3 — critical for whole curriculum)
 The agent MUST learn to optimize IRS at the easy ramps; if it can't here (where QoS is
 slack), it never will at hard ramps. So on early ramps, the key question is NOT "is QoS

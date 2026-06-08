@@ -9,26 +9,49 @@ Usage
     cfg = make_config()                  # all defaults
     cfg = make_config(K=15, kappa=0.0)   # override specific values
 
-Training cases
---------------
-    Change the four lines under "ACTIVE CASE" to switch scenarios.
-    All dependent params (extra_cz/zz_pairs, d_aff, hidden dims) auto-update.
+Training cases (G4 nq=12 UNIFIED — 2026-06-08)
+-----------------------------------------------
+    Change ONLY K and M; everything else (P_S, n_var_layers, n_hidden_ae)
+    auto-derives from K via _per_case_hyper(). nq fixed at 12 across all cases.
 
-    Case 1 | K=5,  M=1, P=50 dBm, nq=8,  n_latent=16  (small  — fast debug)
-    Case 2 | K=10, M=2, P=70 dBm, nq=12, n_latent=24  (medium — paper baseline)
-    Case 3 | K=20, M=4, P=100dBm, nq=16, n_latent=32  (large  — full capacity)
+    Encoding capacity profile (W_proj input 2K → output 2(nq-M)):
+      Case 1  K=5,  M=1   →  10 → 22   EXPANSION  (DƯ qubit → more expressivity)
+      Case 2  K=10, M=2   →  20 → 20   IDENTITY   (vừa đủ, baseline)
+      Case 3  K=20, M=4   →  40 → 16   SOFT-CLUSTER (compression, multi-user/qubit)
+
+    Per-case depth D_enc (data_reuploading=True, depth = n_var_layers):
+      Case 1: 2  (less depth, W_proj does the lift)
+      Case 2: 3  (baseline)
+      Case 3: 5  (more depth to encode larger state via soft-cluster)
+
+    Theory (Jerbi App. C.2 + Goto 2021): data-reuploading + λ + sufficient depth
+    = universal approximator independent of nq.
 """
 
 from istn.config import SystemConfig
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ACTIVE CASE  ←  change these four lines to switch training scenario
+# ACTIVE CASE  ←  change ONLY K and M; per-case hypers auto-derive
 # ══════════════════════════════════════════════════════════════════════════════
-K        = 10    # Case 1: 5  | Case 2: 10  | Case 3: 20
-M        = 2     # Case 1: 1  | Case 2: 2   | Case 3: 4
-P_S_dBm  = 70.0  # Case 1: 50 | Case 2: 70  | Case 3: 100
-n_qubits = 12    # Case 1: 8  | Case 2: 12  | Case 3: 16
-n_latent = 24    # Case 1: 16 | Case 2: 24  | Case 3: 32  (= 2 × n_qubits)
+K        = 5    # Case 1: 5 | Case 2: 10 | Case 3: 20   (K-flex: post-Q1 G8)
+M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 4
+
+# ── UNIFIED VQC register (DO NOT change per case) ──────────────────────────────
+n_qubits = 12    # ⭐ G4 UNIFIED: fixed 12 qubits across all cases (NISQ-feasible)
+n_latent = 24    # ⭐ G4 UNIFIED: = 2 × n_qubits = 24 across all cases
+
+# ── Per-case hypers (auto-derived from K) ──────────────────────────────────────
+def _per_case_hyper(K_val: int) -> dict:
+    """K-tier → P_S, depth (D_enc=n_var_layers), n_hidden_ae shape."""
+    if K_val <= 5:    # Case 1 SMALL: DƯ qubit → expressivity via W_proj expansion
+        return dict(P_S_dBm=50.0,  n_var_layers=2, n_hidden_ae=[32])
+    elif K_val <= 10: # Case 2 MEDIUM: identity map (baseline)
+        return dict(P_S_dBm=70.0,  n_var_layers=3, n_hidden_ae=[128, 64])
+    else:             # Case 3 LARGE: soft-cluster compression, more depth
+        return dict(P_S_dBm=100.0, n_var_layers=5, n_hidden_ae=[256, 128, 64])
+
+_hyp     = _per_case_hyper(K)
+P_S_dBm  = _hyp['P_S_dBm']
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Network topology ────────────────────────────────────────────────────────────
@@ -148,13 +171,14 @@ def _b1_zz_pairs(nq: int, m: int) -> tuple:
 extra_cz_pairs = _cross_block_pairs(n_qubits, M)   # B3 CZ bridges  (auto by case)
 extra_zz_pairs = _cross_block_pairs(n_qubits, M)   # B4 Tier-1 ZZ  (auto by case)
 # full_zz_pairs = _b1_zz_pairs(n_qubits, M)        # B1 full ZZ     (uncomment when B1 active)
-n_hidden_ae   = [128, 64]                  # Case 2: d_aff=44 (was 17) → cần rộng hơn [32]; decoder 24→64→128→44
-                                           #   Case 1 (d_aff=12):  [32]         → decoder 16→32→12
-                                           #   Case 2 (d_aff=34):  [128, 64]    → decoder 24→64→128→34
-                                           #   Case 3 (d_aff=108): [256,128,64] → decoder 32→64→128→256→108
+n_hidden_ae   = _hyp['n_hidden_ae']        # ⭐ G4 UNIFIED: auto by K-tier
+                                           #   K≤5  (Case 1, d_aff=17): [32]
+                                           #   K≤10 (Case 2, d_aff=44): [128, 64]
+                                           #   K>10 (Case 3, d_aff=128): [256, 128, 64]
 n_hidden_post = [256, 128]                 # hidden-layer sizes for Post-NN after QC (list)
                                            #   (unused when vqc_softmax_head=True)
-n_var_layers  = 3     # L: variational circuit depth — U_var = ∏_{ℓ=1}^{L} [U_ent · ∏_i Rz Ry]
+n_var_layers  = _hyp['n_var_layers']  # ⭐ G4 UNIFIED: D_enc per K-tier (2/3/5)
+                                           # L: variational circuit depth — U_var = ∏_{ℓ=1}^{L} [U_ent · ∏_i Rz Ry]
 
 # ── VQC readout + head (Δ2/Δ4 architecture-2, 2026-06-01) ───────────────────────
 # [G3 core run] Architecture (2) AE-VQC-SoftmaxPQC (per docs/Ablation-Plan PHẦN A):

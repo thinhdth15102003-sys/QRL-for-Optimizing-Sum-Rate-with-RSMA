@@ -1,0 +1,396 @@
+================================================================================
+  PROJECT TODO LIST  ·  source of truth cho "việc gì tiếp theo"
+================================================================================
+  Last updated: 2026-06-05 sau EXP-3 launch + USER PRIORITY PIVOT: training tasks ↑,
+                paper writing (trừ ablation drafts) lùi tới khi có full results.
+                Strategy: train song song các Case sau khi assignment bottleneck được giải quyết.
+  Convention:  [✅] done · [⏳] in-flight · [ ] pending · [🚫] skip/deferred · [⚠] blocked
+  Priority tags: 🔴 critical-path · 🟡 important · 🟢 nice-to-have
+--------------------------------------------------------------------------------
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  SECTION 1 — IN FLIGHT + RECENT KILLED (2026-06-05 machine reset incident)   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  ⛔ NEW WORKFLOW RULE (2026-06-05): user tự launch training, Claude chỉ probe+analysis
+     ngắn. Lý do: Claude background-spawn training → stuck task → Claude update không mở
+     được → reset máy → mất training progress. Xem MEMORY.md top.
+
+  ⚠ [💀] result_14 RAMP-2 (R_LoS=0.3)                       KILLED @ ep_01100 (reset)
+         Last ckpt: results/result_14/checkpoints/ep_01100
+         Pre-kill state: R_tot 1.80-1.84 RISING, QoS 54-57%, alignment 42.4%.
+         USER RESUME (mới tạo result_16):
+           cd /mnt/c/Project/IRS-assisted\ RSMA\ Quantum-RL
+           python train.py --R-LoS 0.3 \
+                  --resume results/result_14/checkpoints/ep_01100/agents \
+                  --episodes 800 --seed 0
+         (--episodes 800 vì r14 đã chạy 1100/1500, còn ~400ep tới target nhưng cho buffer)
+
+  ⚠ [💀] result_15 EXP-3 PHASE WARM-UP                      KILLED @ ep_00414 (reset)
+         Last ckpt: results/result_15/checkpoints/ep_00400  ⭐ ENOUGH for early verdict
+         PHASE WARMUP COMPLETED in init: N=1600, CE 2.09→1.38, match 25→29%.
+         PPO ran ~414 ep then reset killed it.
+         🔴 NEXT (Claude can do — short probe ~5min):
+           python analysis/probe_assignment_oracle.py \
+                  --ckpt results/result_15/checkpoints/ep_00400 --episodes 15
+           → gap closure vs EXP-1 baseline 34% = EARLY F2/F4 verdict
+         USER RESUME (continue PPO if verdict ambiguous):
+           python train.py --resume results/result_15/checkpoints/ep_00400/agents \
+                  --episodes 200 --seed 0
+           (NO --phase-warmup; already done in r15 init)
+
+  ✅ [✅] D_k=0.15 hypothesis test (result_13)               VERDICT: WEAK / POLICY FAIL
+         Probe ep_00600: QoS=41% < 80% threshold; corr(IRS, blocked) = -0.353 NEGATIVE
+         (wrong routing); R_tot=1.636 beats baselines but routing không học được.
+         Hypothesis ABANDONED → stay D_k=0.10. Paper-strategy: combined differentiators
+         (CSI + QoS + frozen-λ + K-flex) framing. Report: results/result_13/d_k_probe_ep00600.txt.
+         → Triggers WEAK branch of Section 3 EXP chain.
+
+  ✅ [✅] EXP-1 freeze-phase (result_12)                     VERDICT: F2∩F4 MIX (34% closure)
+         Probe ep_00300: gap closure 34% (F2 contributes partially, F4 residual present).
+         Per discriminator @ Training-Case-2 L15c: 25-50% zone → EXP-2 marginal; EXP-3 vẫn worth
+         (warmup ≈ giảm F4 init bias). Paper-ready phrase: "F2 partial (34%) + F4 residual".
+
+  ✅ [✅] Frozen-λ paper section walkthrough               ALL 4 BLOCKS LOCKED
+         📄 docs/Frozen-Lambda-Proposition.txt
+         [✅] Observation 1 LOCKED — empirical frozen-λ + ε_SPSA comparison
+         [✅] Proposition 2 LOCKED v3 — gradient directional incoherence (math-rigor)
+         [✅] Proposition 3 LOCKED v2 — approximate insensitivity (scope-honest)
+         [✅] Proposition 4 LOCKED — U_enc share decomposition (KL caveat explicit)
+         NEXT: render Fig L1/L2/L3 + write paper.tex A4 prose from locked text
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  SECTION 2 — PAPER WRITING (mostly DEFERRED tới khi có full results)         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  ⚠ STRATEGY 2026-06-05 USER PIVOT: paper writing tasks LÙI XUỐNG CUỐI trừ ablation
+    drafts (placeholders chưa có prose). Polish-style writes (Section IV cosmetic
+    fixes, finished-section prose, Fig render) chờ until-after-full-results.
+
+  2A. ABLATION SCAFFOLD DRAFTS (KEEP ACTIVE — phần chưa viết, cần prose first pass)
+  🟡 [ ] A4 Frozen-λ block (Obs 1 + Props 2-4 + Lemma 2) — Frozen-Lambda-Proposition.txt
+       sẵn rồi, chỉ cần fold vào paper.tex appendix.
+  🟡 [ ] Lemma 1 hierarchical factorization — analytical derivation pending
+  🟡 [ ] Proposition 1 param-count (analytical) — A1 PARAM TABLE @ Ablation-Plan
+  🟡 [ ] A2 AE representation prose (distill z_t recovery 51% > raw 27%)
+  🟡 [ ] A3 Hierarchy lever decomposition prose (oracle ladder L15c)
+  🟡 [ ] A8 NEW phase-warmup ablation (pending r15 verdict @ep_00600)
+
+  2B. DEFERRED tới khi có full results (polish-style, finished-section)
+  ⏸ [ ] tab:hyper fix — Case 2 K=10/M=2/λ_D=1.5 (cosmetic, do after final hypers settle)
+  ⏸ [ ] Section IV mentions: frozen-λ + Prop 2 + PopArt + factored PowerMLP
+  ⏸ [ ] L4 honest-limit paragraph (Section V) — chờ EXP-3 verdict decide if needed strong
+  ⏸ [ ] Finding #6 drift-resistance writeup (r11 ep1356-1727)
+  ⏸ [ ] Finding #7 phase-oracle closed-form (pending EXP-3 verdict)
+  ⏸ [ ] F2/F4 hierarchy framing prose (from Training-Case-2 L15c)
+  ⏸ [ ] Render Fig L1 (λ trajectory) + Fig L2 (KL smoothness) + Fig L3
+  ⏸ [ ] Fixed-K soft framing paragraph (Section IV + VI per scope decision 2026-06-04)
+  ⏸ [ ] nq=12 unification paper mention (chờ G4 implement first)
+
+  ⚠ Frozen-λ refresh-when-full-model (sticky reminder)
+  🟡 [ ] Re-run 4 probes (parse_lambda_trajectory, probe_lam_interference,
+         probe_lambda_landscape ×N ckpts, probe_uenc_ablation) on FINAL main
+         anchor ckpt when available. Refresh all numeric values + ckpt labels
+         in docs/Frozen-Lambda-Proposition.txt. Math/scripts invariant.
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  SECTION 3 — EXP CHAIN (D_k verdict = WEAK, EXP-1 verdict = MIX 34%)         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  This section is a REFERENCE for EXP-chain status + decision matrix. Concrete code todos
+  live in Section 4A (bottleneck levers) and Section 4B-4D (training infrastructure).
+
+  🚫 STRONG branch CLOSED — D_k=0.15 verdict POLICY FAIL (result_13).
+
+  ⭐ EXP-3 (result_15, RUNNING) — see Section 1 for live status, Section 4A for verdict-
+     conditional code todos. Pre-flight probe @r14 ep_00700: LIVE 40.8% vs ORACLE 100%
+     alignment, per-IRS index match 25.7% ≈ random 1/L. Phase warmup completed in
+     result_15 init (CE 2.09→1.38, match 25→29%); PPO continuing.
+
+  ⭐ DECISION MATRIX (post-EXP-3 verdict @ep_00600):
+     ≥+20pp added closure → F2 dominant → execute Section 4A EXP-2 lever
+     +5..+20pp → F2 partial F4 residual → execute Section 4A Δ7 OR L1
+     ≤+5pp → F4 dominant → write L4 honest-limit paragraph + still consider L1
+
+  ⚠ SKIP (per Δ-audit 2026-06-05 — DON'T re-propose):
+  🚫 Δ3 entangle E1/E2 — distill probe REFUTED VQC capacity as gap source
+       (classical MLP cùng z_t recover 51%, live VQC 0%). Δ3 ≠ F2/F4 lever.
+  🚫 Δ6 PowerMLP β_pwr_private bump — PowerMLP ĐÃ ĐÓNG per L15c (oracle Δ~0%, equal-split −0.5pt).
+  🟢 Δ5 hybrid head input — MARGINAL (distill 51% confirm z_t carries info).
+       Try only if EXP-3 + verdict-lever still leave residual gap.
+
+  ⭐ R_LoS RAMP path (parallel to EXP):
+  🟡 [⏳] result_14 RAMP-2 (R_LoS=0.3) — running, ep~706 (Section 1)
+  🟢 [ ] result_17+ RAMP-3 (R_LoS=0.4) — CONDITIONAL on r14 QoS ≥58% stable + verdict-lever applied
+       feasibility probe (analysis/phase_b_feasibility.py) → calibrate λ_D theo [I-3].
+       ⚠ result_15/16 reserved cho EXP-3/verdict-lever; ramp-3 sẽ là result_17+ khi đến lúc.
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  SECTION 4 — TRAINING PIPELINE READINESS (code unblocking parallel runs) ⭐  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  ⭐ STRATEGY 2026-06-05: USER sẽ train song song nhiều Case khi assignment bottleneck
+    được giải quyết (post-EXP-3 verdict). Section này list CODE PHẢI BUILD trước
+    parallel training. Mỗi item = blocker cho 1 hoặc nhiều training run.
+
+  4A. EXP-3c POST-VERDICT DECISION TREE (when r16 ckpts complete, ETA 2026-06-05 ~+6h)
+       Run probe: analysis/probe_assignment_decomp.py --ckpts r11/ep_01000 r16/ep_00000
+                  r16/ep_00100 r16/ep_00200 r16/ep_00400 (Claude does this immediately).
+       Track 3 metrics simultaneously per ckpt: live, ceiling, gap = ceiling-live.
+
+       ── 4 VERDICT QUADRANTS ──
+
+       (1) live ≥1.475 + ceiling ≥1.677 + gap stable → ⭐ ASSIGNMENT-QUALITY PRESERVATION
+           = Strong evidence warmup gain can be preserved (FROZEN-PHASE locks it).
+           Action: write up as Finding (warmup+freeze recipe). LAUNCH multi-case:
+                   Case 1 (K=5, M=1) + Case 3 (K=20, M=4) fresh runs với recipe.
+                   Per Section 4B/4C — needs G4 nq=12 + per-case hyper setup first.
+
+       (2) live ≥1.475 + ceiling DROPS → ⚠ REPRESENTATION DRIFT (distinct from PhaseMLP)
+           = Assignment OK but z_t/PowerMLP/CkMLP drift. Story PIVOTS.
+           Action: probe analysis/probe_representation_stability.py to localize WHICH
+                   component drifts. Then either fix component (e.g. AE regulariser↑)
+                   or write up as rep-stability finding.
+
+       (3) live DROPS + ceiling ≥1.677 → ⚠ EXECUTION PROBLEM (oracle room, policy can't use)
+           = Frozen PhaseMLP doesn't help policy extract value. Need other F2 lever:
+           Action: code EXP-2 IRS-bonus (--irs-bonus flag, ~1-2h scaffold) OR Δ7
+                   PhaseMLP counterfactual (~1 day refactor sub_actors.py).
+
+       (4) live DROPS + ceiling DROPS + gap stable → ⚠ BROAD DISTRIBUTION-SHIFT damage
+           = Warmup creates harmful shift everywhere. Recipe needs rethink:
+           Action: try gentler warmup variants (--phase-warmup-lr=1e-5, fewer epochs,
+                   only 1-2 ep data) OR consider warmup is fundamentally wrong approach.
+
+       (4 alt) gap GROWING — pre-existing analytical confound. Re-think.
+
+       ── ALL CASES — ADDITIONAL DATA TO COLLECT ──
+       [ ] probe_representation_stability.py vs r11 → component drift attribution
+       [ ] probe_phase_quality.py → live phase alignment % (vs r15's 41%)
+       [ ] Spot-check r16 critic_diag.jsonl → explVar/V̄ trajectory
+
+       ── ORIGINAL F2/F4 BOTTLENECK LEVERS (kept for reference) ──
+       EXP-3 closure TRULY +40% (not 0% as initial probe suggested). Contamination:
+       warmup undertuned (match 25→29%) + BROKE PhaseMLP downstream → apparent gap inflated.
+       Original "F4 dominant" thesis BÁCs. F2-side levers BACK in play.
+
+  🔴 [ ] EXP-3b TUNED WARMUP (user CLI launch when ready)
+       Recipe to fix EXP-3 contamination:
+       (a) phase warmup: episodes 8→24 (3× data), epochs 30→100 (3× steps), special
+           lr_phase_warmup = 5e-4 (vs default 1e-4, 5× faster)
+       (b) Add option in train.py to override lr during warmup only
+       (c) Run fresh from r11/ep_01000 anchor (same as EXP-1/EXP-3)
+       (d) Probe gap-decomp + assignment-oracle on ep_00200/00400/00600 to track:
+           gap_assignment ↓ further (target ≤0.10) AND gap_downstream ≤25% (no regression)
+       Build steps:
+       [ ] train.py: add --phase-warmup-lr override (default uses lr_phase)
+       [ ] Verify warmup forward via existing _warmup_phase (no other changes)
+       [ ] User launches EXP-3b run from CLI
+
+  🔴 [ ] Δ7 PhaseMLP counterfactual (NOW IN PLAY — F2 lever #2 to complement EXP-3b)
+       Per gap-decomp: PhaseMLP is part of downstream-share. Counterfactual gradient
+       (all users, weight by π_q) could PREVENT PhaseMLP regression after warmup.
+       Combine with EXP-3b: pre-train aligned + counterfactual grads keep alignment.
+
+  🟡 [ ] OPTIONAL EXP-2 IRS-routing bonus — re-evaluated UP (was marginal in F4-dominant world)
+       If EXP-3b + Δ7 close gap_assignment well, EXP-2 IRS-bonus could cap further.
+       Code 1-2h: train.py --irs-bonus flag + reward post-process. Run pilot ~600ep.
+
+  🟡 [ ] OPTIONAL L1 Joint-distill bootstrap — assignment-side attempt
+       Code 1 day: analysis/oracle_traj_gen.py + train.py --assignment-warmup flag.
+       Run if EXP-3b doesn't close enough OR want stack the levers (warmup + distill).
+
+  ⏸ DEFER (re-evaluate after EXP-3b verdict):
+  ⏸ L4 honest-limit paragraph — chỉ write IF EXP-3b shows F4 residual real (>20% even after tuned warmup)
+
+  4A-SCHEDULED. WEEK OF 2026-06-09 (scheduled 2026-06-06 by user) — TWO TASKS
+  🗓 [ ] TASK A: Δ7 PhaseMLP counterfactual gradient (F2 lever #2)
+       Trigger: Case 2 transfer test (parallel run user launched 2026-06-06) verdict.
+       If gap to oracle > 0.10 reward → DEPLOY Δ7. Build standby this week regardless.
+       Implementation (sub_actors.py PhaseMLP):
+         [ ] Refactor compute_grads_batch: forward all K users through each IRS phase head
+         [ ] Weight per-user contribution by π_q(user→IRS) routing prob from actor output
+         [ ] Verify cost: K×M = ×20 at Case 2 — wall-clock ~doubles. OK as standby.
+         [ ] Smoke pilot 200ep verify pipeline + no shape errors
+         [ ] Deploy on Case 2 conditional on transfer verdict
+       Estimated: 1 day code + 1 day pilot.
+  🗓 [ ] TASK B: G4 nq=12 unification (paper-ready uniform arch)
+       Goal: Case 1/2/3 all use nq=12. Per Ablation-Plan PHẦN C.
+       Why now: paper claim "fixed 12 qubits, NISQ-feasible" needs this; postpone-after-results
+       was acceptable when Case 1 baseline ongoing — now Case 1 solved, ready to unify.
+       Implementation steps:
+         [ ] params.py: change Case 1 nq=8→12, n_latent=16→24; Case 3 nq=16→12, n_latent=32→24
+         [ ] Add `n_data_reupload_depth` knob: 2 (Case 1), 3 (Case 2), 5 (Case 3) per PHẦN C
+         [ ] Update extra_cz_pairs / extra_zz_pairs derivation logic for unified nq=12
+         [ ] Verify d_aff, n_hidden_ae shapes accommodate
+         [ ] Smoke pilot Case 1 K=5 M=1 nq=12 — verify pipeline + R_tot trajectory shape ≥ r17
+         [ ] Smoke pilot Case 3 K=20 M=4 nq=12 — verify large-K compatibility
+         [ ] Re-run G5 A1 ablation on unified arch (if time permits)
+       Estimated: 1-2 days code + ~3 days pilots.
+
+
+  🔴 [ ] G4 nq=12 unification — Case 1 (nq=8) + Case 3 (nq=16) → nq=12 unified
+       Soft-cluster trainable via data re-uploading depth + trainable λ scaling.
+       Per Ablation-Plan PHẦN C: D_enc=2 (C1), 3 (C2), 5 (C3). Implementation:
+       [ ] params.py auto-detect K,M → D_enc map (3 cases)
+       [ ] Test current code @ nq=12 K=5 M=1 (Case 1 smoke) + nq=12 K=20 M=4 (Case 3 smoke)
+       [ ] Verify VQC + AE shapes accommodate new (K,M,nq) combinations
+       Unblocks: Case 1 + Case 3 fresh runs on unified architecture.
+  🔴 [ ] G5 A1 ClassicalActor — VQC-vs-classical matched-param ablation infrastructure
+       Per Ablation-Plan A1a (iso-VQC-param) + A1b (iso-total-param):
+       [ ] Implement actor_mode='classical' ClassicalActor in RL/
+            A1a: MLP n_lat→h→n_obs với h≈2 (iso-VQC-param ~144 Case 2)
+            A1b: MLP n_lat→h→K·nc với h≈40 (iso-total ~2K Case 2)
+       [ ] train.py --actor-mode {quantum|classical_iso_vqc|classical_iso_total} flag
+       [ ] Smoke pilot (1 run) Case 2 to verify ClassicalActor pipeline
+       Unblocks: A1 ablation runs (3 case × 3 seed = 9 runs each variant).
+
+  4C. PER-CASE HYPERPARAM SETUP (preparation for fresh runs)
+  🔴 [ ] Case 1 (K=5, M=1, nq=8 OR nq=12 if G4 done) hyperparam pass
+       [ ] Update docs/Training-Case-1.txt (if exists) hoặc create from Case-2 template
+       [ ] λ_D calibration: feasibility probe at R_LoS=0.2 K=5 M=1 → set λ_D per [I-3]
+       [ ] Smoke 100ep fresh to verify pipeline + critic stable
+  🔴 [ ] Case 3 (K=20, M=4, nq=16 OR nq=12 if G4 done) hyperparam pass
+       [ ] Create docs/Training-Case-3.txt
+       [ ] Larger AE hidden (n_hidden_ae=[256,128,64]), critic_hidden tuning
+       [ ] Feasibility probe + λ_D calibration
+       [ ] Smoke 100ep fresh to verify pipeline
+
+  4D. FUTURE / OPTIONAL (post-Q1 or compute-permitting)
+  🟢 [ ] G6 A5/A6 sensitivity (qubit/depth/reuploading sweep, ~5 runs)
+       ⚠ Δ3 entangle (E1/E2) DEPRIORITIZED per Δ-audit — A6 = "confirm no harm" only.
+  🟢 [ ] G7 VQC-at-phase-head negative ablation (1 run, justify single-VQC design)
+  🟢 [ ] Variance bands ≥3 seeds for key ablations (compute-heavy, last)
+  🟢 [ ] G8 K-flex extension (OPTIONAL, post-Q1)
+       Approach: A (Max-K + masking) + D (Variable-K training).
+       REJECTED options: B (DeepSet/Attention), C (per-K models + router).
+       Effort: ~1 week impl + 1 retrain at K_max=15 with masking.
+       Implementation steps:
+         [ ] Add user_active_mask (binary K-dim) to state
+         [ ] Modify env: random K ∈ [K_min, K_max] per episode
+         [ ] Modify reward: avg over active users only
+         [ ] Modify loss/grad: mask inactive contributions
+         [ ] Modify heads: ignore inactive slots
+         [ ] Smoke pilot at Case 2 K-flex (K ∈ [5,10])
+         [ ] Full Case 3 K-flex (K_max=15) if pilot OK
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  SECTION 5 — OPERATIONAL / MAINTENANCE                                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  🟢 [ ] Commit untracked probe scripts (gitstatus ?? files)
+       analysis/probe_assignment_oracle.py, probe_assignment_distill.py,
+       probe_blocked_direct.py, probe_critic_repr_ablation.py,
+       probe_critic_temp_sweep.py, probe_irs_attribution.py,
+       probe_wc_optimality.py, parse_lambda_trajectory.py,
+       probe_lam_interference.py, probe_lambda_landscape.py,
+       probe_uenc_ablation.py, phase_b_feasibility.py, d_k_hypothesis_probe.py,
+       phase_oracle.py (NEW 2026-06-05)
+  🟢 [ ] Commit train.py EXP-3 changes: _warmup_phase() function + --phase-warmup,
+       --phase-warmup-episodes, --phase-warmup-epochs CLI flags (2026-06-05).
+  🟢 [ ] Memory consolidation (lots of new memory files; merge stale ones)
+  🟢 [ ] Update Common-Knowledge.txt [E] with Obs 1 framing (was per-case detail)
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  SECTION 6 — DEFERRED / OUT-OF-SCOPE cho v1 paper                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  ⚠ Updated 2026-06-05 per USER PIVOT — Case 3 NOW IN-SCOPE per parallel-training
+    strategy (Section 4B G4 nq=12 unify enables it). R_LoS curriculum NOW active.
+
+  ✅ MOVED TO IN-SCOPE (was 🚫 before):
+     Case 3 (K=20, M=4) → Section 4C per-case setup + Section 4D ablation runs
+     R_LoS ramp 0.2→0.3→0.4 → result_14 ramp 2 RUNNING + result_17+ planned for ramp 3
+
+  🚫 STILL DEFERRED:
+  🚫 R_LoS ramp ≥ 0.45 → not strictly needed; revisit after ramp 0.4 verdict
+  🚫 Multi-seed variance bands across ALL ablations → cost-prohibitive
+       (only main config + A1 + A8 worth multi-seed per Ablation-Plan)
+  🚫 G8 K-flex extension → post-Q1 future-work (Section 4D detail)
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ✅ ALREADY DONE (recent — keep here so không re-do)                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  Major findings 2026-06-03 → 2026-06-04:
+  [✅] Drift-resistance test (arch-2 vs r8 collapse) — PASSED, Finding #6
+  [✅] Assignment deep-dive (oracle +17pt headroom, distill 51%)
+  [✅] F4 hierarchy-induced myopia framing — distinct from F2
+  [✅] EXP-1 freeze-phase test ep_00300 → F2∩F4 mix 34% closure
+  [✅] Phase B feasibility scan — R_LoS NOT the lever
+  [✅] D_k sweep — binary regime, 0.15 = sweet spot
+
+  Frozen-λ section:
+  [✅] T1.1 trajectory parser
+  [✅] T2.5 cross-arch interference confirmation (arch-2 ep_01400)
+  [✅] T2.6 vanishing-bound analytical remark
+  [✅] T3.4 5-ckpt variance band (sup|Δ_A|≤0.02)
+  [✅] T4 unified probe — smoothness + bypass-zero + 4-ckpt band
+  [✅] Observation 1 LOCKED (paper-ready)
+  [✅] Proposition 2 LOCKED v3 (math-rigor pass: P2.1 ≪1, P2.3 explicit cross-term,
+        P2.4 √(E‖ḡ‖²), P2.5 testable prediction, T2.5 "architecture-agnostic" not
+        UNIVERSAL, T2.6 E[g²] not "variance", REMARK "dominant" not "mutually exclusive",
+        chốt sentence "Proposition 2 therefore provides a mechanistic explanation for
+        the weak-drift regime observed in Observation 1")
+
+  Infrastructure:
+  [✅] --freeze-phase flag (train.py)
+  [✅] --D-k flag (train.py)
+  [✅] analysis/parse_lambda_trajectory.py
+  [✅] analysis/probe_uenc_ablation.py
+  [✅] analysis/phase_b_feasibility.py
+  [✅] analysis/d_k_hypothesis_probe.py
+  [✅] Tmux monitor sessions (dk015)
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  GREEDY PRIORITY ORDER (next 7 days — strategy: training tasks ↑, paper end) ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  ⭐ STRATEGY: training-related tasks (code unblocking runs + actual runs) ưu tiên #1.
+     Paper writing chỉ ablation drafts (chưa có prose) trong while-waiting slots; phần
+     polished prose chờ đến khi có FULL RESULTS (post curriculum + ablation runs).
+     Mục tiêu cuối: parallel-train Case 1, 2, 3 sau khi assignment bottleneck giải quyết.
+
+  GPU CAPACITY (current): r14 + r15 PARALLEL ~12h tới EXP-3 verdict.
+     Mem 3.5GB/24GB · util 73% · saturating QC compute → NO 3rd parallel.
+     Once one finishes → GPU free for next training run.
+
+  Day 0 (today — both r14+r15 running, can't add 3rd job):
+    1. 🔴 Build G5 ClassicalActor impl (Section 4B) — half day code, NO GPU, unblocks A1 ablation
+    2. 🔴 Build G4 nq=12 unification (Section 4B) — code only, unblocks Case 1+3 runs
+    3. 🟡 A2/A3/A4 ablation appendix DRAFTS (Section 2A) — chỉ phần chưa viết
+    4. 🟢 Δ7 PhaseMLP counterfactual scaffold (Section 4A, conditional but cheap to prep)
+
+  Day 0.5 (EXP-3 verdict @ep_00300 ~6h, probe):
+    1. 🔴 Probe assignment_oracle on result_15/ckpt/ep_00300 — early F2/F4 signal
+    2. Update TODO + Training-Case-2 với probe number
+    3. KEEP coding (no GPU needed yet, r14+r15 still running)
+
+  Day 1 (EXP-3 verdict @ep_00600 ~12h, r15 done):
+    1. 🔴 Probe assignment_oracle on result_15/ckpt/ep_00600 — FINAL VERDICT
+    2. 🔴 EXECUTE decision matrix (Section 4A):
+       F2 dominant → finalize EXP-2 build → launch result_16 EXP-2
+       F2/F4 mix → Δ7 counterfactual launch result_16
+       F4 dominant → L1 joint-distill launch result_16
+    3. Update Training-Case-2 L18 + L19 entries with verdicts
+
+  Day 2-3 (r16 RUNNING parallel với r14 ramp-2 still chugging):
+    1. 🔴 Per-case hyperparam prep (Section 4C):
+       - Case 1 K=5 M=1 setup: feasibility + λ_D calibration
+       - Case 3 K=20 M=4 setup: hyperparam doc + feasibility
+    2. 🔴 Verify G4 nq=12 smoke pilots (1 short fresh run each for Case 1, 3)
+    3. 🟡 A8 phase warmup ablation draft (if r15 verdict positive) — prose only
+
+  Day 4-5 (r14 + r16 finishing):
+    1. 🔴 Launch FRESH Case 1 + Case 3 runs (multi-case parallel)
+       - Case 1 K=5 M=1 nq=12 (G4) + bottleneck lever (per verdict) fresh ~1500ep
+       - Case 3 K=20 M=4 nq=12 (G4) + bottleneck lever fresh ~1500-2000ep
+    2. 🔴 If r14 QoS ≥58% stable → plan r17 ramp 3 (R_LoS=0.4) Case 2
+    3. 🟡 Multi-seed setup: pick 1-2 main configs for variance bands (Section 4D)
+
+  Day 6-7 (curriculum mostly done, ablation phase):
+    1. 🔴 Launch A1 ablation runs (Section 4D): A1a iso-VQC-param, A1b iso-total-param
+       Multi-case (1, 2, 3) × multi-seed (3) — heavy compute, ~1 week
+    2. 🟡 Inference amortization measurement (Section 4D, no train) — wall-clock comparison
+    3. 🟡 Ablation appendix prose drafts (Section 2A) — fold in numbers as runs finish
+
+  POST-Day-7 (when full results in):
+    1. 🟡 Section 2B paper writing (Section IV polish, fig render, finished-section prose)
+    2. 🟡 Frozen-λ refresh probes on final anchor ckpt
+    3. 🟡 Tan et al. baseline comparison + headline figure
+================================================================================

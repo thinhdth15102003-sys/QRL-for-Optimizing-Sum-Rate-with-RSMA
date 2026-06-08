@@ -1,0 +1,778 @@
+================================================================================
+  FROZEN-λ PROPOSITION  ·  paper section A4 / Lemma 2 / Proposition 2
+================================================================================
+  Scope: complete writing pipeline for the frozen-λ finding (paper section A4).
+  Authoritative source for: Propositions 1-4 framing, test→prop mapping, raw probe
+  numbers, math claims, open holes. Detail context: docs/Common-Knowledge.txt [E].
+  Updated: 2026-06-04. Current anchor: result_11 ep_01400 (D_k=0.10, R_LoS=0.2).
+
+  ⚠⚠ NUMERIC REFRESH NOTE (2026-06-04 — covers two refresh triggers):
+   (i)  D_k=0.15 pivot (if STRONG verdict from result_13 hypothesis test).
+   (ii) Full-curriculum / final main-anchor model availability (any future Case).
+  All numeric values + ckpt labels below are anchored at result_11 ep_01400
+  (D_k=0.10, partial training). When EITHER trigger fires, RE-RUN the 4 probes
+  on the new main-anchor ckpt and refresh the following sections:
+    • Obs 1   : parse_lambda_trajectory.py    → ρ_λ, r values            (~5 min)
+    • Prop 2  : probe_lam_interference.py     → ‖g_b‖, cos, ρ            (~3 min)
+    • Prop 3  : probe_lambda_landscape.py ×5  → Δ(c), G, variance band   (~25 min)
+    • Prop 4  : probe_uenc_ablation.py ×4×5   → smoothness, shares       (~15 min)
+  Structure + math derivations + scripts are INVARIANT under D_k change;
+  only numeric values shift. Total refresh ≈ 1 hour probes + 1 hour doc update.
+
+  ⚠ PROP 3 RISK-FLAG: at D_k=0.15 where smart routing matters more, landscape
+  may shift from FLAT (current) to mildly CONVEX (shallow well around c=1).
+  Statement is written flexibly ("Δ(c) ≤ ε relative to reward scale" rather
+  than "Δ(c) = 0") so claim survives either outcome.
+--------------------------------------------------------------------------------
+
+================================================================================
+  PHẦN A — OPENING OBSERVATION (Section IV / Discussion)
+================================================================================
+  Phát hiện: across the entire training trajectory of result_11 (1727 ep, arch-2
+  SoftmaxPQC linear head, Case 2 K=10/M=2), the quantum encoding scales λ_y, λ_z
+  ∈ R^{12} do NOT change in any meaningful way. Trajectory plot λ|max|(ep) is
+  effectively flat (see Fig. L1, generated from analysis/parse_lambda_trajectory.py).
+
+  Hooked questions (answered by Propositions 1-4):
+    Q1. Is this a measurement artefact, or does λ truly fail to update? → PROP 1
+    Q2. Why does training fail to move λ? → PROP 2
+    Q3. Does failing to learn λ cost task performance? → PROP 3
+    Q4. Does the encoding stage U_enc itself matter, or is the whole block decorative? → PROP 4
+
+  Paper-status:
+    OBS 1: ✅ DRAFT LOCKED 2026-06-04 — paper-text written into "STATEMENT (LOCKED)" block below.
+    PROP 2: ✅ FINAL LOCKED 2026-06-04 (math-rigor pass + flow chart + chốt sentence).
+    PROP 3: ✅ FINAL LOCKED 2026-06-04 (v2) — scope-honest: "approximate insensitivity along global-rescaling direction" (NOT general λ-invariance).
+    PROP 4: ✅ FINAL LOCKED 2026-06-04 (v2) — title sharpened to "Detectable encoder contribution beyond the classical bypass"; (P4.1) language quantifies-change not isolates; OOD framing dropped; share sum wording softened.
+
+================================================================================
+  OBSERVATION 1 — λ is empirically frozen during training
+================================================================================
+  ⚠ Naming: "Observation" (not "Proposition") — claim is empirical, not derived.
+     Per overclaim-discipline ([[feedback-paper-overclaim]]).
+
+  STATEMENT (paper-ready, LOCKED 2026-06-04, REVISED for overclaim discipline)
+  ────────────────────────────────────────────────────────────────────────────
+  Let λ = (λ_y, λ_z) ∈ R^{2n_q} denote the quantum encoding scales, trained
+  jointly with the variational angles via SPSA + Adam over T episodes.
+
+      ρ_λ := ‖λ_T − λ_0‖_2 / ‖λ_0‖_2  ≪  1                            (Obs 1)
+
+  On the run analysed in this section (T = 1727 episodes, n_q = 12):
+  ρ_λ ≈ 0.095. Equivalently, the per-component drift satisfies
+  ‖λ_T − λ_0‖_∞ = 0.072 < ε_SPSA = 0.1 — i.e. no individual encoding scale
+  moves more than a single SPSA perturbation step over the entire run. We
+  refer to this regime as FROZEN-λ. Three tests below characterise its
+  empirical signature (T1.1), its analytical justification with a cumulative
+  sanity check (T1.3), and motivate the mechanism investigation (T1.2 → Prop 2).
+
+  ⚠ Note: the ε_SPSA comparison MUST use a per-component norm (‖·‖_∞ or RMS),
+  not ‖·‖_2 — the latter scales with √n_dim and would yield 0.115 > 0.1, which
+  is a misleading dimensional mismatch (ε_SPSA is per-component).
+
+  TEST T1.1 — λ trajectory (empirical signature)
+  ────────────────────────────────────────────────────────────────────────────
+  Script: analysis/parse_lambda_trajectory.py
+  Data  : results/result_11/lambda_trajectory.csv  (144 diag blocks, ep 12 → 1728)
+  Output:
+    • ‖λ_y‖_∞ : 0.480 (ep12) → 0.510 (ep1728)  |  range over run [0.480, 0.510]
+    • ‖λ_z‖_∞ : 0.490 (ep12) → 0.460 (ep1728)  |  range over run [0.450, 0.490]
+    • ρ_λ (full-vector ℓ_2, ep_00100 → ep_01700 ckpt diff): 0.095
+      breakdown: y = 0.070  ·  z = 0.120  ·  joint = 0.095
+
+  Figure L1 (two-panel time series):
+    Top  : ‖λ_y‖_∞(t), ‖λ_z‖_∞(t) vs episode (flat lines near init)
+    Bottom: r(t) coherence ratio (defined T1.2) — flat at ≈ 0.07
+  Status: single-run rendered; multi-seed variance band to be added when
+          full-curriculum runs are available.
+
+  Table T_lam (companion to Fig L1): the numeric values above.
+
+  TEST T1.2 — gradient coherence ratio (in-train diagnostic)
+  ────────────────────────────────────────────────────────────────────────────
+  Definition (formal): for each PPO update, SPSA yields per-mini-batch gradient
+  vectors ĝ_λ^(b) ∈ R^{2n_q} aggregated over B mini-batches. Define
+
+      r  :=  ‖ḡ_λ‖ / overline(‖ĝ_λ^(b)‖) ,    ḡ_λ := (1/B) Σ_b ĝ_λ^(b)
+
+  Empirical statistics (same CSV as T1.1):
+
+      statistic               min        mean       max
+      ─────────────────────────────────────────────────────
+      mean ‖ĝ_λ^(b)‖          2.39e-01   3.10e-01   4.17e-01
+      ‖ḡ_λ‖                   1.13e-02   2.04e-02   3.52e-02
+      r                       0.040      0.066      0.100
+
+  r ≪ 1 across the entire run, indicating near-zero batch consistency:
+  per-mini-batch gradient estimates have substantial magnitude individually
+  but their batch average is suppressed by an order of magnitude.
+
+  TEST T1.3 — Adam update analytical chain + accumulation-regime check
+  ────────────────────────────────────────────────────────────────────────────
+  With learning rate α = lr_actor_qc = 1e-4 (verified, params.py:235) and
+  first-moment decay β_1 = 0.9, the Adam update at steady state satisfies
+
+      Δλ_t = − α · m̂_t / (√v̂_t + ε_Adam)  ∝  ‖ḡ_λ‖  ≈  0.020 .
+
+  ★ ACCUMULATION-REGIME COMPARISON (NOT a quantitative bound or prediction —
+  an order-of-magnitude classification of how T·B_PPO ≈ 3·10^4 Adam updates
+  aggregate over the run):
+
+      regime                       scaling                   numeric
+      ─────────────────────────────────────────────────────────────────
+      Coherent accumulation        drift ~ α · T·B_PPO        ≈ 3
+      Pure random cancellation     drift ~ α · √(T·B_PPO)     ≈ 0.02
+      Observed                     ‖λ_T − λ_0‖_2              0.115
+
+  The observed drift falls BETWEEN coherent accumulation and pure random
+  cancellation — neither limit applies. This intermediate regime is exactly
+  what one expects when per-mini-batch gradients are partially incoherent
+  with ratio r ≈ 0.066 (T1.2): the signal does not vanish completely, but
+  is suppressed by roughly an order of magnitude relative to the coherent
+  ceiling. The smallness of r in T1.2 — not any individual gradient — is
+  what governs the accumulation. This regime classification is the empirical
+  hook into Proposition 2, which identifies WHY the per-sample gradients are
+  incoherent in the first place.
+
+  CLOSING — hook to Proposition 2
+  ────────────────────────────────────────────────────────────────────────────
+  The apparent paradox of vanishing batch-mean despite non-vanishing
+  per-sample estimates is the next question. The mechanism is identified in
+  Proposition 2.
+
+  Verification notes (for the author):
+    • α = 1e-4              params.py:235 ("halved from 3e-4: SPSA noisy")
+    • ε_SPSA = 0.1          params.py:183
+    • β_1 = 0.9             Adam default (β_2 not used in T1.3 derivation)
+    • ρ_λ from ep_00100 → ep_01700 ckpt diff (ep_00100 = earliest ckpt; λ
+      effectively at init since frozen).
+    • ABSOLUTE drift numbers (joint vector, 2n_q = 24 dims):
+        ‖λ_T − λ_0‖_2    = 0.115   (l2, NOT used in claim — scales with √n_dim)
+        ‖λ_T − λ_0‖_∞    = 0.072   (per-component max — USED, < ε_SPSA = 0.1 ✓)
+        per-element RMS  = 0.024   (∼ ε_SPSA / 4, much smaller than perturbation)
+    • RELATIVE drift (used in claim):
+        ρ_2 (joint)      = 0.095   (PRIMARY)
+        ρ_2 (y axis)     = 0.070
+        ρ_2 (z axis)     = 0.120
+        ρ_∞ (joint)      = 0.146   (looser, NOT used in main claim)
+
+================================================================================
+  PROPOSITION 2 — Gradient directional incoherence (mechanism)
+================================================================================
+  STATEMENT (paper-ready, LOCKED 2026-06-04, REVISED 2 — math rigor)
+  ────────────────────────────────────────────────────────────────────────────
+  The per-mini-batch λ-gradients are healthy in magnitude but point in nearly
+  uncorrelated directions, so their average vanishes by DIRECTIONAL INCOHERENCE.
+  Formally:
+
+      | 𝔼_{b,b'}[ cos(ĝ_λ^(b), ĝ_λ^(b')) ] |  ≪  1                       (P2.1)
+
+      overline(‖ĝ_λ^(b)‖)  ≫  0                                          (P2.2)
+
+  Expanding the second moment of the batch-mean ḡ_λ = (1/B) Σ_b ĝ_λ^(b):
+
+      𝔼‖ḡ_λ‖²  =  (1/B) · 𝔼‖ĝ_λ^(b)‖²
+                  +  ((B−1)/B) · 𝔼⟨ĝ_b, ĝ_{b'}⟩                          (P2.3)
+
+  Empirically (T2.2 below), the pairwise alignment is near zero, which suggests
+  that the cross-correlation contribution in (P2.3) is negligible relative to
+  the diagonal term, giving
+
+      √(𝔼‖ḡ_λ‖²)  =  O(B⁻¹/²) .                                          (P2.4)
+
+  This makes Adam's 1st moment vanish even though no single gradient is small.
+  We call this regime GRADIENT DIRECTIONAL INCOHERENCE.
+
+  Motivated by (P2.4), we expect the observable COHERENCE RATIO
+
+      r  :=  ‖ḡ_λ‖  /  overline(‖ĝ_λ^(b)‖)
+
+  to scale as
+
+      r  ∼  B⁻¹/² ,                                                       (P2.5)
+
+  which is verified empirically in T2.4.
+
+  REMARK — distinction from barren plateau
+  ────────────────────────────────────────────────────────────────────────────
+  McClean et al. 2018 \cite{mcclean2018barren} prove Var(∂L/∂θ_i) ~ O(2^{−n_q})
+  per parameter for sufficiently expressive parameterised circuits — i.e., the
+  gradients THEMSELVES vanish. In our setting, T2.1 and T2.6 below show that
+  the per-parameter empirical magnitude is substantially above this bound; the
+  gradients are alive, only their batch-average vanishes via (P2.4). The
+  present observations are inconsistent with a barren-plateau explanation and
+  instead support directional incoherence as the dominant mechanism.
+
+  LOGICAL FLOW
+  ────────────────────────────────────────────────────────────────────────────
+      T2.1            gradients exist                ‖ĝ_b‖ ≫ 0
+        ↓
+      T2.2 – T2.3     gradient directions uncorrelated   |𝔼[cos]| ≪ 1
+        ↓
+      (P2.3)          batch-averaging identity
+        ↓
+      (P2.4)          mean gradient suppressed       √(𝔼‖ḡ‖²) = O(B⁻¹/²)
+        ↓
+      (P2.5)          predict coherence ratio        r ∼ B⁻¹/²
+        ↓
+      T2.4            prediction verified            r_obs ≈ ρ_CLT
+        ↓
+      ⇒  batch gradient cancellation
+      ⇒  Observation 1 explained
+
+  (T2.5 cross-architecture and T2.6 barren-plateau remark are orthogonal
+   robustness checks, not part of the main chain.)
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T2.1 — per-sample magnitude (gradients exist)
+  ──────────────────────────────────────────────────────────────────────────────
+  Script: analysis/probe_lam_interference.py
+  Result_11 ep_01400 (arch-2 SoftmaxPQC LINEAR head, current main anchor):
+
+      overline(‖ĝ_λ^(b)‖)  =  13.62
+
+  This is substantially above the barren-plateau variance scale O(2^{−n_q})
+  (cross-referenced T2.6 for the like-for-like variance comparison).
+
+  [⚠ refresh note: additional anchor ckpts will be added when the D_k=0.15
+   main run (or any future Case) completes, per the doc-level refresh policy.]
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T2.2 — mean pairwise cosine (interference signature)
+  ──────────────────────────────────────────────────────────────────────────────
+  Per-sample λ-gradient pairwise alignment, averaged over (b ≠ b') in the rollout
+  batch:
+
+      ckpt                                 𝔼[cos(ĝ_b, ĝ_b')]
+      ─────────────────────────────────────────────────────────
+      result_11 ep_01400 (LINEAR head)        +0.0012
+      result_8  ep_00400 (MLP head)           −0.0010
+
+  Reported as numerical observations. → 𝔼[cos] ≪ 1; per-mini-batch gradient
+  directions are essentially uncorrelated.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T2.3 — direction-only cosine (rule out advantage-sign artefact)
+  ──────────────────────────────────────────────────────────────────────────────
+  Strip sign(A_b) from each gradient (so the comparison is direction-only, not
+  advantage-signed direction) then recompute pairwise cosine:
+
+      ckpt                                 𝔼[cos | direction-only]
+      ─────────────────────────────────────────────────────────────────
+      result_11 ep_01400 (LINEAR head)        +0.0004
+      result_8  ep_00400 (MLP head)           +0.005
+
+  The interference persists after normalising away the advantage sign and is
+  therefore intrinsic to the encoding-sensitivity term ∂o_hat/∂λ.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T2.4 — consistency check (verifies P2.5 prediction)
+  ──────────────────────────────────────────────────────────────────────────────
+  From (P2.5): r ∼ B^{−1/2}. With B = 240 samples (probe), the predicted ratio is
+
+      ρ_CLT  =  1 / √240  ≈  0.0645
+
+  In the training log (T1.2) the observed coherence is r ≈ 0.066. The observed
+  coherence ratio is quantitatively consistent with the B^{−1/2} scaling
+  predicted by directional incoherence. The absence of any fitted parameter in
+  this comparison strengthens the interpretation of directional incoherence as
+  the underlying mechanism.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T2.5 — cross-architecture confirmation (robustness)
+  ──────────────────────────────────────────────────────────────────────────────
+  Result_8 used an MLP head, whose high-capacity downstream layers can ABSORB
+  λ-variation. Result_11 uses a SoftmaxPQC LINEAR head, which cannot absorb
+  λ-variation downstream. Both runs exhibit identical interference signatures
+  (T2.2-T2.3 above). The phenomenon appears architecture-agnostic within the
+  two architectures tested here.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T2.6 — Remark: not barren plateau
+  ──────────────────────────────────────────────────────────────────────────────
+  McClean et al. \cite{mcclean2018barren} bound the per-parameter gradient
+  variance Var(∂L/∂θ_i) ~ O(2^{−n_q}). For n_q = 12 this gives ≈ 2.4×10⁻⁴.
+  Assuming the gradient energy is roughly distributed across the 2n_q = 24
+  parameters, the empirical per-parameter mean squared component magnitude is
+
+      𝔼[ ĝ_λ,i² ]  ≈  ‖ĝ_λ^(b)‖² / (2 n_q)  ≈  13.62² / 24  ≈  7.7 ,
+
+  which lies substantially above the McClean bound. Under the additional
+  assumption of approximately zero-mean component gradients, this quantity
+  coincides with the component variance. The gradients themselves are not
+  vanishing; only their batch-averaged direction cancels by (P2.4).
+
+  ──────────────────────────────────────────────────────────────────────────────
+  CLOSING
+  ──────────────────────────────────────────────────────────────────────────────
+  Whether this interference also incurs a task-level penalty is the question
+  addressed by Proposition 3. Proposition 2 therefore provides a mechanistic
+  explanation for the weak-drift regime observed in Observation 1.
+
+  Verification notes (for the author):
+    • Main anchor: result_11 ep_01400 (D_k=0.10, arch-2 SoftmaxPQC LINEAR head).
+    • Cross-arch reference: result_8 ep_00400 (D_k=0.10, MLP head).
+    • (P2.3) is exact (algebraic identity from expanding ‖(1/B) Σ g_b‖²).
+    • P2.3 → P2.4 is NOT a mathematical implication — 𝔼[cos] ≈ 0 does not
+      formally entail 𝔼⟨g_b, g_b'⟩ ≈ 0 (norm × cos correlation can break it).
+      We rely on T2.2 (empirical near-zero alignment) to support negligible
+      cross-correlation; the body is phrased as "suggests" not "implies".
+    • Eq P2.4 uses √(𝔼‖ḡ‖²) for "expected scaling" (cleaner than the random-
+      variable statement ‖ḡ‖ = O(B⁻¹/²)).
+    • Eq P2.5 is the testable prediction (verified in T2.4); P2.4 → P2.5 is
+      a heuristic substitution overline(‖g_b‖) ↔ √(𝔼‖g_b‖²).
+    • T2.5 cross-arch claim is SOFT: "architecture-agnostic within the two
+      architectures tested" — avoid "UNIVERSAL" (only N=2 architectures).
+    • T2.6: do NOT call ‖g‖²/(2n_q) the "variance" — formally it's the mean
+      squared component magnitude. Coincides with variance only under
+      zero-mean gradients (additional assumption, not implied by P2.1).
+    • REMARK avoids "mutually exclusive" — barren-plateau + directional
+      incoherence COULD co-exist (e.g., ‖g‖ small AND cos ≈ 0 jointly).
+      The present observations support directional incoherence as dominant.
+    • "Lever ĐÃ LOẠI" register (failed interventions: SPSA n_reps↑, Δ1 affine,
+      R1 + SoftmaxPQC) lives in docs/Training-Case-2.txt for doc-tracking only;
+      NOT part of paper text. Listed there as DON'T-REPEAT guard.
+
+================================================================================
+  PROPOSITION 3 — Approximate insensitivity to global rescaling of λ
+================================================================================
+  STATEMENT (paper-ready, LOCKED 2026-06-04, REVISED 2 — scope honesty)
+  ────────────────────────────────────────────────────────────────────────────
+  Define the GLOBAL-RESCALING RESPONSE
+
+      Δ(c)  :=  |𝔼_s[ r_greedy(s; cλ) − r_greedy(s; λ) ]|                  (P3.1)
+
+  where r_greedy(s; λ') denotes the greedy-assignment reward when λ is replaced
+  by λ' (with downstream held fixed: aligned phase + equal power), thereby
+  isolating λ's effect on the assignment head. Empirically,
+
+      Δ(c)  ≪  1   (relative to reward scale)   for  c ∈ [0.1, 3.0] ,      (P3.2)
+
+  in the regime tested. The greedy-assignment reward is approximately
+  insensitive to global rescaling of λ within the multiplicative range tested.
+
+  ⚠ SCOPE — single-direction probe:
+  (P3.2) examines only the global-rescaling direction λ → cλ, i.e. one
+  one-dimensional subspace of the full encoding-scale space ℝ^{2n_q}. It does
+  NOT claim invariance under arbitrary perturbations δλ. A stronger test would
+  probe non-rescaling perturbations (e.g. random directions in ℝ^{2n_q}); this
+  is left to future work. The conclusions of this section apply along the
+  global-rescaling direction only.
+
+  ⚠ Forward-flexibility clause: (P3.2) is asserted only "in the regime tested"
+  (D_k=0.10, R_LoS=0.2). Behavior at higher D_k may differ; see refresh-note.
+
+  LOGICAL FLOW
+  ────────────────────────────────────────────────────────────────────────────
+      T3.1            global landscape (1D direction)     Δ(c) ≪ 1
+        ↓
+      T3.2            no obvious state-dependent          G/⟨r⟩ ≪ 1,
+                      structure detected                  corr(c*(s), blk) = 0
+        ↓
+      T3.3            robustness over training            consistent across ckpts
+        ↓
+      ⇒  reward insensitive along global-rescaling direction in the regime tested
+      ⇒  generality across arbitrary δλ ∈ ℝ^{2n_q} remains untested (future work)
+        ↓
+      hook → Proposition 4
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T3.1 — global landscape sweep
+  ──────────────────────────────────────────────────────────────────────────────
+  Script: analysis/probe_lambda_landscape.py (Test A).
+  Anchor: result_11 ep_01400 (main anchor; consistent with Obs 1 & Prop 2).
+  Probe: 60 states × c-grid spanning a 30× multiplicative range around the
+  learned scale (c ∈ [0.1, 3.0]).
+
+    c        mean greedy reward
+    ────────────────────────────
+    ×0.1     1.52
+    ×0.25    1.51
+    ×0.5     1.52
+    ×0.75    1.52
+    ×1.0     1.53   ← init
+    ×1.5     1.52
+    ×2.0     1.52
+    ×3.0     1.52
+
+  Summary:
+    sup |Δ(c)|   ≤  0.02   ∀ c ∈ [0.1, 3.0]
+    Δ(c=c*−init) =  +0.00              (no c ≠ 1 beats init)
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T3.2 — no obvious state-dependent structure detected
+  ──────────────────────────────────────────────────────────────────────────────
+  Merges two independent null-structure tests on the same probe.
+
+  (a) Per-state max gap (Test B):
+
+      G  :=  𝔼_s[ max_c r_s(cλ) ]  −  max_c 𝔼_s[ r_s(cλ) ]                 (P3.3)
+
+  i.e. the gap between per-state-optimal c and the globally-optimal c. If a
+  per-state optimal scale λ*(s) existed (within the global-rescaling family),
+  G would be substantial.
+
+      Anchor result_11 ep_01400 : G  =  0.03   →   G / ⟨r⟩  ≪  1
+      (⟨r⟩ ≈ 1.52 is the mean reward scale)
+
+  (b) Correlation of per-state optimal c with blockage rate (Test C):
+
+      corr( c*(s), blkrate(s) )  =  0.00   (N = 60 states; magnitude
+                                            consistent with sampling noise)
+
+  Caveat: (b) probes only the blockage-rate correlate within the global-rescaling
+  family. The absence of a simple blockage correlation does not rule out a
+  richer state-dependent predictor over the full ℝ^{2n_q} space.
+
+  Together, no obvious state-dependent structure was detected that would
+  motivate λ(s)-style adaptation along the global-rescaling direction.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T3.3 — robustness over training (5-checkpoint variance band)
+  ──────────────────────────────────────────────────────────────────────────────
+  Re-run T3.1 at 5 ckpts spanning ep_00300 → ep_01700.
+  Output: results/result_11/lam_landscape_ep{00300,00600,01000,01400,01700}.txt
+
+  Summary across 5 ckpts:
+
+      mean greedy reward at c=1     :  1.52   (observed std ≈ 0.01)
+      Δ(best c − init)              :  consistent at 0.00 across ckpts
+      per-state gap G               :  consistent at ≈ 0.03 across ckpts
+      Test-C corr                   :  consistent at ≈ 0.00 across ckpts
+      sup |Δ(c)|                    :  ≤ 0.02   ∀ ckpt   ∀ c
+                                       (point-to-point variation below probe
+                                        precision; not reported as ± 0.00)
+
+  Interpretation: Δ(c) ≪ 1 holds uniformly across the training trajectory,
+  i.e. the insensitivity along the global-rescaling direction is not an artefact
+  of a particular training stage.[†]
+
+  [†] At ep_00300 the empirical best-c happens to be ×0.1 rather than ×1.0; this
+  reflects a 0.005-magnitude fluctuation flipping the argmax inside the noise
+  floor, not a meaningful preference. From ep_00600 onward best-c sticks at ×1.0.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  CLOSING
+  ──────────────────────────────────────────────────────────────────────────────
+  But is U_enc itself necessary? — addressed by Proposition 4. Along the
+  global-rescaling direction, Proposition 3 therefore establishes that the
+  frozen-λ regime characterized by Observation 1 and explained by Proposition 2
+  imposes no measurable task cost in the regime tested. Generality across
+  arbitrary perturbations δλ ∈ ℝ^{2n_q} remains untested and is left to future
+  work.
+
+  Verification notes (for the author):
+    • Main anchor: result_11 ep_01400 (D_k=0.10) — REFRESH when full model
+      available, per doc-level refresh note at the top.
+    • (P3.2) uses "≪ 1 relative to reward scale" not "≈ 0" — overclaim-safe
+      (observed sup |Δ(c)| ≤ 0.02 on ⟨r⟩ ≈ 1.52, i.e. ≤ 1.3% of reward).
+    • "Behaves consistently with a fixed (untrained) encoding scale" replaces
+      "behaves as a fixed feature map" — avoids importing Schuld 2021's
+      strong feature-map claim unless we want to cite explicitly later.
+    • T3.2 merges old T3.2 (max gap) and old T3.3 (blockage corr) into one
+      "no per-state structure" block. Both are null-structure findings; cleaner
+      narrative + saves a Test number for paper layout.
+    • T3.3 renumbered from old T3.4 (variance band).
+    • "Cosmetic legacy" probe annotation `⭐ (large → H1)` and the stale
+      LINEAR-head caveat are dropped from paper text — they were doc-tracking
+      artefacts of the H1/H2/H3 discriminator development. Verdict block
+      correctly reads H3 across all 5 ckpts.
+    • Old "H3 confirmed" terminology dropped — H-numbering is an internal
+      probe artefact, not paper-facing.
+    • Δ(c) DOES NOT use absolute thresholds (e.g. < 0.05). "≪ 1 relative" is
+      the chosen overclaim-safe form. Sup ≤ 0.02 is a numerical observation,
+      not a claim.
+    • Title and body uses "approximate insensitivity" / "insensitive" not
+      "invariance" — overclaim-safe (data is sup |Δ(c)| ≤ 0.02, not exact 0).
+    • c-range motivation reworded: "30× multiplicative range around the
+      learned scale" (precise) instead of "one OOM below and above"
+      (asymmetric: 0.1 = 10× below, 3.0 = 3× above, not symmetric in OOM).
+    • MoE/λ(s) phrasing softened: "no obvious state-dependent structure was
+      detected" instead of "no architectural λ-fix would yield gains".
+      We only measured blockage correlation, not a full λ(s) predictor.
+    • T3.3 variance band: replaced "± 0.00" entries with "consistent at X
+      across ckpts (variation below probe precision)" phrasing. Avoids the
+      mathematically-implausible ± 0.00.
+    • ⭐ SCOPE LIMITATION (Issue 5): Prop 3 only probes the global-rescaling
+      direction λ → cλ, a single 1D subspace of ℝ^{2n_q}. The body now
+      explicitly states this scope (STATEMENT block + CLOSING) and points to
+      future-work testing of non-rescaling perturbations. This is the most
+      important correction: previous versions of the conclusion overclaimed
+      generality of λ-invariance across the full encoding-scale space.
+
+================================================================================
+  PROPOSITION 4 — Detectable encoder contribution beyond the classical bypass
+================================================================================
+  Framing summary (compressed, paper-ready)
+  ────────────────────────────────────────────────────────────────────────────
+  We probe the necessity of the encoding stage U_enc(λ, z) NOT by measuring
+  reward when U_enc is removed (the system admits a state-independent
+  Direct-only fallback that achieves competitive reward, masking the loss), but
+  by measuring its contribution to STATE-DISCRIMINATION via per-state policy
+  divergences.
+
+  STATEMENT (paper-ready, LOCKED 2026-06-04)
+  ────────────────────────────────────────────────────────────────────────────
+  Setup. The assignment head receives h_t = [z_t ‖ o_hat], so the classical AE
+  latent z_t provides a state-dependent bypass even when the quantum channel
+  o_hat is degenerate. The question is therefore the contribution of U_enc(λ, z)
+  BEYOND this bypass.
+
+  Define the U_enc CONTRIBUTION TO POLICY STATE-DISCRIMINATION as
+
+      Δ_KL  :=  𝔼_{s≠s'} [ KL(π(·|s) ‖ π(·|s'))_full
+                          − KL(π(·|s) ‖ π(·|s'))_{λ=0} ]                  (P4.1)
+
+  where KL is taken between greedy-assignment per-state policy distributions.
+  The motivation is that pairwise KL captures the policy's ability to
+  distinguish states; (P4.1) quantifies the change in measured policy-
+  discrimination associated with removing the U_enc contribution while
+  retaining the classical bypass.
+
+  Empirically,
+
+      Δ_KL  >  0   (relative to bypass-only baseline)                      (P4.2)
+
+  i.e. U_enc-induced state-dependence is detectable in addition to the
+  bypass-induced state-dependence. In the regime tested (D_k=0.10, R_LoS=0.2,
+  4 checkpoints of result_11, single architecture), the U_enc-attributable
+  share is approximately constant.
+
+  ⚠ KL CAVEAT — what "share" means here:
+  Throughout this section, "U_enc share" refers SPECIFICALLY to the fraction of
+  the measured policy-discrimination signal under the KL metric (P4.1). It does
+  NOT denote a share of (i) Shannon information, (ii) general policy
+  "capability", or (iii) reward. The KL signal is one (defensible) proxy for
+  state-discrimination, and all share statements below are scoped to it.
+
+  LOGICAL FLOW
+  ────────────────────────────────────────────────────────────────────────────
+      T4.1            attenuation sweep                  KL(c) monotonic in c
+        ↓
+      T4.2            bypass-zero contrast               U_enc-alone share ≈ 24%
+                                                         of measured KL signal
+        ↓
+      T4.3            4-ckpt variance band               share ≈ const across ckpts
+        ↓
+      ⇒  U_enc contributes a measurable, approximately constant share of the
+         KL-discrimination signal beyond the classical bypass, in the regime tested
+        ↓
+      Synthesis with Obs 1 + Prop 2 + Prop 3 (CLOSING below)
+
+  TEST T4 — unified probe (smoothness + bypass-zero + variance band)  ✅ DONE 2026-06-04
+  ────────────────────────────────────────────────────────────────────────────
+  Script   : analysis/probe_uenc_ablation.py  (analytic forward, no shot noise)
+  Output   : results/result_11/uenc_ablation_full.txt
+  Method   : 4 ckpts × 5 attenuation levels + bypass-zero, 240 states each.
+             Per-state π computed under the patched forward:
+               o_hat_used   = c_uenc  · o_hat       (attenuation 1.0→0.0)
+               z_t_used     = c_bypass · z_t        (1.0 default; 0.0 for bypass-zero)
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T4.1 — attenuation sweep (smoothness in c)
+  ──────────────────────────────────────────────────────────────────────────────
+  Mean pairwise KL across the 4 ckpts, as a function of the U_enc attenuation
+  factor c ∈ {0, 0.25, 0.5, 0.75, 1.0}:
+
+    c_uenc    mean KL    per-step Δ
+    ─────────────────────────────────
+    0.00      0.914      —
+    0.25      0.997      +0.084
+    0.50      1.087      +0.090
+    0.75      1.182      +0.095
+    1.00      1.281      +0.099
+
+  KL(c) is monotonic in c; the four per-step increments [0.084, 0.090, 0.095,
+  0.099] are consistent with a linear trend (max-to-min gap ratio ≈ 1.18),
+  consistent with continuous functional dependence on U_enc.
+
+  Companion Fig L2 candidate: line plot KL vs c with the 4 ckpts overlaid.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T4.2 — bypass-zero contrast (share decomposition)
+  ──────────────────────────────────────────────────────────────────────────────
+  Three configurations per ckpt: full (c_uenc=1, c_bypass=1), U_enc-only
+  (c_uenc=1, c_bypass=0), bypass-only (c_uenc=0, c_bypass=1). The reported
+  "share" is the direct ratio  KL_alone / KL_baseline. This is a descriptive
+  decomposition, not a formal information-theoretic split.
+
+  Per-ckpt numbers (full table available in uenc_ablation_full.txt):
+
+      ckpt       KL_baseline   U_enc-only share   bypass-only share
+      ──────────────────────────────────────────────────────────────
+      ep_00600   0.430         23.0%              78.1%
+      ep_01000   1.078         22.8%              71.1%
+      ep_01400   1.625         23.7%              69.9%
+      ep_01700   1.990         25.3%              71.1%
+
+  Summary across 4 ckpts:
+
+      U_enc-only share          ≈ 24%   (range 23-25%)
+      bypass-only share         ≈ 73%   (range 70-78%)
+      sum                       ≈ 96%
+
+  The share sum approaches 100% (≈ 96.3%), which is consistent with limited
+  overlap between the two channels under this KL-based measure. We do NOT
+  claim these are alternative routes for the same information.
+
+  ⚠ KL CAVEAT (repeat): the "share" is of the MEASURED KL SIGNAL, not of
+  Shannon information, policy capability, or reward.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  TEST T4.3 — variance band across 4 ckpts
+  ──────────────────────────────────────────────────────────────────────────────
+  Companion Fig L3 candidate: KL vs c for each of the 4 ckpts as a separate
+  line (overlay), showing both the parallel monotonic structure (T4.1) and
+  the upward shift of the curves with training.
+
+  Summary (mean ± std across 4 ckpts):
+
+      c=1.00 (full)             1.28 ± 0.59
+      c=0.75                    1.18 ± 0.54
+      c=0.50                    1.09 ± 0.49
+      c=0.25                    1.00 ± 0.45
+      c=0.00 (bypass-only)      0.91 ± 0.41
+      bypass-zero (U_enc-only)  0.31 ± 0.15
+
+  Sidebar — KL_baseline grows ≈ 4.6× from ep_00600 (0.43) to ep_01700 (1.99):
+  state-sensitivity grows with training. This is reported as an adjacent
+  finding, distinct from the main share claim.
+
+  Across the 4 ckpts tested, the U_enc-only share is approximately constant
+  (range 22.8–25.3%) even as the absolute KL grows by ≈ 4.6×.
+
+  ────────────────────────────────────────────────────────────────────────────
+  PROP 4 FINDINGS (paper-ready)
+  ────────────────────────────────────────────────────────────────────────────
+  Three findings, in order of strength:
+
+    F1. CONTINUOUS dependence under attenuation. KL(c) is monotonic in c and
+        the per-step increments are consistent with a linear trend. The
+        absence of a step-change near c=0 is consistent with U_enc contributing
+        a continuous functional component of the KL signal, in the regime tested.
+
+    F2. SHARE DECOMPOSITION beyond bypass. With z_t bypass available and λ
+        frozen, U_enc-alone accounts for ≈ 24% of the measured KL signal
+        (range 23-25% across 4 ckpts of result_11); bypass-alone accounts for
+        ≈ 73% (range 70-78%); the two shares sum to ≈ 96%, suggesting limited
+        overlap between the two channels.
+
+    F3. SHARE APPROXIMATELY CONSTANT across training. The U_enc-only share
+        remains in [22.8%, 25.3%] across the 4 ckpts tested while the absolute
+        KL grows ≈ 4.6×. We report this as approximate constancy of the share
+        across the 4 ckpts tested, not as a structural property in general.
+
+  CLOSING
+  ────────────────────────────────────────────────────────────────────────────
+  Together with Observation 1, Proposition 2, and Proposition 3, the present
+  evidence suggests that, in the regime tested, U_enc(λ, z) with frozen λ
+  is a viable architectural choice: the encoding stage contributes a measurable
+  share of the policy state-discrimination signal even when its scale parameters
+  do not effectively update. Proposition 4 therefore establishes that U_enc(λ, z)
+  contributes a measurable and persistent component of policy state-
+  discrimination that remains detectable beyond the direct classical bypass,
+  even when λ itself is effectively frozen.
+
+  Verification notes (for the author):
+    • Main anchor: 4 ckpts of result_11 (D_k=0.10, single architecture).
+      REFRESH per doc-level note when D_k=0.15 / full-model anchors available.
+    • ⚠ KL caveat: throughout this section, "share" denotes the fraction of the
+      measured KL pairwise-discrimination signal, NOT a share of Shannon
+      information, general "policy capability", or reward. The metric is
+      KL(π(·|s) ‖ π(·|s')) averaged over (s, s') state pairs.
+    • The phrase "smooth degradation" was previously used with R² > 0.99 and
+      "linear within 10%". For paper text we use only the monotonicity +
+      consistency-with-linear-trend phrasing (overclaim-safe).
+    • "Complementary" was previously used in a stronger sense ("NOT alternative
+      routes for the same info"). The locked text uses "limited overlap" + the
+      96%-sum observation; the stronger reading is left to readers.
+    • "Structurally essential" / "sacrifices a quarter of capacity" /
+      "fixed random feature map suffices" were dropped from paper text — all
+      overclaimed beyond the KL-share evidence.
+    • F1's "no cliff/OOD artefact at c=0" was reworded to "consistent with
+      continuous functional dependence" — paper-cleaner.
+    • F3 says "across 4 ckpts tested", NOT "structural property" — N=4 is too
+      small to support a structural claim.
+    • The "PAPER ANCHORS" cross-reference list lives here in author notes only;
+      it is doc-tracking, not paper-facing prose.
+    • Fig L2 (KL vs c overlay) + Fig L3 (KL vs c per-ckpt overlay showing
+      training drift) are candidate figures; renderable from uenc_ablation_full.txt
+      when the final anchor model is chosen.
+    • (P4.1) wording uses "quantifies the change ... associated with removing
+      U_enc while retaining the bypass" — NOT "isolates the share". The probe
+      measures a contrast (KL_full − KL_{λ=0}), which is descriptive, not a
+      causal-isolation guarantee. The contrast interpretation does not require
+      a counterfactual identification claim.
+    • OOD/cliff phrasing was dropped from T4.1. The paper-facing claim is
+      simply "monotonic + per-step gaps consistent with a linear trend +
+      consistent with continuous functional dependence". No defensive language.
+    • Share-sum wording: "consistent with limited overlap between the two
+      channels under this KL-based measure" — NOT "appear to carry largely
+      distinct components" (the latter was stronger than the data supports).
+    • Title "Detectable encoder contribution beyond the classical bypass" is
+      the chosen paper-facing form. Alternative considered: "Encoder-induced
+      policy discrimination beyond the bypass pathway". The chosen title
+      emphasises detectability (the binary signal), not the magnitude or
+      mechanism, which is the most defensible framing.
+
+================================================================================
+  PIPELINE HOLES — register (resolved vs pending)
+================================================================================
+  ✅ Hole 1 — operational δ for "frozen": chốt δ = 5%, observed ρ_λ = 6.25% (T1.1)
+              → consider relaxing to δ = 10% or note "ρ_λ marginally above 5%"
+              CAVEAT: |max| element specifically — full-vector ρ likely smaller.
+  ✅ Hole 2 — T2.1-T2.3 cross-arch: rerun on arch-2 SoftmaxPQC linear → CONFIRMED (T2.5)
+  ✅ Hole 3 — T3.4 N=5 ckpt variance band: TIGHT (sup|Δ_A|≤0.02 ∀ckpt ∀c, G=+0.03 constant)
+  ✅ Hole 4 — Prop 4 framing risk: chốt Framing A (state-dependence, not reward)
+  ✅ Hole 5 — Prop 1 → 2 logic chain: hook question explicit ("why ḡ ≈ 0?")
+  ✅ Hole 6 — Prop 3 → 4 logic chain: explicit transition ("λ-rescaling doesn't
+              matter (P3); does U_enc itself matter? (P4)")
+  ⏳ Hole 7 — cross-Case (only Case 2 K10/M2 probed): defer + caveat in paper.
+  ⏳ Hole 8 — Prop 4 implementation: write analysis/probe_uenc_ablation.py
+              + MI estimator + run on ep_01400.
+
+================================================================================
+  PAPER-WRITING ANCHORS  (where each Prop lands in paper.tex)
+================================================================================
+  paper.tex line 898-906 (Section IV VQC encoding)
+    → re-word: "λ_y, λ_z initialised once; treated as fixed feature map (Prop 3)"
+    → cite Schuld 2021 (Fourier expressivity), Jerbi 2021 (honest contrast).
+
+  paper.tex line 1140-1142 (Lemma 2)
+    → STATEMENT kept as-is; add cite \cite{schuld2021effect}.
+
+  paper.tex line 1191-1213 (A4 architectural ablations)
+    → Insert Propositions 1-4 as a coherent block.
+    → Prop 1 = empirical observation (Fig L1 + Table T_grad).
+    → Prop 2 = mechanism (interference probe + CLT + barren-plateau remark).
+    → Prop 3 = consequence (landscape probe + variance band).
+    → Prop 4 = necessity of encoding stage (state-dependence collapse).
+    → Hypothesis 4c (existing scaffold) becomes Prop 3 wording.
+    → Proposition 2 (existing scaffold, line 1201-1208) is Prop 3 in our list.
+
+  paper.tex line 1080 (tab:hyper)
+    → flag: currently shows λ_D=3.5 (Case 1 outdated). Fix during final consolidation.
+
+  Framing for honest-contribution paragraph (Section V or A4 closing):
+    "Our PQC family exhibits gradient interference along the encoding-scale
+    direction (Prop 2). This makes trainable λ uninformative (Prop 3) but does
+    NOT undermine the encoding stage itself (Prop 4). We adopt λ as a fixed
+    random feature map, consistent with prior QML work [Schuld 2021, etc.],
+    while retaining the data-dependent encoding U_enc(z) that carries
+    state-conditional information into the quantum register."
+
+================================================================================
+  STATUS SUMMARY
+================================================================================
+  Prop 1: ✅ READY TO WRITE  (T1.1+T1.2+T1.3 complete)
+  Prop 2: ✅ READY TO WRITE  (T2.1-T2.5 done, T2.6 analytical 1-line remark)
+  Prop 3: ✅ READY TO WRITE  (T3.1-T3.4 complete, 5-ckpt variance band tight)
+  Prop 4: ✅ READY TO WRITE   (T4.1 smooth + T4.2 bypass-zero + T4.3 variance band done)
+
+  NEXT ACTIONS for the author:
+    1. Write Prop 1-4 — all four blocks now data-anchored, paper-defensible.
+    2. Render Fig L1 from lambda_trajectory.csv (λ|max| trajectory, λgrad r histogram).
+    3. Render Fig L2 — stacked share bar + KL-vs-c smoothness line plot.
+    4. Anchor ckpt = ep_01400 for now; re-anchor when full-curriculum ckpt available.
+    5. Optional later: re-run T4 on full-curriculum ckpt to refresh numbers.
+================================================================================

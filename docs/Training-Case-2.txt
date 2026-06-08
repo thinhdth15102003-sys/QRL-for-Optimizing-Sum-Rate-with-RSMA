@@ -4,7 +4,9 @@
   Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
   Bài học gốc kế thừa từ Case 1 → Training-Case-1.txt.
   File này: setup Case 2 + BẢNG TÓM TẮT RUN (dưới) + nhật ký chi tiết (L1-L14 cuối file).
-  Trạng thái: R_LoS=0.2 đang tinh chỉnh kiến trúc (architecture-2). Cập nhật: 2026-06-02
+  Trạng thái: R_LoS=0.2 arch-2 stable, ramp 2/3/EXP/D_k đã chạy + xong. Cập nhật: 2026-06-06
+                  Result paths moved: results/result_N → results/Training-Case 2/result_N
+                  (cleanup 2026-06-06: kept r8/11/12/13/14/15/18; deleted redundant + ghosts).
 --------------------------------------------------------------------------------
 
 ================================================================================
@@ -28,20 +30,31 @@
   r10 L11| 1.5 | =            | 16    | PopArt       | 8    | factored bias+0.3 | =                 | PowerMLP ok (π_split57% no-lock)  | phase REGRESS (root=λ frozen); QoS52%
   r11 L13| 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | =                 | task hơi tốt hơn r10              | ❌λ VẪN frozen r0.06 (spsa ko fix=STRUCTURAL); ko vượt r8
   r13*   | 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | Δ1 affine ONLY    | (partial code, dir xóa nhầm)      | thiếu Δ4+R1 → λ grad yếu ~2.8e-4 vẫn frozen
-  arch2  | 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | ⭐Δ1 affine + R1(42obs) + SoftmaxPQC head | full run (result_11) ep47: critic✅ PowerMLP✅ NHƯNG ❌λ VẪN frozen r0.06 | smoke r0.65 SAI (small-sample); Δ1 KHÔNG unfreeze. λ=directionless [E]. Phase/QoS chờ ep300
+  arch2  | 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | ⭐Δ1 affine + R1(42obs) + SoftmaxPQC head | result_11 STOPPED ep1730 (drift-test PASSED): ⭐ at ep1356 (r8-collapse mark) QoS=61% R_tot=1.79 explVar=+0.26 — arch-2 ở PEAK ngay chỗ r8 chết. Post-collapse ep1356-1727: QoS 56-61% hold, R_tot 1.70-1.85 (≥r8 gold 1.75), wc 63-73% no-lock, explVar wobble −0.23↔+0.33 (NO deep [B-2d]). Phase ✅monotonic 16.5%→28%→37.6%→38.4%→42.2% (ep300→01700, vượt r8 25%). best reward 214.5@~ep1272. | DRIFT-RESISTANCE PROVEN = PUBLISHABLE (Finding #6 paper). Long-run stability arch-2 fixed r8 [B-2d] cascade. Plateau-equivalent r8 gold; continue → no info gain. PIVOT EXP-1 freeze-phase chase F2 (assignment-credit lever).
+  r12 EXP-1| 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | =                                          | result_12 STOPPED ep~315 2026-06-04 (SIGINT, switched priority to D_k hypothesis test). PROBE ep_00300: gap closure 34% (sampled→oracle: 0.36→0.236), IRS-gap 17pt→5pt, policy R_tot 1.356→1.381 (+1.8%). VERDICT: F2∩F4 MIX (25-50% closure zone) — phase non-stationarity contributed SOME (34%) but ALSO oracle ceiling dropped (1.663→1.621 from frozen phase). Honest reading: F2 partial, F4 also present. | EXP-1 paused — D_k hypothesis test prioritized. EXP-1 verdict KEEP for paper: "freeze-phase partial closure shows F2+F4 mix, not pure F2".
+  result_13 D_k=0.15 (R_LoS=0.2)  | 1.5 | = | 16 | PopArt | 16 | = | = | STOPPED ep_00600 2026-06-04 (auto-stop). D_k binary sweet-spot test ABANDONED: QoS=41% < 80% threshold; corr(IRS,blocked)=−0.353 NEGATIVE (wrong routing); R_tot=1.636 beats Direct (1.450) & All-IRS (1.375) but routing không học được. | Hypothesis rejected → quay về D_k=0.10. Probe: results/Training-Case 2/result_13/d_k_probe_ep00600.txt.
+  result_14 RAMP-2 (R_LoS=0.3)    | 1.5 | = | 16 | PopArt | 16 | = | = | RUNNING ep~706/1500 (2026-06-05, launched 2026-06-04 13:21). Resume result_11/ep_01400. ⭐ R_tot quietly RISING 1.74→1.80-1.84 (≥ r8 gold 1.75) despite harder ramp; QoS drops to 54-57% (vs result_11 60% at R_LoS=0.2 = expected curriculum cost). Critic wobble explVar 0.04↔0.54 nhưng corr(V,ret) +0.5-0.7 still has structure. Best reward 176.4 @ep52 chưa bị vượt 650ep (= λ_D-weighted reward dropped với QoS, không phải plateau policy: L_pg -0.01 still). Phase ent monotonic ↓ 34.4→32.1 (48% of max, learning slow). λ frozen như expected (y=0.51 z=0.47). | KEEP TRAINING tới ep~1000-1200; watch QoS hồi ≥58%; nếu sustained <55% → λ_D↑ theo [I-3] cho ramp này. Probe phase_quality @ep_00700 to confirm alignment ≥38% (resume baseline).
+  result_16/17 GHOST | — | — | — | — | — | — | — | DELETED 2026-06-05 (0 ckpts, 35ep each, post-reset ghost runs). KHÔNG có data analyzable.
+  result_16 (new) WRONG-LAUNCH | 1.5 | = | 16 | PopArt | 16 | = | = (NO warmup, NO freeze) | ⚠ ABORT recommendation @ep~107: resume từ r15/ep_00400 (BROKEN anchor) + vanilla PPO → PhaseMLP UNLEARNING (ph entropy 59.6→62.7, 90%→94% of max, RISING toward random), reward μ -209→-275, QoS 53→50% drift. Critic borderline wobble explVar mean ~0.30, structural functional. ⛔ NOT the EXP-3c design (--phase-warmup --freeze-phase missing). | KILL + relaunch correct EXP-3c từ r11/ep_01000 with both flags. r16 ckpt ep_00100 = no analytic value (vanilla continuation of broken state).
+  result_18 EXP-3c WARMUP+FREEZE (R_LoS=0.2) | 1.5 | = | 16 | PopArt | 16 | = | = + --phase-warmup + --freeze-phase | RUNNING ep ~195/600 (launched 2026-06-05 ~15:10). Resume r11/ep_01000 (same anchor as r12, r15 = fair compare across EXP chain). ep_00000 auto-dumped post-warmup (pre-PPO clean attribution). | ⭐⭐ EARLY VERDICT @ep_00100/00200: ASSIGNMENT-QUALITY PRESERVATION CONFIRMED. live(R(q_pol,ORACLE_φ)) 1.447→1.447→1.447→1.465 (STABLE then +0.018, EXCEEDS r11 baseline 1.447 @ep200). Ceiling 1.765→1.645→1.676→1.700 (warmup dip +0.055 recovering through PPO). Compare r15 (warmup only): live 1.475→1.418 DECAY. r18 (+freeze): live 1.447→1.465 IMPROVE. Freeze BLOCKS PPO erosion mechanism. Caveats: live improvement modest (+0.018/200ep), reward μ in log declining (-135→-167) = power/Ck still struggling with frozen phase. Probes: decomp_ep00000.txt + decomp_freeze_trend.txt.
+  result_15 EXP-3 PHASE-WARMUP (R_LoS=0.2) | 1.5 | = | 16 | PopArt | 16 | = | = + ⭐ --phase-warmup (oracle CE pretrain) | ⛔ KILLED at machine reset @ep_00414. Phase warmup CE 2.09→1.38, match 25→29% (UNDERTUNED). Verdict history (3 revisions, đọc cuối): (V1) assignment_oracle ep_00400 closure≈-2% → "F4 dominant" — WRONG. (V2) gap_decomp v1 r15 gap_assignment 0.187 vs r11 0.315 → "+40% closure" — ALSO WRONG (power-phase mismatch bug). (V3 FINAL 2026-06-05) gap_decomp v2 + ckpt sweep ep100/200/300/400: DIRECT compare R(q_live, ORACLE_φ): r11=1.447 vs r15: 1.475→1.452→1.442→1.418 (initial +0.028 boost from warmup, then PPO ERODES, ends -0.029 below baseline). Downstream BROKE: gap_downstream r11=23% → r15=53-61% all ckpts. Oracle ceiling also dropped (1.765 → 1.611). | ⭐⭐ V3 FINAL VERDICT: EXP-3 = NET NEGATIVE. F2 IS partially addressable (initial +0.028 boost confirms) BUT warmup destabilizes downstream → PPO erodes gain. KEY INSIGHT: phase-side learning instability affects assignment quality from BOTH directions (EXP-1 freeze 34% closure + EXP-3 warmup +5% peak then decay) → consistent story not contradiction. Probes: assignment_oracle_ep00400.txt + assignment_decomp.txt + assignment_decomp_trend.txt.
   -------+-----+--------------+-------+--------------+------+----------------+----------------------+----------------------------------+----------------------------------
+  ⚠ result_13 = D_k=0.15 (binary sweet-spot test, R_LoS=0.2) — KHÔNG cùng setup với các run trên (D_k=0.10).
+  ⚠ result_14 = R_LoS=0.3 RAMP-2 — KHÔNG cùng setup với các run trên (R_LoS=0.2). Resume từ r11 ep_01400.
   * r13 = run launch 15:09 GIỮA lúc sửa code → chỉ load Δ1, thiếu Δ4/R1-wiring (commit 19:22). Dir xóa nhầm, ko khôi phục.
 
   ⭐ GOLD BASELINE = r8 (best reward 233, QoS peak 60%). Mọi arch mới phải VƯỢT r8.
-  ⭐ 4 LIMITATION CỐT LÕI còn lại sau r8 (priority order Common Part5 #8):
-     #1 critic drift run-dài (ep1000+) — PopArt stable ngắn hạn, cần non-stationarity lever (chưa làm)
-     #2 PhaseMLP idle (ent ph ~56-61% max) — gated bởi #3
-     #3 λ FROZEN [E] — ROOT = DIRECTIONLESS gradient (net~0, r0.06; KHÔNG phải noise/LN). spsa↑/Δ1-affine/
-        R1+SoftmaxPQC ĐỀU FAIL unfreeze (arch2 result_11 ep47 r vẫn 0.06; smoke r0.65 SAI = small-sample).
-        ⚠ λ-frozen ≠ cause PhaseMLP idle (PhaseMLP nhận z_t không nhận o_hat — ĐỘC LẬP). Hướng: E-fix0 lr_λ↑
-        (test, khả năng thấp) / E-fix1 auxiliary-loss (principled) / ⭐E-fix2 CHẤP NHẬN λ fixed feature-map
-        (literature-consistent, KHÔNG dealbreaker — quyết bằng performance không phải r). Xem Common [E].
-     #3 PowerMLP wp-concentration trần QoS58% → factored arch (r9/r10) nhắm fix
+  ⭐ LIMITATION CỐT LÕI (cập nhật 2026-06-04 sau result_11 STOP ep1730; priority order Common Part5 #8):
+     #1 ✅ critic drift run-dài — ARCH-2 FIXED. PopArt+Δ1 affine+R1 obs+SoftmaxPQC: explVar wobble centered ~0
+        KHÔNG cascade negative như r8 (no [B-2d]). QoS hold qua ep1356 r8-collapse mark = publishable.
+     #2 ⭐ PhaseMLP IDLE = BOTTLENECK THẬT BÂY GIỜ (KHÔNG còn gated bởi λ — xem #3). probe_phase_quality
+        result_11 ep300: alignment CHỈ 16.5% (r8 baseline 25% — arch2 còn TỆ HƠN) → phase ≈ random [F]
+        dù entropy. NOT gated bởi λ (PhaseMLP nhận z_t độc lập). → cần fix TRỰC TIẾP PhaseMLP (priority #2).
+     #3 ✅ λ FROZEN [E] — ĐÃ ĐÓNG (KHÔNG còn là việc phải làm). H3 CONFIRMED trên arch-2 LINEAR head:
+        probe_lambda_landscape result_11 ep300 VẪN PHẲNG (Δ best−init=+0.00, gap=+0.03) → frozen-λ
+        GENUINELY HARMLESS → CHỐT E-fix2 (chấp nhận λ fixed feature-map). spsa↑/Δ1/R1+SoftmaxPQC đều
+        FAIL unfreeze nhưng KHÔNG SAO — λ ít ảnh hưởng task. KHÔNG xây E-fix1/λ-lever nữa. Xem Common [E].
+     #4 PowerMLP wp-concentration trần QoS58% → factored arch (r9/r10) đã nhắm fix (π_split no-lock ok)
 --------------------------------------------------------------------------------
 
 # ── CẤU HÌNH CASE 2 (params.py ACTIVE CASE) ─────────────────────────────────
@@ -653,5 +666,292 @@ lambda_D = THEO SCHEDULE BÊN DƯỚI  # đừng bê thẳng 4.5 từ Case 1 —
         β_temp: theo dõi giá trị (inverse-temp tự học — kỳ vọng tăng dần = policy sharpen)
       Monitor Telegram per-diag. Gate ~ep 300: λ moved + phase ent down → SUCCESS → proceed G4/G5
       (nq=12 unification, A1 ablation). λ stuck dù r>0.2 → diagnose deeper. <<<
-  result___  ...
+
+  L15 (result_11 = ARCH-2 FRESH RUN, ep368 RUNNING @2026-06-03) — GATE ~ep300 VERDICT:
+        Config arch-2 confirmed (actor_config: readout_mode=r1, softmax_head=true, β_init=1.0, spsa16).
+        Feasibility (R_LoS=0.2): Servable 100% · Direct-only QoS 100% (ΣR 1.72) · All-IRS QoS 76.8% (ΣR 1.17).
+        WATCHPOINT RESULTS (priority order):
+          #1 critic ✅ AT-CEILING (KHÔNG broken): explVar mean~0.38 wobble 0.07-0.57 (PopArt working,
+             V̄=-13≈ret μ, ΔV~e-15, grad V nhỏ 7-12 → KHÔNG [B-2b]). layer1 dead=88% (capacity, KHÔNG
+             phải nguyên nhân cap — cap là aleatoric). ⭐ probe_critic_ceiling K10M2: ceiling explVar(V)
+             PHỤ THUỘC entropy policy: random/high-ent = 0.449, trained/low-ent = 0.760. result_11 ep383
+             đang HIGH-entropy (mid-anneal, β floor ~ep400) → effective ceiling ~0.45 → observed ~0.38-0.57
+             = ĐANG Ở TRẦN. → KHÔNG có critic-lever nào vượt được trần aleatoric; đường lên explVar>0.5 =
+             POLICY SHARPEN (β anneal xong ep400 → entropy giảm → return-var giảm → ceiling lên 0.76).
+          #3 λ ❌ STILL FROZEN: λ|max| y0.49 z0.48 = init suốt run; λgrad r 0.05-0.07 toàn bộ 368 ep.
+             smoke r=0.65 ĐÃ XÁC NHẬN SAI (small-sample). → 3rd structural confirmation.
+          #2 PhaseMLP ❌ IDLE: ent ph 40-42 ≈ 62% max FLAT 330 ep; KL 0.06 + ‖∇‖ph 17 = "vùng vẫy".
+          #4 QoS ❌ 50→54% (DƯỚI r8 60% + DƯỚI All-IRS 76.8%). Rtot 1.37→1.53. KHÔNG vượt r8.
+          β_temp: (chưa log riêng — kiểm sau).
+        ⭐⭐ 2 PROBE TRÊN ep_00300 ckpt (quyết E-fix1 vs E-fix2):
+          • probe_phase_quality: coherence 0.336, alignment 16.5% (p25 7% p75 27%), live-IRS>direct 60%.
+            → phase ≈ RANDOM [F], CÒN TỆ HƠN r8 25%. arch-2 R1+SoftmaxPQC KHÔNG gỡ phase (đúng dự đoán:
+            PhaseMLP độc lập λ). → priority-#2 VẪN HỞ, là bottleneck thật.
+          • probe_lambda_landscape (TRÊN LINEAR HEAD — gỡ caveat MLP r8): Test A ×0.1→×3.0 reward
+            1.51→1.53 Δ(best−init)=+0.00 · Test B per-state gap +0.03≈0 · Test C corr-blockage 0.00.
+            → ✅✅ H3 CONFIRMED DỨT KHOÁT (landscape phẳng cả trên head LINEAR không hấp thụ được): frozen-λ
+            GENUINELY HARMLESS → CHỐT E-fix2 (chấp nhận λ fixed). ĐÓNG câu hỏi λ — KHÔNG xây λ-fix nữa.
+        KẾT LUẬN GATE: arch-2 (1) GIÁ TRỊ KHOA HỌC = confirm frozen-λ harmless trên linear head + param-eff
+        (SoftmaxPQC ~2K vs MLP ~50K, hỗ trợ C2/C3) NHƯNG (2) KHÔNG vượt r8 task-perf; bottleneck dịch sang
+        PhaseMLP idle (priority-#2, độc lập λ) — cần fix TRỰC TIẾP PhaseMLP, KHÔNG qua λ.
+        → NEXT (user chốt 2026-06-03): chạy thêm tới ~ep600 + focus critic. λ → E-fix2 (đóng).
+        ⭐ RE-READ @ep600 CRITERIA (β anneal end ep400 → entropy NÊN giảm post-anneal):
+          • explVar có LEO >0.5 stable khi entropy giảm không? CÓ → critic OK (lên trần 0.76), pivot phase.
+            KHÔNG (kẹt ~0.45 dù entropy đã giảm) → critic thật sự có vấn đề → mới xét lever (dead-units:
+            LayerNorm/leaky-ReLU critic, hoặc init) — restart run.
+          • ent ph có bắt đầu GIẢM post-anneal không (hiện flat 62%)? + ent pw (hiện TĂNG 8→20, theo dõi).
+          • QoS có nhích khỏi 53% khi base lành hơn không (so r8 60% @ ep tương đương post-anneal).
+        result_8 VẪN GOLD baseline. ETA ep383→600 ~3h (27s/ep + 310s/12ep PPO). Monitor qua Telegram.
+
+  L15b (result_11 EP600 GATE READ, 2026-06-03 ~06:50) — sau khi user đổi priority SUM-RATE>QoS:
+        TREND: QoS 50→58%, R_tot 1.37→1.58, reward -305→+3 best 167; cả 2 metric ↑ đồng pha = improving thật.
+        Vs r8 gold (best 233 @ep1500, QoS peak 60%): result_11 ep600 best 167 + QoS 58% = MATCH r8 pace.
+        CRITIC ✅ explVar trajectory warm-up 0.59 → dip 0.18 (mid-anneal) → rebuild 0.40-0.58 latest 0.49-0.58
+        = ở ngay trần s_t-oracle 0.59 (critic deep-dive bên dưới). KHÔNG cần lever critic.
+        PHASE ⭐ PARTIAL (lật verdict ep300 IDLE): probe_phase_quality ep_00600 alignment 28.0% (coherence
+        0.427, p75 34%, live-IRS>direct 63.2%) — vs ep300 16.5% (+11.5pt trong 300 ep) — đã VƯỢT r8 baseline
+        25%. ent ph 41.5→39.0 (62%→59% max 66.5) chậm nhưng monotonic. NOT [F] idle nữa, mà "learning,
+        not converged". KHÔNG tune lr_phase: phase ĐANG tiến.
+        POWER 🟡 wc 57-70% volatile (peak 70% bounced 56%) - chưa lock; wp-top2 51-71% concentrate pattern
+        đã có. Chưa [A] collapse (wc<71% threshold) nhưng watch.
+        ⭐ WC DEEP-DIVE (ep600, 2026-06-03, probe_wc_optimality.py + probe_power_qos.py — 5 giả thuyết wc):
+          1. probe_wc_optimality: policy mean wc=0.565 ≈ λ_D=1.5-opt 0.60 (Δ +0.04) → ✅ H4 (equilibrium đúng λ_D).
+             Sum-rate-opt wc=0.80 (Δ vs policy +0.24) → H3 direction đúng (λ_D nén wc; xem [I-3]).
+             H5 collapse ❌ BÁC (peak reward giữa, không 0.7-0.8 danger zone).
+             H2 phase-coupled ⭐ REVERSED: oracle phase HIGH→wc HIGH (Δ low-high=-0.065); policy phase HIGH→wc LOW (ρ=-0.248)
+             = policy lệch hướng vs optimal per-state (learning error subtle, không catastrophic).
+             ΔR per-state mean +0.041 (3.1% relative reward λ_D=1.5) = MODEST headroom; upper bound learned
+             head ~50% → real ~1.5%. KHÔNG đáng đầu tư head riêng cho wc(s).
+          2. probe_power_qos: wp-top2=58.6%, met/unmet=3.0× — nhưng equal-split Δ=−0.5pt QoS ❌ BÁC wp-concentration-là-bottleneck.
+             ⭐ KHÁC r8 (r8: equal-split +25pt QoS = unmet users rescuable). result_11 unmet = channel-weak (blockage/distance),
+             KHÔNG rescuable bằng power. Agent concentrate đúng. PowerMLP arch-2 factored+bias+0.3 ĐÃ FIX wp-concentration QoS impact.
+          3. ⚠ SỬA HIỂU NHẦM: wc_optimality "equal-split ref" QoS+12pt KHÔNG phải do uniform-w_p (probe_power_qos bác);
+             likely do uniform w_c_vec ACROSS GROUPS hoặc wc=0.5 level combined. Chưa isolated. Có thể probe riêng nếu cần.
+          → KẾT LUẬN: KHÔNG lever lớn từ wc/power ở ep600. wc=0.57 oscillating 56-71% = healthy equilibrium + exploration,
+            KHÔNG phải pre-collapse. PowerMLP private head LÀNH. Lever lớn còn lại = PhaseMLP đang tiến tự nhiên (28%→target 50%+)
+            → wait + monitor là right move. Reports: results/Training-Case 2/result_11/wc_optimality_ep600.txt + power_qos_ep600.txt.
+        ⭐ IRS-ATTRIBUTION (ep600, 2026-06-03, probe_irs_attribution.py — Tests A+B+C, kiểm "agent có bypass IRS"):
+          User observed: top-reward eps có IRS thấp (4.3/10) vs bottom (5.7/10) + IRS-share trend 71%→55% qua 600 ep
+          → nghi [J] DIRECT-ATTRACTOR forming. 3 tests counterfactual trên ckpt ep600 (N=360 states, Blk 7.2, sampled phase):
+          A) IRS disabled (g_RU_hat=0, same action): ΔR_tot = +0.91 (+58.5%), ΔQoS = +31.6pt
+             → ✅ IRS contributing massively. KHÔNG bypass.
+          B) DIRECT-ALL vs IRS-BALANCED assignment (downstream re-react):
+             • DIRECT-ALL +68% R_tot — ⚠ PHASE CONFOUND: phi=[0]*K → active_irs=[] → phase_net skip → default zeros
+               = oracle-uniform phase by accident → boost common stream → +68% inflated. KHÔNG clean.
+             • IRS-BALANCED -23% R_tot — phase quality không scale với 10 IRS users (phase tax).
+             → Cần re-run Test B với phase=policy-actual mới có clean assignment effect.
+          C) Oracle uniform-phase (brute 4^M=16, keep policy assignment): ΔR_tot = +0.14 (+10.3%), ΔQoS = +3.1pt
+             ⚠ Baseline SAMPLED phase 13.7%; greedy 28% → real PhaseMLP→oracle gap ~5-7%, không 10%. Modest, không transformative.
+          ⭐ REFRAME [J]: nghi-vấn ban đầu BỊ NHẸ HÓA (không bác hoàn toàn):
+            • IRS đang được dùng có ích (Test A) — không phải avoidance
+            • IRS-share trend 71%→55% = REFINEMENT (route đúng blocked-users → IRS) thay vì avoidance
+            • "Low IRS = high reward" pattern phần lớn Blk-mediated (top eps Blk 6.2, bottom 6.5) + phase-tax avoidance ở high-Blk states
+            • [I-3] rule λ_D↑ ở hard ramp sẽ self-correct IRS usage khi cần
+          → ACTION: KHÔNG intervene now. WATCH: IRS-share <50% sustained = real flag; phase alignment kẹt 28% qua ep600→900→1200 = warm-up justified.
+          OPEN methodological: rerun Test B với phase locked + Test C với greedy baseline để đo clean. Defer trừ khi cần.
+          Report: results/Training-Case 2/result_11/irs_attribution_ep600.txt.
+        ⭐ BLOCKED→DIRECT FOLLOW-UP (ep600, 2026-06-03, probe_blocked_direct.py): user observation Blk/K>IRS/K
+          (mean BD=3.49 blocked-direct users/state) — hypothesis H-rational: multi-user phase saturation justifies drop.
+          DATA bác H-rational, support H-irrational (routing bias):
+          • BASELINE 2×2 (N=360, 8 noise): blocked-IRS R=0.187 > blocked-direct R=0.135 > D_k=0.10 → IRS routing materially boosts blocked users.
+            (NOT-blocked direct R=0.079 < D_k = secondary issue: direct group đông + common cap by weak users.)
+          • SWAP single blocked-direct → best already-active IRS, hold phase/power/Ck: 90.1% swaps positive,
+            mean ΔR_tot=+0.031, ΔQoS=+1.78pt; hi_blk stratum (Blk≈8) → 98% positive, mean ΔR_tot=+0.055.
+          • Aggregate single-swap upper bound: ΔR_tot ~+0.108 (~7%), ΔQoS ~+6pt nếu fix toàn bộ BD users.
+          → Agent over-conservative về IRS routing cho blocked users (3 causes: sampling noise ent q=6.4, phase-tax aversion partial [J], critic noise).
+          ⚠ CAVEAT METHOD: single-swap test KHÔNG verify hypothesis multi-swap (cumulative phase tax). H-rational có thể đúng ở multi-swap level.
+            Cần probe follow-up "swap ALL BD simultaneously" để confirm. Defer trừ khi user yêu cầu.
+          → ACTION updated: vẫn KEEP TRAINING (vì training improving + curriculum [I-3] sẽ apply pressure ở ramp sau),
+            NHƯNG nâng concern level cho ramp transition: ở hard ramp khi blocked-rate cao + λ_D↑, agent's routing bias có thể amplify thành failure.
+            Watch: IRS-share trend + blocked-IRS-fraction sau ramp transition.
+          Report: results/Training-Case 2/result_11/blocked_direct_ep600.txt.
+        Q ✅ ent 9.46→6.38 = assignment converging. CK ✅ Ck 0.54→1.04 monotonic.
+        λ ❌ frozen r0.05 — nhưng E-fix2 đã chốt (Common[E] H3): HARMLESS.
+        ACTION: KEEP TRAINING tới ep900-1000 → re-read xem phase alignment có đạt ~40-50% (threshold
+        "optimizing IRS") + wc có lock >70% sustained không. KHÔNG hyper change.
+        DON'T-REPEAT check: λ_D↑ [I-2] ruled out · critic lever không cần (at-ceiling) · lr_phase↑ KHÔNG
+        cần (phase đang tiến, chưa stall) · bias-stronger Power [r9 lesson, locks wc].
+
+  ⭐ CRITIC DEEP-DIVE (2026-06-03, song song result_11 chạy) — "critic có thể mạnh hơn không?"
+     Mục tiêu: test critic đã chạm trần chưa + dead-units có đáng fix. 3 probe mới (analysis/):
+     1. probe_critic_temp_sweep.py (ceiling-EV + live-EV vs sampling-temperature τ, ckpt ep300):
+        ceiling PHẲNG ~0.82 theo τ (sharpen assignment/phase KHÔNG nâng ceiling) → T3-via-các-head-đó
+        BỊ BÁC làm critic-lever. (EV_critic thô 0.12 = artifact của bootstrap H=7 — bỏ qua, dùng số dưới.)
+     2. probe_critic_ceiling đọc lại: ceiling Tier-1/temp-sweep = FULL-STATE (snapshot env), KHÔNG phải
+        s_t-achievable. Oracle sweep cũ 0.376 = RANDOM-policy (lệch policy, đừng so với 0.82 trained).
+     3. probe_critic_repr_ablation.py (TRAINED policy, clean-MC, fit oracle theo input variant):
+        ⭐ s_t-oracle (fresh, arch 512x256x128x64) = 0.59 · full-state 0.82 · live ~0.40-0.45.
+        + |g| (V2 0.54) +phase (V3 0.55) ≈ base (REDUNDANT — s_t derived từ |channel|); +blk/+full
+        (V1 0.31/V4 0.05) RỚT = overfit/optim instability.
+     ⭐⭐ KẾT LUẬN (cả 2 giả thuyết BÁC): dead-units/capacity ❌ (fresh oracle cùng arch = 0.59);
+        representation/richer-input ❌ (redundant+overfit; 0.82 cần per-element M×N×K mà obs đã aggregate).
+        Residual live→0.59 (~0.15) = training-dynamics (online PPO+GAE vs offline MSE), modest, low-prio.
+        → CRITIC Ở GẦN TRẦN s_t THỰC DỤNG ~0.59. KHÔNG lever arch/repr giá trị cao. Judge vs 0.59 KHÔNG 0.82.
+        → ĐÓNG hướng "mạnh hóa critic" (cả Direction-1 optimize + Direction-2 dead-units). Pivot ACTOR/HEAD.
+        Chi tiết general → Common-Knowledge [B] CEILING-DEFINITION CAVEAT. Reports: results/Training-Case 2/result_11/
+        temp_sweep_ep300.txt + repr_ablation_ep300.txt.
+
+  L15c (result_11 EP1200 READ, 2026-06-03 ~16:30, AFK target hit) — BEST STATE của run:
+        PERF ✅: R_tot 1.55→1.75 (MATCH/BEAT r8 gold 1.68-1.76 = thắng metric sum-rate priority!) · QoS 55→59-60%
+        (peak 61% @~ep900) · best reward 203.5 @~ep860 (gần r8 233) · reward rolling +57.
+        PHASE ✅ (priority-#2 tiến mạnh): alignment 16.5%(ep300)→28%(ep600)→37.6%(ep1200), p75=43%, coherence
+        0.503, live-IRS>direct 66.4%. Monotonic, gần "optimizing" (40-50%). KHÔNG stall trong drift zone.
+        CRITIC 🟡 explVar softened 0.43(ep400-700)→0.25(ep1100-1220) wobble 0.03-0.45 NHƯNG NO negative dip
+        (r8 went −0.21 @ep1068) + V̄=+5.3 tracks (now-positive) return scale + σV 2.2 spread → đọc là
+        CONVERGED-POLICY-lower-ceiling (returns uniform hơn → less explainable var), KHÔNG phải [B-2d] breakdown.
+        QoS holding xác nhận (r8 [B-2d] thì QoS sụp; đây không).
+        HEADS 🟡 mild drift: wc 62%(ep600)→66-68% center peaks 73-74 (chưa lock, bounces 46-53) · IRS-share
+        55%→~48% (dir↑5.0 = routing bias amplifying như đã flag) · wp↓26% (concentrate↑). QoS holding nên = mild evolution.
+        ⭐ VERDICT: run ở BEST state, hit ep1200 target, R_tot vượt r8 + phase 37.6% = success ramp 0.2.
+        ep1000-1200 (= r8 drift zone) chỉ MILD softening, KHÔNG cascade như r8. Possible arch-2 fixed long-run instability.
+        DECISION (user AFK, chờ về): A) continue ~ep1500 để vượt mốc r8-collapse ep1356 = test drift-resistance
+        (publishable, checkpoints saved nên zero risk) — KHUYẾN NGHỊ; B) stop+advance ramp 0.3 ([I-3] calibrate λ_D).
+        TIER-2 SIGINT trigger nếu chạy tiếp: explVar âm 30+ep · wc lock≥70% 50+ep · QoS<55% sustained.
+        BEST CKPT ASSET = ep_00900/ep_01000 (QoS peak 61%, explVar ~0.4-0.5 pre-drift) = critic-pretrain + ramp-0.3 resume.
+        Report: probe_phase_quality ep_01200 (37.6%). (Phase chưa update Common — vẫn per-case.)
+
+  ⭐⭐ ASSIGNMENT DEEP-DIVE (ep600+ep1200, 2026-06-03) — user hypothesis "assignment sai → VQC yếu".
+     Chuỗi 3 probe mới (analysis/): probe_assignment_oracle + probe_assignment_distill (+ blocked_direct trước).
+     STEP 1 oracle-assignment (coordinate-ascent maximizing reward=R_tot−λ_D·qp, re-run downstream, N=160 ×2ckpt):
+       ⭐ Assignment LÀ lever LỚN NHẤT: ep1200 sampled reward 1.356 → oracle-reward 1.663 (+18%), QoS 63→80% (+17pt),
+       R_tot +11%, IRS-share 54→71%. Vượt mọi lever khác (phase oracle +10%, power ~0, wc ~3%). User instinct ĐÚNG về assignment.
+       F1 family BÁC HẾT: A5 exploration (Δsamp→greedy chỉ +0.05) · A6 objective-mismatch (oracle-reward route NHIỀU IRS 71%
+       không ít hơn → λ_D KHÔNG biện minh policy) · A7 risk-aversion (corr lật dấu −0.08/+0.10 = không nhất quán) ·
+       A8 externality (multi-user oracle vẫn muốn 71% IRS). A10: gap GIÃN 12→17pt (oracle-IRS 66→71 nhưng policy 53→54).
+     STEP 2 distillation (MLP cổ điển X→oracle-assignment, re-eval reward held-out, N=400):
+       ⭐ distill-z_t recover 51% oracle gap · s_t 27% · full 29%. z_t>full = AE latent task-trained (data-efficient),
+       raw features học từ đầu khó với 300 mẫu → REFUTE F3-A3 representation (z_t không lossy, còn tốt hơn raw).
+       MLP cổ điển từ z_t làm 51% mà live VQC làm 0% (cùng input) → REFUTE F3-A4 (VQC capacity) cho nửa đó.
+     ⭐⭐ KẾT LUẬN — "VQC yếu" KHÔNG được ủng hộ. Gap +0.36 reward phân rã:
+       • ~51% (+0.19) = F2 CREDIT/TRAINING (info có trong z_t, head cổ điển extract được, live policy fail vì credit/
+         non-stationarity) → ADDRESSABLE: freeze-phase+train / IRS-curriculum / phase-warmup. KHÔNG đổi VQC.
+       • ~49% (+0.18) = structural sequential-hierarchy (assignment quyết TRƯỚC phase → không đoán được downstream)
+         HOẶC oracle-greedy-noise → classical head cũng kẹt → KHÔNG phải VQC.
+     ⚠ CAVEAT: z_t-vs-full không hoàn toàn fair (z_t AE-pretrained); 51% là lower-bound (N=300, oracle greedy noise4).
+       A1 ablation (VQC vs classical) vẫn cho paper PHẦN 2 — nhưng giờ là param-eff confirmation, KHÔNG phải "tìm VQC yếu".
+
+     ⭐⭐ REFINEMENT 2026-06-04 — F4 "HIERARCHY-INDUCED MYOPIA" tách khỏi F2 (user framing, chốt sau drift verdict):
+       49% structural-share KHÔNG chỉ là "noise oracle" — là LỖI DECOMPOSITION TUẦN TỰ. Assignment quyết q TRƯỚC
+       phase/power, training signal nó nhận chỉ thấy `V(q | π_φ_current, π_w_current)` thay vì `V*(q,φ*,w*)`.
+       F2 ≠ F4:
+         F2 = TARGET DI CHUYỂN THEO THỜI GIAN (downstream evolving) → tự đóng nếu freeze downstream + train đủ lâu.
+         F4 = TARGET LUÔN BỊ MÉO BỞI SURROGATE (downstream-conditional value, không joint optimum) → KHÔNG tự đóng
+              kể cả ở convergence + frozen downstream. Static structural bias.
+       Hai cái KHÔNG mutually exclusive; F4 là tầng dưới F2. Bóc F2 xong vẫn còn F4. EXP-1 freeze-phase phân biệt:
+       gap CO HOÀN TOÀN → F2 dominant; gap CO 1 PHẦN → F2∩F4 mix; gap ĐỨNG → F4 dominant.
+
+       ⭐ COMPONENT VERDICT (chốt sau drift PASS + F4 refinement, 2026-06-04):
+         ── Đóng (no lever): ─────────────────────────────────────────────────────────────
+           λ                     · H3 harmless (Prop2 λ-invariance, probe_lambda_landscape phẳng)
+           Critic                · Wobble = noise floor (tail aleatoric + dead-units), V̄ tracks scale
+           PowerMLP              · Factored+bias0.3, oracle Δ~0%, equal-split −0.5pt
+           Representation        · z_t có info (distill 51%); 49% còn lại KHÔNG phải info-loss
+           VQC capacity          · Classical MLP cùng z_t cũng 51% → không trace 49% về VQC; param-eff C2/C3
+           Reward/λ_D=1.5 ramp0.2 · Pareto-soft by-design; QoS plateau ~60% có phần là CHOICE không phải BUG
+         ── Đang học, không phải #1: ─────────────────────────────────────────────────────
+           Phase                 · Alignment 16.5→42.2% monotonic, oracle Δ+10% rate-only < assignment +18%
+         ── Bottleneck: ──────────────────────────────────────────────────────────────────
+           Assignment            · Lever #1: +17pt QoS / +18% reward / +11% R_tot (oracle ep1200)
+         ── Nghi phạm root-cause: ────────────────────────────────────────────────────────
+           F2 credit/non-stationarity  · #1 — EXP-1 testing
+           F4 structural-hierarchy myopia · #2 — refinement F2, distill 49% residual gợi ý
+
+       ⭐ EXP-1 DISCRIMINATOR (sau 1500ep frozen-phase từ ep_01000 → probe_assignment_oracle gap):
+         Gap closure ≥50% (gap <0.18 reward, <8pt QoS)  → F2 DOMINANT  → EXP-2 IRS-routing bonus ĐÁNG làm; EXP-3 nice
+         Gap closure 25-50% (gap 0.18-0.27, 8-13pt QoS) → F2∩F4 MIX    → EXP-2 marginal; EXP-3 vẫn worth (warmup ≈ giảm F4 init bias)
+         Gap closure <25% (gap ≥0.27, ≥13pt QoS)       → F4 DOMINANT  → EXP-2/3 KHÔNG đủ; cần structural lever (L1-L4 dưới)
+         ⚠ PAPER-SAFE THRESHOLD: không claim "F2 confirmed" dưới 50% closure. Closure 25-50% = "F2 contributes" + cần EXP-3 orthogonal.
+
+       F4-DOMINANT LEVER OPTIONS (nếu EXP-1 cho gap ≥0.27, ghi sẵn để khỏi rethink):
+         L1 Joint-distill bootstrap : pre-train assignment từ oracle-trajectory (teacher=oracle-q | re-opt downstream).
+                                       Cost: 1 fresh run + analysis/oracle_traj_gen.py. Reduce F4 init bias.
+         L2 Lookahead value head    : auxiliary V'(q,z) ≈ E[V | best-response-downstream] thay current. Cost: thêm head + extra fwd.
+         L3 Restructure thứ tự      : phase→assignment→power. Mất logic "chọn link rồi tinh chỉnh"; risk lớn.
+         L4 Accept as honest-limit  : paper-framing F4 = cost of HQC-HAC decomposition (C2 trade-off NISQ-feasibility +
+                                       amortized inference). Honest-prior: param-efficiency >> task-advantage. DEFAULT.
+
+     LEVER MAP cuối: assignment-credit (F2∪F4) = lever lớn nhất addressable (~+17pt QoS oracle, ~+7pt expected dưới EXP) ·
+       phase đang tự tiến (+10% oracle) · critic/power/wc/λ ĐÓNG. Reports: assignment_oracle.txt + assignment_distill.txt + blocked_direct_ep600.txt.
+     ⭐ EXP PLAN (3 training experiments chase F2 assignment-credit, THEO THỨ TỰ — user chốt 2026-06-03):
+       EXP-1 FREEZE-PHASE (F2/F4 DISCRIMINATOR): train.py có flag --freeze-phase (skip phase_net.apply_grads).
+         Resume ep_01000/agents, --episodes 1500 nhưng ⭐ TIMING SCOPE = 300-600ep (TREND test, không convergence).
+         R_LoS0.2 λ_D1.5. Test: phase đứng yên → assignment IRS-share leo tới oracle 71% (vs policy 54%) không?
+         Probe protocol: probe_assignment_oracle trên ep_00300/00400/00500/00600 (4 trend points, ~5min/probe).
+         Early-stop nếu gap_300 > 0.30 (F4-leaning đủ); else continue tới ep_00600 cho refined verdict.
+         Decision per ⭐ EXP-1 DISCRIMINATOR table trên:
+           ≥50% closure → F2 dominant → EXP-2/3 worth ; 25-50% → mix → EXP-3 only ; <25% → F4 dominant → L1-L4 levers.
+       EXP-2 IRS-routing bonus (CHỜ EXP-1): reward shaping bonus annealed cho IRS-routed user → credit sạch, break chicken-egg.
+       EXP-3 phase warm-up (CHỜ, FRESH run): supervised pre-train PhaseMLP trên oracle-phase (4^M) trước PPO → phase aligned từ ep0.
+       SEQUENCING: result_11→ep1500 (drift test) → SIGINT → EXP-1 từ ep_01000. EXP-2/3 conditional EXP-1 confirm F2.
+       (--freeze-phase flag committed train.py, compile OK, backward-compat getattr default False. result_11 đang chạy KHÔNG bị ảnh hưởng.)
+  L15d (result_11 EP1727 STOP + drift verdict, 2026-06-04) — DRIFT-RESISTANCE VERDICT:
+        ⭐ DRIFT TEST PASSED. At ep1356 (r8-collapse epoch): rolling-50 QoS=61% R_tot=1.79 explVar=+0.26 wc=51%
+        — arch-2 ở PEAK ngay chỗ r8 chết. ep1356→ep1727 (~370ep past collapse zone): QoS hold 56-61%, R_tot 1.70-1.85
+        (≥ r8 gold 1.75), wc 63-73% no-lock (peaks but bounces), explVar wobble −0.23↔+0.33 centered ~0 (KHÔNG deep
+        [B-2d] collapse). PUBLISHABLE long-run stability win cho arch-2 (Finding #6 paper).
+        PHASE ✅ continued improvement past r8-collapse zone (priority-#2): alignment 37.6%(ep1221)→38.4%(ep1500)→
+        42.2%(ep1700), p75=48%, coherence 0.54, live-IRS>direct 57.4%. Monotonic, vượt r8 baseline 25% gấp 1.7×.
+        Reports: probe_phase_quality ep_01500.txt + ep_01700.txt (alignment trajectory).
+        SIGINT clean @ep1730 (process flush ckpts OK). LATEST ASSET ep_01700 (best-by-recency, plateau-state).
+        DECISION: per handoff trigger → pivot EXP-1 (no info gain from continuing; run plateaued at gold-equivalent).
+
+  L15e (result_12 = EXP-1 FREEZE-PHASE LAUNCHED, 2026-06-04) — F2 NON-STATIONARITY GATING TEST:
+        Resume: results/Training-Case 2/result_11/checkpoints/ep_01000/agents (pre-drift safe asset, QoS 60% baseline) ·
+        --freeze-phase (PhaseMLP grads skipped, params static) · --episodes 1500 · R_LoS=0.2 λ_D=1.5 (unchanged) ·
+        critic warm-up 24ep×50epochs (resumed) · result_12/ auto-created · log: 4Δ banner + ❄ EXP-1 confirmation line.
+        ★ HYPOTHESIS test: phase frozen (no non-stationarity) → IRS-share leo tới oracle ~71% (baseline policy 54%) không?
+        WATCH: (a) behaviour-line `irs=[..]` IRS-share trend; (b) probe_assignment_oracle on rolling checkpoints
+        (gap policy→oracle co không); (c) QoS holding ≥ 60% (resume baseline) not regressing.
+        BRANCH: CÓ leo → F2 confirmed → EXP-2 (IRS-routing bonus) + EXP-3 (phase warm-up). KHÔNG → F2 bác,
+        rethink credit/structural deeper. EXP-2/3 design await EXP-1 verdict ~ep500-1000.
+
+  L16 (result_13 = D_k=0.15 SWEET-SPOT TEST, STOPPED ep_00600 2026-06-04) — HYPOTHESIS REJECTED:
+        Setup: R_LoS=0.2 D_k=0.15 (raised từ 0.10) — binary sweet-spot test (Frozen-Lambda-Proposition paper-strategy
+        pivot candidate). Probe ep_00600: QoS=41% < 80% threshold; corr(IRS, blocked) = −0.353 (NEGATIVE = wrong
+        routing, agent uses IRS on UN-blocked users); R_tot=1.636 beats Direct-only baseline (1.450) and All-IRS
+        (1.375). VERDICT: POLICY FAIL — D_k=0.15 không phải sweet-spot; agent không học được smart routing dù
+        physical layer cho phép. Hypothesis ABANDONED → quay về D_k=0.10. Report: results/Training-Case 2/result_13/d_k_probe_ep00600.txt.
+        LESSON: D_k là policy-conditional, KHÔNG là static physical knob.
+
+  L17 (result_14 = RAMP-2 R_LoS=0.3, RUNNING @ep706 2026-06-05) — CURRICULUM RAMP TRANSITION:
+        Setup: R_LoS=0.3 (raised từ 0.2) D_k=0.10 λ_D=1.5 gae=0.9 β=0.001→0.0003 noise16 nq12 (case2 unchanged).
+        Resume: results/Training-Case 2/result_11/checkpoints/ep_01400/agents (= post-drift-test peak). target n_ep=1500.
+        Critic warm-up resumed: explVar=+0.83 initial (resumed policy + critic warm-up healthy).
+        Feasibility @ R_LoS=0.3: Servable=100%, Direct-only QoS 100% (R_tot 1.73), All-IRS QoS 58.9% (R_tot 0.96),
+        69.3% blocked. → harder regime vs ramp-1 (was Servable=100% with much less blockage).
+
+        ★ STATUS @ep~706 (rolling-50 snapshot, từ assessment 2026-06-05):
+        • R_tot 1.74→1.80-1.84 RISING (≥ r8 gold 1.75) ⭐ — agent redistributing rate, không phải collapse.
+        • QoS μ 58%→54-57% oscillating band — drop expected vs result_11's 60% @ R_LoS=0.2 (curriculum trade-off).
+        • Best reward 176.4 @ep52 chưa bị vượt 650ep — KHÔNG plateau policy: L_pg ~ -0.01 small but nonzero,
+          reward dropped vì λ_D=1.5 cân QoS dropped, không phải PG stuck.
+        • Critic: explVar wobble 0.04↔0.54 (NOT stable >0.5) NHƯNG corr(V,ret) consistent +0.5-0.7 (có structure).
+          V̄ scale match return scale ✓ · ‖∇‖V ~30-40 (≪ [B-2d] threshold 700-1000) · PopArt OK.
+          ⚠ Degraded vs early-r14 (explVar +0.65 @ep24) — nhưng KHÔNG pathological.
+        • Behaviour shift: wc 77%→55-60%, wp 23%→40-45%, Ck tot 1.27→0.85 (private gaining share, common shrinking).
+        • Phase ent monotonic ↓ 34.4→32.1 (max 66.5; 52→48%, below 60% idle flag) — slow but learning.
+        • ⭐ PROBE phase_quality @ep_00700 (2026-06-05): alignment=42.4% (p25 34%, p75 50%), coherence=0.542
+          (random 0.204, optimal 1.000), live-IRS beats direct 73.4% (10513/14319 routed). HELD/IMPROVED vs
+          r11 resume baseline (ep_01400: ~37.6%) and MATCHES r11 final peak (ep_01700: 42.2%). PhaseMLP genuinely
+          optimizing channel ở harder R_LoS=0.3 regime — Finding #5 paper extends: alignment 16.5%→42.4% across
+          ramps (baseline 25% in r8 era). Report: results/Training-Case 2/result_14/phase_quality_ep00700.txt.
+        • ⭐⭐ PROBE phase_oracle @ep_00700 (2026-06-05): ORACLE alignment 100.0% (per-IRS scalar channel model
+          → eff_phi=N·exp(jθ) when all N elements share index → trivial L=4 choices/IRS). LIVE 40.8% vs ORACLE
+          100% = +59.2 pp HEADROOM ⭐. per-IRS index-match (live==oracle) = 25.7% ≈ random 1/L → PhaseMLP HAS
+          learned "elements should agree" (40% alignment > 4% random-elements) BUT picks WRONG-of-4 index ~75%
+          of time. Rate: live IRS-beats-direct 71.3% → oracle 81.2% (+10 pp). DIAGNOSIS: phase selection ≈ random
+          among 4 quantized indices → STRONG case for EXP-3 supervised warmup. NEW PAPER FINDING (candidate F4
+          partial closer): phase_oracle.oracle_phase_idx is closed-form, no brute search needed (M·L=8 evals/state).
+          Report: results/Training-Case 2/result_14/phase_oracle_ep00700.txt. Built: analysis/phase_oracle.py.
+        • λ frozen as expected: y=0.51 z=0.47 (init 0.50/0.45), λgrad r=0.04-0.08 — Prop2 λ-invariance harmless.
+
+        DON'T-REPEAT (đã check table): λ_D↑ ruled out r1 [I-2] · β anneal đúng (đang ở floor) ·
+          spsa↑ ruled out r11 (λ frozen STRUCTURAL, không phải noise).
+
+        → ACTION: KEEP TRAINING tới ep~1000-1200. Watch QoS hồi ≥58% khi PhaseMLP tiếp tục converge.
+        TRIGGER LEVERS (nếu cần): (a) QoS sustained <55% + R_tot plateau tới ep~1200 → λ_D↑ theo [I-3] tiers
+        (1.5→1.8→2.2) cho R_LoS=0.3 specifically; (b) phase alignment regress dưới 30% → probe + rethink
+        (chưa từng thấy regress trong arch-2, sẽ là [F] mới).
+        KHÔNG advance ramp 3 (R_LoS=0.4) cho tới khi QoS stable ≥58% và critic explVar ≥0.4 mean (5+ diags).
+
 ================================================================================

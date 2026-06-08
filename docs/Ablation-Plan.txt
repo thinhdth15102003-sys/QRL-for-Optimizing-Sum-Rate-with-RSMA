@@ -3,7 +3,8 @@
 ================================================================================
   Mục đích: thiết kế ablation chứng minh TỪNG contribution thực sự đóng góp.
   Nền: paper .tex (Research Paper/HQC-HAC...tex), code train.py/RL/, diagnostic pipeline.
-  Trạng thái: KẾ HOẠCH (chưa chạy — chạy SAU khi hệ ổn định). Cập nhật: 2026-05-31
+  Trạng thái: ARCH-2 ĐÃ ỔN (result_11 drift-PASSED Finding #6). Cập nhật: 2026-06-05.
+                Ablation runs chưa chạy — chờ EXP-3 verdict (result_15 ETA ~12h) + ramp 2 r14.
 --------------------------------------------------------------------------------
 
 # ── 3 CONTRIBUTIONS CỦA PAPER (ablation phải bám) ───────────────────────────
@@ -16,6 +17,45 @@
   C3. AE-VQC: autoencoder NÉN state cao chiều → latent gọn → quantum encode (vừa register
       NISQ + giữ info quan trọng cho assignment).
 
+# ── ⭐ STATUS SNAPSHOT 2026-06-05 (empirical milestones for ablation reuse) ─
+#   PHẦN A architecture-2 ĐÃ build & run (result_11, R_LoS=0.2 main reference):
+#     Δ1 LN+affine (γ,β) ✅  · Δ2 R1 readout (42 obs) ✅  · Δ4 SoftmaxPQC head ✅
+#     → PHẦN A "(2) AE-VQC-SoftmaxPQC" = LIVE config, NOT just proposed.
+#   PHẦN A "(1) AE-VQC-PostNN" = result_1-9 baseline, ALSO has data (r8 = gold).
+#   PHẦN A "(3) VQC-SoftmaxPQC pure" = NOT BUILT (would need impl no-AE branch).
+#   PHẦN B R1 readout: ✅ active in arch-2 (vqc_readout_mode='r1').
+#   PHẦN C nq=12 unification: ⚠ Case 2 IS nq=12 nhưng Case 1 (nq=8) Case 3 (nq=16)
+#                                 chưa unified → G4 task still pending.
+#   PHẦN D VQC-placement single-top: design choice live; A7 negative ablation pending.
+#
+# ── ⭐ FINDINGS đã ĐO empirically (paper-ready, fold vào ablation prose) ─────
+#   F1 [B] critic trần s_t practical = 0.59 (KHÔNG capacity-limited; oracle s+a 0.82 impractical)
+#   F2 [E] frozen-λ HARMLESS (Prop 2 directional incoherence, probe_lambda_landscape flat)
+#   F3 [hierarchy] assignment oracle +18% reward / +17pt QoS / +11% R_tot (lever #1)
+#   F4 [hierarchy decomp] distill 51% from z_t (classical MLP), live VQC 0% — z_t carries info
+#   F5 PhaseMLP alignment 16.5→42.4% across ramps (live), oracle ceiling 100% (closed-form per-IRS)
+#      → live-IRS beats direct 73%, oracle 81% (+10pp rate headroom)
+#   F6 ARCH-2 drift-resistance PASSED (r11 survived r8-collapse zone ep1356+, QoS hold 56-61%)
+#   F7 (candidate, pending EXP-3 verdict) closed-form phase oracle structure: channel model
+#      h_irs = β·conj(g_SR)·(Σ_n e^{jφ_n})·g_RU collapses per-element resolution
+#      → all elements share one phase index = optimal → oracle = brute over L=4 indices/IRS.
+#
+# ── ⭐ F2/F4 EXP CHAIN STATUS (assignment-credit decomposition) ──────────────
+#   Oracle gap +0.36 reward decomposes:
+#     ~51% F2 credit/non-stationarity   ← EXP-1 (freeze-phase) → MIX 34% closure
+#     ~49% F4 structural hierarchy myopia ← cần lever ngoài Δ1-Δ7 (L1-L4 — table gap)
+#   EXP-1 verdict (r12): MIX (25-50% zone). EXP-2 IRS-bonus = marginal → deprioritized.
+#   EXP-3 phase warmup LAUNCHED (r15, parallel r14, ETA ~12h). Pre-flight: 25.7% index
+#   match ≈ random → strong case for warmup. VERDICT will gate ablation-A8 framing.
+#
+# ── ⚠ NUMBERING CONFLICT to resolve in paper.tex scaffold ──────────────────
+#   Ablation-Plan A1-A7 numbering ≠ paper-tex scaffold A1(Prop1) A2 A3 A4(Prop2 λ-inv) A5.
+#   Decision pending: keep this plan A1-A7 INTERNAL, map to paper scaffold separately,
+#   OR renumber this plan to match paper. Currently A4 means different things:
+#     Plan A4 = entropy-annealing (this file)
+#     Paper A4 = frozen-λ (memory says scaffold) ← used in Frozen-Lambda-Proposition.txt
+#   Action: when ABLATION APPENDIX FILL begins (Day 6-7), pick one canonical numbering.
+#
 # ── ĐÃ CÓ TRONG PAPER (đừng làm lại) ────────────────────────────────────────
   4 BASELINES (khác assignment policy, CÙNG grouped-RSMA signal model):
     (i) random  (ii) greedy (strongest channel)  (iii) direct-only (no IRS)  (iv) all-IRS.
@@ -50,14 +90,37 @@
         KHÔNG strawman) đã ghi ở đó.
    A2. AE vs no-AE (C3): bỏ AE, encode thẳng state (hoặc projection tuyến tính) vào VQC.
         Chứng minh AE-compression cần cho register hạn chế.
+        ⭐ 2026-06-05 evidence: probe_assignment_distill cho thấy z_t recover 51% oracle gap
+        > raw s_t 27% > full state 29% — AE compression KHÔNG lossy, còn tốt hơn raw (z_t
+        AE-pretrained task-trained, raw features khó học với 300 mẫu). Strong argument cho A2.
    A3. Hierarchical/sequential vs MONOLITHIC (C2): 1 actor phẳng quyết 4 biến cùng lúc vs
         decomposition tuần tự. Chứng minh "sequential dependency chain" đáng giá.
+        ⭐ 2026-06-05 evidence: oracle ladder L15c probe — assignment +18% > phase +10% >
+        power ~0% > wc ~3% → sequential decomposition exposes hierarchy of levers. F4
+        framing: structural hierarchy myopia = cost of decomposition, but C2 trade-off
+        (NISQ-feasibility + amortized inference) justifies it. EXP-1 verdict (F2∩F4 MIX)
+        + EXP-3 verdict pending will determine if A3 framing is "advantage" or "limitation".
    A4. Entropy-annealing on/off (C2 — paper nêu rõ): bỏ entropy / bỏ anneal → collapse sớm?
+        ⚠ NUMBERING NOTE: paper.tex scaffold uses A4 cho frozen-λ (Prop 2). Khi ablation
+        appendix fill, rename this entropy-anneal slot (e.g. → A8 or move into HYPER section).
 
   QUANTUM-DESIGN SENSITIVITY (củng cố claim lượng tử):
    A5. n_qubits / n_var_layers / data-reuploading on-off.
    A6. Entanglement + readout (E1/E2, R1) = CHÍNH readout A/B đã plan (VQC-Readout-Design.txt)
         → feed thẳng vào ablation này. Monitor barren-plateau (grad qc/λ) [REV-2].
+        ⭐ 2026-06-05 Δ-AUDIT note: Δ3 entangle E1/E2 đã được DEPRIORITIZED — distill probe
+        REFUTED VQC capacity hypothesis (classical MLP cùng z_t recover 51%, live VQC 0% →
+        gap KHÔNG phải VQC expressiveness). Δ3 A6 ablation sẽ là "confirm KHÔNG cần" not
+        "tăng performance". A5 vẫn worth làm cho param-eff figure.
+
+  ⭐ NEW (2026-06-05) — EXP-3 PHASE WARMUP ABLATION (A8 candidate, pending verdict):
+   A8. PhaseMLP supervised warmup (on/off): pre-train PhaseMLP trên closed-form oracle
+        (analysis/phase_oracle.oracle_phase_idx) trước PPO vs cold-start. Measure:
+        (a) alignment trajectory: warmup target ~60%+ from ep0 vs cold-start 16.5% climb
+        (b) assignment_oracle gap closure: warmup pass điểm F4 init bias không
+        (c) sample-efficiency: ep nào reach r11 final R_tot 1.75 nhanh hơn
+        ⚠ CHỜ result_15 verdict (ep_00600, ETA ~12h). Nếu thành công → A8 ablation worth
+        publishing as "structured supervised teacher for IRS phase via closed-form oracle".
 
   (Giá trị IRS + assignment đã do 4 baselines lo — KHÔNG cần ablation IRS riêng.)
   (RSMA-vs-SDMA: ĐÃ BỎ theo yêu cầu user — paper là VỀ grouped-RSMA, không so SDMA.)
@@ -240,17 +303,30 @@
   Cập nhật trên TIMING section ở trên:
 
   GATE chain (mỗi gate gate cái sau, không bundle):
-   G1. result_10 (factored PowerMLP + bias=+0.3) ramp 0.2 settle → verdict GO/NO-GO factored
-       arch (đang chạy 2026-06-01).
-   G2. Frozen-λ [E] fix (spsa_n_reps↑ hoặc normalization) → λ|max| moves off 0.50/0.45.
-       1 fresh run trên arch (1) cũ, verify encoding learning.
-   G3. Implement R1 readout + SoftmaxPQC head (architecture 2) bundled với V1-V5 verification
-       harness (per docs/VQC-Readout-Design.txt Bước 2). 1 fresh run.
-   G4. nq=12 unification → soft-cluster trainable cho mọi case. Implement + verify trên Case 2.
-   G5. A1 ablation: (1)+old vs (2)+R1+softmaxPQC vs classical-DNN matched-params.
-       Across Case 1, 2, 3. Multi-seed (3-5).
-   G6. A5/A6 sensitivity (depth, λ-trainable on/off, entanglement E1+E2 on/off).
-   G7. VQC-at-phase-head ablation (negative result để justify design).
+   G1. ✅ DONE result_10 factored PowerMLP + bias=+0.3 → PASSED (no-lock, oracle Δ~0%).
+   G2. ✅ DONE Frozen-λ [E] verdict: HARMLESS (not fixable but Prop 2 proves invariance).
+       spsa_n_reps=16 ruled-out unfreeze (r11 structural). λ frozen accepted as feature-map.
+   G3. ✅ DONE arch-2: Δ1 LN+affine + R1 readout + SoftmaxPQC head bundled (result_11).
+       Drift-resistance PROVEN at ep1700 (Finding #6 paper).
+   G4. ✅ DONE 2026-06-08: nq=12 UNIFIED across Case 1/2/3.
+       Implementation: params.py auto-derives P_S, n_var_layers, n_hidden_ae from K-tier:
+         K≤5  (Case 1 SMALL): n_var_layers=2, n_hidden_ae=[32], W_proj expansion 10→22
+         K≤10 (Case 2 MEDIUM): n_var_layers=3, n_hidden_ae=[128,64], W_proj identity 20→20
+         K>10 (Case 3 LARGE):  n_var_layers=5, n_hidden_ae=[256,128,64], W_proj compression 40→16
+       D_enc per-case via n_var_layers (Jerbi: data-reupload + λ + depth = univ approx).
+       Verified: smoke tests pass for all 3 cases (forward OK, shape OK).
+       NEXT: K-flex extension (G8, Kmin↔Kmax variable) is separate scope (~1 week impl).
+   G5. ⏳ PENDING A1 ablation: (1)+old vs (2)+R1+softmaxPQC vs classical-DNN matched-params.
+       Across Case 1, 2, 3. Multi-seed (3-5). REQUIRES ClassicalActor impl first.
+   G6. ⏳ PENDING A5/A6 sensitivity. Δ3 (entangle E1/E2) DEPRIORITIZED post Δ-audit 2026-06-05
+       (distill refuted VQC capacity as gap source). A5 nq/depth/reuploading vẫn worth.
+   G7. ⏳ PENDING VQC-at-phase-head ablation (negative result để justify design).
+
+   ⭐ NEW INSERT G3.5 (2026-06-05): EXP-3 phase warmup verdict gates A8 ablation candidate.
+       result_15 RUNNING (ETA ~12h). Verdict @ep_00600 determines:
+         F2 dominant → A8 "phase warmup helps" worth publishing
+         F4 dominant → A8 "warmup partial, F4 limits" framing (still publishable)
+       Build deps: analysis/phase_oracle.py ✅, train.py --phase-warmup flag ✅ (DONE 2026-06-05).
 
   Mỗi gate = 1-3 fresh runs. Total ~10-15 runs cho full paper data.
 ================================================================================
@@ -356,12 +432,18 @@
 ================================================================================
   ƯU TIÊN (gate nhau; mỗi dòng = data cho 1 phần paper):
 
-  [R0] ⭐ ĐANG CHẠY: arch-2 full run Case 2 R_LoS=0.2 (verify λ unfreeze + phase học). Gate mọi thứ.
-       Data: PHẦN 1 (Case-2 perf) + verify architecture trước khi ablate trên nó.
+  [R0] ✅ DONE result_11 arch-2 R_LoS=0.2 → Finding #6 drift-PASSED (publishable as-is).
+       Data harvested: PHẦN 1 (Case-2 perf) anchor + arch-2 architecture verified.
+       Best checkpoint: ep_01400 (latest pre-drift safe) or ep_01700 (final).
+
+  [R0.5] ⏳ RUNNING (2026-06-05):
+       • result_14 RAMP-2 R_LoS=0.3 (~706/1500, ETA ~60h parallel) — curriculum continuation.
+       • result_15 EXP-3 phase-warmup R_LoS=0.2 (~0/600, ETA ~12h parallel) — F4 init bias test.
 
   [R1] PHẦN 1 — MAIN: full curriculum 0.2→0.5 Case 1,2 trên arch-2 (resume mỗi ramp), multi-seed 3.
        Data: ΣR_tot/QoS vs Tan et al. baseline + 4 baselines. → bảng+figure headline.
        Case 1 đạt ~1.7 (đã có sơ bộ) → confirm trên arch-2 final.
+       ⚠ ramp 3 (R_LoS=0.4) conditional on r14 QoS ≥58% verdict.
 
   [R2] PHẦN 2 — A1 quantum-vs-classical: cần ClassicalActor (impl trước).
        • A1a iso-VQC-param: 3 case × 3 seed = 9 run (classical block ~12·nq)
@@ -372,19 +454,60 @@
 
   [R3] PHẦN 3 — component ablations (Case 2 headline ramp, seed 2-3 mỗi cái):
        • A2 no-AE (encode thẳng/linear vào VQC)        — 2-3 run
+                                ⭐ Pre-evidence: distill z_t 51% > raw 27% (no run needed?
+                                or 1 confirm run + cite distill probe).
        • A3 monolithic (1 flat actor 4 biến)            — 2-3 run
+                                ⭐ Pre-evidence: oracle ladder (assignment 18% > phase 10%)
+                                supports hierarchy advantage; A3 confirms by reversing.
        • A4 entropy-anneal off                          — 1-2 run (collapse nhanh, rẻ)
+                                ⚠ Renumber to A4'/A8 (paper A4 = frozen-λ now).
        • A5 qubit/depth sweep (nq 8/12/16, L 2/3/5)     — dùng chung data 3-case + vài run
        • A6 entanglement E1+E2 on/off, λ-trainable on/off — 2-3 run (cần Δ3 impl)
+                                ⚠ Δ3 DEPRIORITIZED per Δ-audit; A6 = "confirm no harm" not "lever"
        • A7 VQC-at-phase-head (negative ablation)        — 1 run
+       • A8 (NEW 2026-06-05) phase warmup on/off         — DATA from r15 vs r11 baseline:
+                                no extra run needed for first comparison (r15 already running).
+                                Multi-seed confirm if A8 included in paper: 2 more seeds.
 
   [R4] HYPER IMPORTANCE: phần lớn lấy từ run-log có sẵn (bảng tóm tắt). Confirm run nếu thiếu:
        chủ yếu A4 (entropy) + PopArt on/off (có thể đã đủ từ r7/r8). ~1-2 run bù.
 
-  TỔNG: R0(đang) + R1(~6 run curriculum×seed) + R2(~22 run + inference đo) + R3(~12 run) +
-        R4(~2 run) ≈ 40+ run-equivalents. NHƯNG nhiều cái ngắn (A4 collapse nhanh, inference ko train).
-        Thực tế ~3-4 tuần compute. Ưu tiên R0→R1→R2 (3 phần chính), R3/R4 bổ sung.
+  TỔNG: R0(✅) + R0.5(⏳ r14+r15) + R1(~6 run curriculum×seed) + R2(~22 run + inference đo)
+        + R3(~12 run, có pre-evidence rút bớt) + R4(~2 run) ≈ 40+ run-equivalents.
+        NHƯNG nhiều cái ngắn (A4 collapse nhanh, A2/A3 cite distill+oracle ladder evidence không
+        cần re-run, inference đo không cần train). Thực tế ~3-4 tuần compute.
+        Ưu tiên R0→R1→R2 (3 phần chính), R3/R4 bổ sung.
 
-  ⚠ ĐIỀU KIỆN: ablate trên arch-2 ĐÃ ỔN (R0 pass: λ moved + critic stable). Ablate trên nền chưa
-     ổn = data nhiễu vô nghĩa (xem PHƯƠNG PHÁP). DON'T-REPEAT guard: check bảng tóm tắt trước mỗi tune.
+  ⚠ ĐIỀU KIỆN: ablate trên arch-2 ĐÃ ỔN (R0 ✅ pass: critic stable, drift-resistant).
+     Ablate trên nền chưa ổn = data nhiễu vô nghĩa. DON'T-REPEAT guard: check bảng tóm tắt
+     trong docs/Training-Case-2.txt trước mỗi tune.
+
+================================================================================
+  GAP / F4 TARGETED LEVERS  (NEW 2026-06-05 — Δ-table audit identified gap)
+================================================================================
+  Δ-table (Δ1-Δ7) trong user's plan covers F2 (credit/non-stationarity) tốt nhưng KHÔNG
+  có lever cho F4 (structural hierarchy myopia). Nếu EXP-3 verdict ≤+5pp added closure →
+  F4 dominant → cần lever ngoài bảng. Options (chốt sau verdict):
+
+  L1. Joint-distill bootstrap: pre-train assignment head từ oracle-trajectory teacher
+      (q* re-optimized với best-response downstream). Reduce F4 init bias.
+      Build: analysis/oracle_traj_gen.py + train.py --assignment-warmup flag.
+      Cost: 1 fresh run + ~1 day code. RECOMMENDED if F4 dominant.
+
+  L2. Lookahead value head: auxiliary V'(q,z) ≈ E[V | best-response-downstream] thay
+      current V(s). Assignment thấy V*-like signal, không phải V(q|π_φ_current).
+      Cost: thêm head + extra forward; moderate code.
+
+  L3. Restructure thứ tự: phase→assignment→power. Mất logic "chọn link rồi tinh chỉnh".
+      HIGH RISK, large refactor.
+
+  L4. Accept as honest-limit (DEFAULT/INSURANCE): paper-framing F4 = cost of HQC-HAC
+      decomposition (C2 trade-off NISQ-feasibility + amortized inference). Honest-prior.
+      Cost: 1 paragraph paper Section V. ALWAYS write up regardless of verdict.
+
+  Δ7 PhaseMLP counterfactual (F2 lever #2, supplements EXP-3):
+      Current: sub_actors.py:329 `for m in active_irs` skip inactive IRS.
+      Counterfactual: forward all K users through each IRS phase head, weight by π_q.
+      Cost: K×M times current grad eval. Refactor PhaseMLP.compute_grads_batch.
+================================================================================
 ================================================================================

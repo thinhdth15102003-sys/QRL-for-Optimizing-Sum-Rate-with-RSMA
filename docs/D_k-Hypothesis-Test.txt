@@ -1,0 +1,113 @@
+================================================================================
+  D_k HYPOTHESIS TEST  ·  paper strategy pivot decision
+================================================================================
+  Scope: validate whether shifting D_k 0.10 → 0.15 unlocks the Direct-only critique
+  for Q1 paper defensibility. Test = short training (~10-15% budget) + behavioral
+  probe → decision matrix. Initiated 2026-06-04.
+--------------------------------------------------------------------------------
+
+================================================================================
+  PHASE B FEASIBILITY — STRATEGIC FINDINGS (2026-06-04)
+================================================================================
+  Initial Phase B premise (advance R_LoS to break Direct-only) — REFUTED.
+
+  Cross-ramp feasibility scan (D_k=0.10 fixed):
+    R_LoS    Servable%   Direct-only%   All-IRS%    blocked%    R_tot(Dir)   R_tot(IRS)
+    0.20       100.0       100.0         80.1      69.5        1.72         1.20
+    0.25       100.0       100.0         71.4      68.5        1.73         1.10
+    0.30       100.0       100.0         63.8      68.4        1.73         1.01
+    0.35       100.0       100.0         56.8      68.4        1.73         0.94
+
+  ⭐ KEY OBSERVATION 1: Direct-only QoS = 100% qua ALL ramps probed (0.2 → 0.35).
+     Blocking rate ~68-70% nhưng per-user blocked direct rate (≈0.17/user) vẫn ≥
+     D_k=0.10. R_LoS NOT the lever to break baseline.
+
+  D_k sweep (R_LoS=0.20 fixed) reveals BINARY regime:
+    D_k      Direct-only QoS    All-IRS QoS    Interpretation
+    0.10     100%               80%            current — both baselines pass
+    0.15     100%               0%             ⭐ SWEET-SPOT — Direct passes equal-pwr,
+                                                  All-IRS fails equal-pwr; smart
+                                                  RSMA+IRS allocation NEEDED
+    0.20     0%                 0%             too hard — even per-user Direct fails
+    ≥0.25    0%                 0%             catastrophic
+
+  ⭐ KEY OBSERVATION 2: D_k=0.15 is the only ramp where:
+       (a) equal-power Direct still solves QoS (per-user 0.17 ≥ 0.15)
+       (b) equal-power All-IRS fails (per-user IRS rate < 0.15 without phase opt)
+       (c) trained policy with smart per-user power allocation MIGHT do better than Direct
+
+================================================================================
+  HYPOTHESIS TO TEST (user-formulated, 2026-06-04)
+================================================================================
+  Claim: at D_k=0.15, trained RL policy demonstrates SMART BEHAVIOR that
+  baselines cannot replicate, specifically:
+
+    User type    | Optimal RL behavior
+    ───────────────────────────────────
+    unblocked    | route Direct, less power
+    blocked      | route IRS,    more power
+    near user    | less power
+    edge user    | more power
+
+  If confirmed → paper main story = D_k=0.15 (showcase RSMA+IRS necessity)
+  If refuted   → pivot to R_tot Pareto framing or accept honest limitation
+
+================================================================================
+  TEST DESIGN (confirmed 2026-06-04)
+================================================================================
+  STAGE 1 — TRAINING (running 2026-06-04 ~17:30, result_13/)
+    Command : python train.py --D-k 0.15 --episodes 600 --seed 0
+    Budget  : 600 ep = 15% of n_episodes=4000 default — cheap hypothesis test
+    Status  : RUNNING (critic warm-up phase ~30min, then PPO ~5-6h)
+
+  STAGE 2 — BEHAVIORAL PROBE (script ready: analysis/d_k_hypothesis_probe.py)
+    Evaluates 4 policies on the SAME channel state:
+      (i)   RL trained policy (loaded ckpt)
+      (ii)  Direct-only baseline (equal power, all direct)
+      (iii) All-IRS baseline (equal power, all through IRS_1)
+      (iv)  Equal-power-mix (RL's routing, equal power) ← isolates routing vs power
+
+    Metrics:
+      A. Cross-policy aggregate: QoS%, R_tot per policy
+      B. Behavioral correlations (RL only):
+           corr(chose_IRS, blocked)     ← SMART ROUTING (target ≥ 0.5)
+           corr(power_allocated, blocked) ← SMART POWER  (target ≥ 0.3)
+           corr(power_allocated, distance) ← edge boost
+      C. Per-user-type breakdown: blocked vs unblocked × (P(IRS), mean power, rate, QoS%)
+
+  STAGE 3 — DECISION MATRIX
+    RL QoS    Smart routing?  Smart power?  Verdict
+    ─────────────────────────────────────────────────────────────
+    < 80%     —               —             ❌ POLICY FAIL — hypothesis SỤP
+    ≥ 80%    NO              NO            ❌ NO LEARNING — lucky generalization
+    ≥ 80%    YES             NO            🟡 partial — routing only
+    ≥ 80%    NO              YES           🟡 partial — power only
+    ≥ 80%    YES             YES           ✅ STRONG — PIVOT D_k=0.15 DEFENSIBLE
+
+================================================================================
+  PAPER-STRATEGY IMPLICATIONS
+================================================================================
+  IF ✅ STRONG verdict:
+    • Pivot main paper story: D_k=0.15 main config, D_k=0.10 → ablation
+    • result_11 (D_k=0.10) becomes "easy regime" reference
+    • Re-train Case 2 fully at D_k=0.15 (additional ~5 days × 1 ramp)
+    • All EXP-1/2/3 logic re-applies but at new operating point
+    • Q1 venue: IEEE TWC moves from BORDERLINE → LIKELY
+
+  IF 🟡 PARTIAL or ❌ verdict:
+    • Stay with D_k=0.10 + pivot paper framing to R_tot Pareto
+    • Honest-limit: "QoS approximation, not absolute satisfaction"
+    • Focus C2/C3 (param-eff + amortized) over QoS contribution
+    • Q1 target: IEEE Trans Quantum Engineering (more flexible on baseline comparison)
+
+================================================================================
+  STATUS LOG
+================================================================================
+  2026-06-04 ~17:30  — EXP-1 SIGINT at ep~342 (ep_00300 probe done = F2∩F4 mix 34% closure)
+  2026-06-04 ~17:35  — Phase B feasibility probe done (R_LoS not the lever)
+  2026-06-04 ~17:40  — D_k sweep done (binary regime D_k=0.15)
+  2026-06-04 ~17:45  — train.py --D-k flag added; result_13 launched at D_k=0.15 600ep
+  2026-06-04 ~17:50  — Behavioral probe d_k_hypothesis_probe.py ready
+  2026-06-04 ~XX:XX  — TODO: probe ep_00600 ckpt after training
+  2026-06-04 ~XX:XX  — TODO: verdict + paper-strategy decision
+================================================================================

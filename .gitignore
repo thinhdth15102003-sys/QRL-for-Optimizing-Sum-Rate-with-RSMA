@@ -33,3 +33,6 @@ results/claude_inbox.jsonl
 *.log
 .DS_Store
 Thumbs.db
+results/Training-Case 2/
+params_*_backup.py
+results/phase_b_feasibility_*.txt

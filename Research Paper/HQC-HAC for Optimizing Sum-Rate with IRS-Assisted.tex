@@ -1104,14 +1104,8 @@ Autoencoder loss weight $\alpha_{AE}$ & $0.5$ & & \\
 
 
 
-
-
-
 \section{Discussion}
 \label{sec:discussion}
-
-
-
 
 
 
@@ -1121,5 +1115,119 @@ Autoencoder loss weight $\alpha_{AE}$ & $0.5$ & & \\
 
 \bibliographystyle{IEEEtran}
 \bibliography{reference}
+
+% ============================================================================
+% ||  [CLAUDE SCAFFOLD - ABLATION OUTLINE]  (supplementary; after references) ||
+% ||  Style after Jerbi et al. 2021. Fill TODO/[.]; delete banner when done. ||
+% ============================================================================
+\appendices
+\section{Ablation Study}
+\label{sec:ablation}
+
+Having established the end-to-end performance of HQC-HAC in Section~\ref{sec:results}, we now isolate the contribution of each design choice. Following the methodology of Jerbi \emph{et al.}~\cite{jerbi2021parametrized}, every ablation pairs a formal \emph{hypothesis} with a controlled experiment in which a \emph{single} component is altered while all remaining settings of Table~\ref{tab:hyper} are held fixed; where it sharpens the claim, the hypothesis is accompanied by a short theoretical justification. Unless stated otherwise, each learning curve aggregates $N_{\mathrm{seed}}$ independent seeds and is reported as a mean with a shaded $\pm1$ standard-deviation band. % TODO(author): set N_seed (Jerbi uses 20).
+
+% ---- Two shared results referenced by several ablations -------------------
+\noindent\textbf{Lemma~1 (Hierarchical policy-gradient factorization).}
+\emph{Let the joint policy factorize along the sequential chain as
+$\pi_{\boldsymbol{\Theta}}(\mathbf{a}_t|\mathbf{s}_t)=\pi_q(\boldsymbol{\varphi}|\mathbf{s}_t)\,\pi_{\mathrm{ph}}(\boldsymbol{\Phi}|\mathbf{s}_t,\boldsymbol{\varphi})\,\pi_{w}(\mathbf{w}|\cdot)\,\pi_{C}(\mathbf{C}|\cdot)$. Then the policy gradient decomposes as a sum of per-actor terms sharing one advantage signal:}
+\begin{equation}
+  \nabla_{\boldsymbol{\Theta}}\mathcal{J}
+  = \mathbb{E}\!\Big[\textstyle\sum_{j\in\{q,\mathrm{ph},w,C\}}\nabla_{\boldsymbol{\Theta}_j}\log\pi_j\,\hat{A}_t\Big].
+  \label{eq:hac_factor}
+\end{equation}
+\emph{Proof sketch.} Take $\log$ of the product factorization and differentiate; each $\boldsymbol{\Theta}_j$ appears in exactly one factor, so $\nabla_{\boldsymbol{\Theta}_j}\log\pi=\nabla_{\boldsymbol{\Theta}_j}\log\pi_j$. Substituting into the score-function estimator with the shared critic baseline $\hat{A}_t$ gives~\eqref{eq:hac_factor}.\hfill$\square$
+
+\noindent\textbf{Lemma~2 (Re-uploading expressivity).}
+\emph{A data re-uploading VQC of depth $L$ with encoding scales $\boldsymbol{\lambda}$ realizes a truncated Fourier series in the latent input, $\hat{o}(\mathbf{z})=\sum_{\boldsymbol{\omega}\in\Omega}c_{\boldsymbol{\omega}}\,e^{i\boldsymbol{\omega}^{\!\top}\!\boldsymbol{\lambda}\odot\mathbf{z}}$, whose accessible frequency spectrum $\Omega$ grows with $L$ and is dilated by $\boldsymbol{\lambda}$.} % TODO(author): cite the Fourier/expressivity result (e.g. \cite{schuld2021effect}); add to reference.bib.
+This makes depth $L$ and the scales $\boldsymbol{\lambda}$ the two levers of VQC expressivity, and motivates Ablation~\ref{sec:abl_arch}.
+
+% ---- A1 : quantum vs classical actor (param-efficiency) -- maps to C2/C3 ----
+\subsubsection{Quantum vs.\ Classical Actor: Parameter Efficiency}
+\label{sec:abl_qvc}
+\noindent\textbf{Hypothesis~1.} \emph{The VQC assignment actor attains task performance comparable to a classical deep-network actor of identical role, using a parameter count that grows only linearly in the register size, whereas a classical block of matched expressivity grows super-linearly.}
+This is a claim of \emph{parameter efficiency}, not task superiority, consistent with the honest prior that PQC and DNN policies perform comparably on natural control tasks~\cite{jerbi2021parametrized}.
+
+\noindent\textbf{Proposition~1 (Quantum-block parameter count).}
+\emph{The VQC of Section~\ref{sec:vqc} has}
+\begin{equation}
+  |\boldsymbol{\theta}_{\mathrm{VQC}}|
+  = \underbrace{2 n_q L}_{R_y,R_z\ \mathrm{per\ layer}}
+  + \underbrace{2 n_q}_{\boldsymbol{\lambda}_y,\boldsymbol{\lambda}_z}
+  = 2 n_q (L{+}1) = \mathcal{O}(n_q L),
+  \label{eq:vqc_params}
+\end{equation}
+\emph{linear in $n_q$ for fixed depth (the $H$, CZ gates are parameter-free), whereas a classical block of matched I/O $(2n_q\!\to\!N_Q)$ and hidden width $d_h$ uses $\mathcal{O}(d_h(2n_q{+}N_Q))$ parameters.}
+\emph{Proof.} Direct gate count.\hfill$\square$
+
+\noindent\textbf{Setup.} Replace the VQC block (encoder$\to$readout $\hat{\mathbf{o}}_t$) by a classical MLP of identical input $\mathbf{z}_t$ and output $N_Q$, leaving AE, head $\xi$, sub-actors, and critic unchanged. Compare under: \emph{(i)} iso-parameter (matched $|\boldsymbol{\theta}|$), \emph{(ii)} iso-performance (matched final sum-rate, compare $|\boldsymbol{\theta}|$); plus a scaling curve $|\boldsymbol{\theta}|$ vs.\ $K$ across Cases. % cf. Jerbi App. E.3.
+\noindent\textbf{Observations.}
+\begin{itemize}
+  \item % TODO(author): VQC matches classical final sum-rate within [X]% at [Y]x fewer params (Fig.~[ref]).
+  \item % TODO(author): parameter gap widens with K (scaling Fig.~[ref]); state the iso-perf ratio.
+\end{itemize}
+
+% ---- A2 : autoencoder latent compression -- maps to C3 --------------------
+\subsubsection{Autoencoder Latent Compression}
+\label{sec:abl_ae}
+\noindent\textbf{Hypothesis~2.} \emph{The AE compresses the high-dimensional state into a latent $\mathbf{z}_t\in\mathbb{R}^{2n_q}$ that retains the assignment-relevant information, so that (a) compression is necessary to fit the state into the $n_q$-qubit register, and (b) the compressed latent suffices for near-optimal assignment.}
+\noindent\textbf{Setup.} Vary the latent width $2n_q$ (hence register size); compare (i) AE vs.\ a fixed linear/PCA projection of equal width, (ii) end-to-end-trained AE vs.\ reconstruction-only AE. Metric: sum-rate and assignment quality vs.\ $2n_q$.
+\noindent\textbf{Observations.}
+\begin{itemize}
+  \item % TODO(author): performance saturates at latent width [.]; below it, assignment degrades (info bottleneck).
+  \item % TODO(author): task-trained AE > PCA of equal width (latent is task-shaped, not merely variance-preserving).
+\end{itemize}
+
+% ---- A3 : hierarchical vs flat policy -- maps to C2 ----------------------
+\subsubsection{Hierarchical Decomposition vs.\ Flat Policy}
+\label{sec:abl_hier}
+\noindent\textbf{Hypothesis~3.} \emph{Exploiting the sequential dependency via the hierarchical factorization of Lemma~1 outperforms a flat joint policy over the coupled action space $(M{+}1)^K\!\times$(continuous), whose un-factored credit assignment scales poorly.}
+\noindent\textbf{Setup.} Replace the four-actor hierarchy by a single flat actor emitting all of $(\boldsymbol{\varphi},\boldsymbol{\Phi},\mathbf{w},\mathbf{C})$ jointly (matched total parameters), trained by the same PPO objective~\eqref{eq:objective}. Metric: sum-rate, QoS, and convergence speed.
+\noindent\textbf{Observations.}
+\begin{itemize}
+  \item % TODO(author): hierarchy converges faster / higher than flat by [.]; gap grows with K,M.
+  \item % TODO(author): per-actor credit (Lemma 1) vs. flat credit dilution — cite/observe.
+\end{itemize}
+
+% ---- A4 : VQC architectural choices (depth, lambda, entanglement, readout) --
+% ---- THE Jerbi-style core ablation; maps to A5/A6/A7 and C2/C3 ------------
+\subsubsection{VQC Architectural Choices}
+\label{sec:abl_arch}
+By Lemma~2, depth $L$ and the encoding scales $\boldsymbol{\lambda}$ control expressivity; we further probe the problem-specific entangling bridges and the readout. We modify one choice at a time against the reference configuration of Table~\ref{tab:hyper}.
+
+\noindent\textbf{Hypothesis~4a (depth).} \emph{Increasing $L$ improves performance up to saturation} (Lemma~2: the Fourier spectrum widens with $L$).
+\noindent\textbf{Hypothesis~4b (entangling bridges).} \emph{The $M$ cross-block CZ bridges of Section~\ref{sec:vqc}, which couple the user- and IRS-qubit registers, are necessary to model the user--IRS affinity; a nearest-neighbor chain alone underperforms.}
+\noindent\textbf{Hypothesis~4c (encoding scales --- honest contrast).} \emph{In contrast to the general benefit of trainable scales reported in~\cite{jerbi2021parametrized}, the assignment objective in our task is near-invariant to a global rescaling of $\boldsymbol{\lambda}$, so a fixed (non-trainable) feature map incurs negligible loss.}
+
+\noindent\textbf{Proposition~2 ($\boldsymbol{\lambda}$-invariance, empirical).}
+\emph{Let $r_{\mathrm{greedy}}(s;c\boldsymbol{\lambda})$ be the greedy-assignment reward under encoding scales scaled by a global gain $c$. In our task,}
+\begin{equation}
+  \Delta(c)\;=\;\big|\,\mathbb{E}_s\!\left[r_{\mathrm{greedy}}(s;c\boldsymbol{\lambda})-r_{\mathrm{greedy}}(s;\boldsymbol{\lambda})\right]\big|\;\approx\;0,
+  \quad c\in[c_{\min},c_{\max}],
+  \label{eq:lambda_inv}
+\end{equation}
+\emph{i.e.\ the assignment landscape is flat along the $\boldsymbol{\lambda}$ direction, so the encoding behaves as a fixed feature map.} % Established empirically by the lambda-landscape sweep; TODO(author): report c-range and Delta values (Fig./Table).
+
+\noindent\textbf{Setup.} Sweep $L\in[.]$; toggle the cross-block bridges on/off; toggle $\boldsymbol{\lambda}$ trainable/frozen and sweep the gain $c$ in~\eqref{eq:lambda_inv}; vary the readout (single-$Z$ vs.\ $Z\!+\!ZZ$ of~\eqref{eq:observables}). One knob at a time.
+\noindent\textbf{Observations.}
+\begin{itemize}
+  \item % TODO(author): depth helps up to L=[.], then saturates (Lemma 2).
+  \item % TODO(author): removing bridges drops sum-rate by [.] -> user--IRS coupling unrepresentable by chain alone (H4b).
+  \item % TODO(author): frozen-lambda within [.]% of trainable (H4c, Prop. 2) -> trainable scales are a removable degree of freedom HERE; honest, task-dependent contrast to Jerbi.
+  \item % TODO(author): Z+ZZ readout > single-Z (pairwise correlations expose the coupling).
+\end{itemize}
+
+% ---- A5 : entropy regularization & annealing -- maps to C2 ----------------
+\subsubsection{Entropy Regularization and Annealing}
+\label{sec:abl_entropy}
+\noindent\textbf{Hypothesis~5.} \emph{The annealed entropy bonus of~\eqref{eq:objective} is necessary to explore the combinatorial assignment space: a fixed-low $\beta$ converges prematurely, a fixed-high $\beta$ fails to exploit, and the $\beta_0\!\to\!\beta_{\min}$ schedule dominates both.}
+The entropy gradient $\nabla H(\pi_j)=-\nabla\!\sum\pi_j(1{+}\log\pi_j)$ pushes each actor toward uniform exploration with strength $\beta$, mirroring the ``trainable greediness'' role of the inverse temperature in softmax-PQC policies~\cite{jerbi2021parametrized}.
+\noindent\textbf{Setup.} Compare fixed-low, fixed-high, and annealed $\beta$ (reference); report exploration proxies (assignment entropy, IRS-usage) alongside sum-rate.
+\noindent\textbf{Observations.}
+\begin{itemize}
+  \item % TODO(author): annealed > both fixed; fixed-high stalls, fixed-low collapses early (cf. Jerbi fixed-beta result).
+\end{itemize}
+% ============================================================================
+% ||  [END CLAUDE SCAFFOLD - ABLATION OUTLINE]                               ||
+% ============================================================================
 
 \end{document}

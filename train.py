@@ -402,6 +402,103 @@ def _warmup_critic(env, actor, critic, phase_net, power_net, ck_net,
     }
 
 
+def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
+                  n_episodes: int, n_epochs: int) -> dict:
+    """
+    EXP-3 supervised PhaseMLP pretrain on closed-form ORACLE phase targets.
+
+    Channel model (CSI/rate.py): h_irs[m,k] = β·conj(g_SR[m])·(Σ_n e^{jφ_n})·g_RU[m,k].
+    With all N elements sharing one index, eff_phi = N·exp(jθ_m) — optimal combining
+    reduces the search space to L=4 indices per IRS. The closed-form oracle is then
+    just the index whose θ aligns IRS reflection with the direct-link g_SU at the
+    dominant routed user; see analysis/phase_oracle.oracle_phase_idx.
+
+    Empirical headroom @ result_14 ep_00700: live PhaseMLP 41% alignment vs oracle
+    100%, per-IRS index match 26% ≈ random 1/L → PhaseMLP elements-mostly-agree but
+    picks WRONG-of-4 index ~75% of the time. Supervised warmup teaches that pick.
+
+    Procedure: roll the (frozen) current actor for n_episodes, collect (s_phase,
+    oracle_idx) tuples for each active IRS, then fit PhaseMLP via cross-entropy
+    for n_epochs over the buffer (re-uses compute_grads_batch with eff_adv=+1 →
+    equivalent to -log π(oracle|s) loss). Actor/Power/Ck are NOT touched.
+
+    Run BEFORE critic warmup (so the critic fits returns under a warmer phase).
+    """
+    from analysis.phase_oracle import oracle_phase_idx
+
+    buf: list = []
+    rng = np.random.default_rng(args.seed + 91919)
+
+    # ── Stage 1: rollout to collect supervised (s_phase, oracle_idx) tuples ──
+    for _ep in range(n_episodes):
+        obs = env.reset()
+        for _step in range(args.steps):
+            blocked = _compute_blocked(env)
+            s_t = actor.extract_state(obs, demand, blocked)
+            phi, _, info = actor.forward(s_t)               # frozen-actor sample
+            z_t = info['z_t']
+            active_irs = _get_active_irs(phi)
+            s_phase = _build_phase_state(env.channels, phi, cfg, z_t)
+            target_idx = oracle_phase_idx(env.channels, phi, cfg)   # (M, N) int
+
+            if active_irs.size > 0:
+                buf.append({
+                    's_phase':   s_phase.copy(),
+                    'phi':       phi.copy(),
+                    'phase_idx': target_idx.copy(),
+                })
+            # Advance mobility without applying an env.step (cheap; we don't
+            # need rewards). Mirrors analysis/probe_phase_quality._advance.
+            env.user_pos = env._walk_users(env.user_pos)
+            env.channels = env.channel_model.update_user_channels(
+                env.user_pos, env.irs_pos, env.channels)
+            obs = env._get_obs()
+
+    n_buf = len(buf)
+    if n_buf == 0:
+        return {'n_samples': 0, 'ce_initial': float('nan'),
+                'ce_final': float('nan'), 'match_initial': 0.0, 'match_final': 0.0}
+
+    # ── Metric: per-IRS index match (live argmax == oracle) before training ──
+    def _eval_match(active_buf):
+        n_pair = 0; n_match = 0; ce_sum = 0.0
+        for tr in active_buf:
+            active_irs = _get_active_irs(tr['phi'])
+            for m in active_irs:
+                # forward single IRS to get its categorical
+                idx_live, _, probs = phase_net._forward_irs(tr['s_phase'][m], greedy=True)
+                tgt = tr['phase_idx'][m]                    # (N,) all-equal
+                n_match += int(idx_live[0] == tgt[0])
+                n_pair  += 1
+                ce_sum  -= float(np.log(probs[0, tgt[0]] + 1e-10))
+        return ce_sum / max(1, n_pair), 100.0 * n_match / max(1, n_pair)
+
+    ce_init, match_init = _eval_match(buf)
+
+    # ── Stage 2: supervised CE epochs (reuse compute_grads_batch w/ eff_adv=+1) ──
+    bs = P.batch_size
+    idx_arr = np.arange(n_buf)
+    eff_one = np.ones(bs, dtype=float)
+    for _epoch in range(n_epochs):
+        rng.shuffle(idx_arr)
+        for start in range(0, n_buf, bs):
+            mb = idx_arr[start:start + bs]
+            batch = [buf[i] for i in mb]
+            eff_b = eff_one if len(mb) == bs else np.ones(len(mb), dtype=float)
+            _, _, grads = phase_net.compute_grads_batch(batch, eff_b, beta_entropy=0.0)
+            if grads:
+                phase_net.apply_grads(grads)
+
+    ce_final, match_final = _eval_match(buf)
+    return {
+        'n_samples':     n_buf,
+        'ce_initial':    float(ce_init),
+        'ce_final':      float(ce_final),
+        'match_initial': float(match_init),
+        'match_final':   float(match_final),
+    }
+
+
 def _divergence_signals(d: dict, gnorm_ema: dict) -> list:
     """Triggered divergence signals. Gradients are clipped before apply, so a
     large pre-clip norm is normal — we flag a sudden SPIKE vs its EMA, not the
@@ -814,7 +911,14 @@ def _build_components(args):
     Called before the log file is opened so that hyperparameters.json
     can be written first.
     """
-    cfg = make_config()
+    cfg_overrides = {}
+    if getattr(args, 'D_k', None) is not None:
+        cfg_overrides['D_k_bps_hz'] = float(args.D_k)
+    if getattr(args, 'R_LoS_km', None) is not None:
+        cfg_overrides['R_LoS_km'] = float(args.R_LoS_km)
+    cfg = make_config(**cfg_overrides)
+    if cfg_overrides:
+        print(f"  ⚠ CFG OVERRIDE: {cfg_overrides}  (D_k_HYPOTHESIS test)")
     env = ISTNEnv(cfg=cfg, seed=args.seed, n_steps_ep=args.steps,
                   reward_noise_avg=getattr(P, 'reward_noise_avg', 1))
 
@@ -1082,6 +1186,9 @@ def _train_body(args, run_dir: str, run_id: int,
             print(f"    (AE pre-training skipped; critic V(s) warm-started from resume dir)")
         else:
             print(f"    (AE pre-training skipped; no saved critic found → critic re-initialised)")
+    if getattr(args, 'freeze_phase', False):
+        print(f"  ❄ EXP-1 FREEZE-PHASE: PhaseMLP params FROZEN (grad apply skipped). "
+              f"Assignment trains vs stationary phase → watch IRS-share catch up to oracle (F2 test).")
     if (P.ae_pretrain_epochs > 0 and not getattr(args, 'no_pretrain', False)
             and not getattr(args, 'resume', None)):
         print(f"  Pre-training AE encoder/decoder for {P.ae_pretrain_epochs} steps …")
@@ -1098,6 +1205,40 @@ def _train_body(args, run_dir: str, run_id: int,
                 print(f"    [{pre_step+1:>4}/{P.ae_pretrain_epochs}]  L_ae = {avg:.4f}")
         print(f"  AE pre-training complete  "
               f"(final L_ae ≈ {float(np.mean(pre_loss_log[-20:])):.4f})")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # EXP-3 Phase warmup (supervised PhaseMLP pretrain on closed-form oracle)
+    # ════════════════════════════════════════════════════════════════════════
+    # Closes the +59pp live→oracle alignment gap observed @ result_14 ep_00700.
+    # Runs BEFORE critic warmup so the critic fits returns under a warmer phase.
+    # Composable with --freeze-phase: warmup runs first (trains PhaseMLP), then
+    # freeze-phase takes effect during PPO (prevents PPO from eroding the warmup
+    # alignment — see V3 verdict result_15 in docs/Training-Case-2.txt where PPO
+    # decayed initial +0.028 reward boost back to -0.029 over 400ep).
+    if getattr(args, 'phase_warmup', False):
+        pw_eps    = int(getattr(args, 'phase_warmup_episodes', 8))
+        pw_epochs = int(getattr(args, 'phase_warmup_epochs', 30))
+        compose_note = (" + ❄ FREEZE during PPO (EXP-3c: prevent PPO erosion of warmup)"
+                        if getattr(args, 'freeze_phase', False) else "")
+        print(f"  🌡 EXP-3 PHASE WARMUP: {pw_eps} rollout ep × {pw_epochs} CE epochs "
+              f"on oracle_phase_idx targets (actors frozen){compose_note} …")
+        _pw = _warmup_phase(env, actor, phase_net, cfg, args, demand,
+                            pw_eps, pw_epochs)
+        if _pw['n_samples'] > 0:
+            print(f"    phase warmup done: N={_pw['n_samples']}  "
+                  f"CE μ={_pw['ce_initial']:.3f}→{_pw['ce_final']:.3f}  "
+                  f"per-IRS match {_pw['match_initial']:.1f}%→{_pw['match_final']:.1f}%")
+        else:
+            print(f"    phase warmup skipped: no active-IRS rollout instances "
+                  f"(assignment routed everyone to direct)")
+        # Dump immediate post-warmup ckpt for clean attribution of warmup vs PPO damage.
+        # Per result_15 V3 analysis (probe_assignment_decomp ckpt sweep), oracle ceiling
+        # dropped -0.088 between r11 baseline and r15 ep_00100 — but ep_00100 is post
+        # 100 PPO ep, so warmup vs PPO contribution unclear. This ckpt enables clean
+        # ablation: probe ep_00000 = pure warmup effect (no PPO yet).
+        _ep00000 = os.path.join(run_dir, 'checkpoints', 'ep_00000')
+        _save_agents(_ep00000, actor, phase_net, power_net, ck_net, cfg, critic)
+        print(f"    ⭐ post-warmup ckpt dumped → {_ep00000} (probe with probe_assignment_decomp.py)")
 
     # ── Critic warm-up (resume only): fit V(s) to the resumed policy ──────────
     # Calibrates the value scale before PPO so advantages are meaningful from
@@ -1278,6 +1419,21 @@ def _train_body(args, run_dir: str, run_id: int,
                 'blocked_n':       int(np.sum(env.channels['su_blocked'])),
                 'sigma2':          float(env_info.get('sigma2', np.nan)),
             })
+
+            # ── EXP-2 IRS-routing bonus (default OFF) ─────────────────────────
+            # Reward shaping to clean credit signal for IRS-routed users — fights F2
+            # non-stationarity by giving assignment an explicit reinforcement signal
+            # for routing through IRS (counter to the natural risk-avoidance of
+            # high-variance IRS channels). Default 0.0 = OFF (no behaviour change).
+            # Anneal: full bonus for first 20% of training, linear decay to 0 by 60%.
+            # USE when EXP-3 verdict is (3) EXECUTION PROBLEM (oracle has room but
+            # policy can't extract it).
+            _irs_bonus_w = float(getattr(args, 'irs_bonus', 0.0))
+            if _irs_bonus_w > 0.0:
+                _bonus_frac = max(0.0, min(1.0,
+                                  1.0 - (ep - 0.2 * args.episodes) / (0.4 * args.episodes)))
+                _n_irs = int(np.sum(phi > 0))
+                reward = reward + _irs_bonus_w * _bonus_frac * _n_irs
 
             ep_reward += reward
             ep_o_norm.append(float(np.linalg.norm(actor_info['o_hat'])))
@@ -1467,7 +1623,8 @@ def _train_body(args, run_dir: str, run_id: int,
 
                 # Apply
                 actor.apply_grads(g_ae_acc, g_qc_acc, g_xi_acc)
-                phase_net.apply_grads(g_phase_acc)
+                if not getattr(args, 'freeze_phase', False):   # EXP-1: freeze-phase skips this
+                    phase_net.apply_grads(g_phase_acc)
                 power_net.apply_grads(g_power_acc)
                 ck_net.apply_grads(g_ck_acc)
                 critic.apply_grads(g_critic_acc)
@@ -1756,6 +1913,34 @@ def _parse_args() -> argparse.Namespace:
                         help='Path to an agents/ dir to load the 4 actors from and continue '
                              'training (curriculum transfer; critic re-init). E.g. '
                              'results/result_2/best/agents')
+    parser.add_argument('--freeze-phase', dest='freeze_phase', action='store_true',
+                        help='EXPERIMENT-1: freeze PhaseMLP params (skip its grad apply) so the '
+                             'assignment head trains against a STATIONARY phase. Diagnostic for '
+                             'F2 non-stationarity: does IRS-share catch up to oracle when phase '
+                             'stops moving? Use with --resume from a trained ckpt.')
+    parser.add_argument('--phase-warmup', dest='phase_warmup', action='store_true',
+                        help='EXPERIMENT-3: supervised PhaseMLP pretrain on closed-form oracle '
+                             '(analysis/phase_oracle.oracle_phase_idx) BEFORE PPO begins. Closes '
+                             'the +59pp live->oracle alignment gap observed at r14 ep_00700 '
+                             '(per-IRS index match 26%%, ~= random 1/L -> PhaseMLP picks wrong-of-4 '
+                             'index ~75%% of the time). Reduces F2 init bias for assignment training.')
+    parser.add_argument('--phase-warmup-episodes', dest='phase_warmup_episodes', type=int, default=8,
+                        help='Rollout episodes to collect (s_phase, oracle_idx) supervised buffer.')
+    parser.add_argument('--phase-warmup-epochs', dest='phase_warmup_epochs', type=int, default=30,
+                        help='Supervised CE epochs over the warmup buffer (PPO batch size).')
+    parser.add_argument('--irs-bonus', dest='irs_bonus', type=float, default=0.0,
+                        help='EXP-2: reward shaping bonus per IRS-routed user. Annealed from '
+                             'full at ep=0.2*N_eps to 0 at ep=0.6*N_eps. Default 0.0 = OFF. '
+                             'Use when EXP-3 verdict = execution problem (oracle has room but '
+                             'policy cannot extract). Suggested first try: 0.05 (mild).')
+    parser.add_argument('--D-k', dest='D_k', type=float, default=None,
+                        help='Override per-user QoS demand D_k (bps/Hz). Default = params.py value '
+                             '(0.10). D_k_HYPOTHESIS test: 0.15 creates regime where Direct-only '
+                             'still solves with equal power but smart RSMA+IRS allocation needed.')
+    parser.add_argument('--R-LoS', dest='R_LoS_km', type=float, default=None,
+                        help='Override satellite LoS coverage radius R_LoS (km). Default = params.py '
+                             'value (0.2). Curriculum ramps: 0.2 → 0.3 → 0.4 → 0.5 progressively '
+                             'increasing blockage. Use with --resume for ramp transition.')
     return parser.parse_args()
 
 

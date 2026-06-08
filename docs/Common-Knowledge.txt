@@ -9,7 +9,11 @@
                                  power-probe (C2 r8); +code-clean gỡ TD/target-net (PopArt+GAE-return only);
                                  +stable-capped-caveat + [B-2d] DRIFT-ATTRIBUTION timeline (C2 r8 drift ep1068→1404);
                                  2026-06-02: [E] frozen-λ ROOT=directionless-gradient (not noise/LN) + smoke-r-unreliable
-                                 + λ≠cause-of-PhaseMLP-idle + E-fix0/1/2 + probe-set/STEP3.5 (phase_quality probe))
+                                 + λ≠cause-of-PhaseMLP-idle + E-fix0/1/2 + probe-set/STEP3.5 (phase_quality probe);
+                                 2026-06-03: [E] CAVEAT GỠ — H3 confirmed on arch-2 LINEAR head (still flat) → CHỐT E-fix2, đóng λ-question;
+                                 2026-06-03: [B] CEILING-DEFINITION CAVEAT (full-state vs s_t-oracle 0.59; dead-units+repr BÁC; critic gần trần thực dụng);
+                                 2026-06-03: Part5#8 PRIORITY ĐỔI — SUM-RATE trước QoS (sum-rate=objective C1, QoS=constraint, trade qua λ_D ramp sau);
+                                 2026-06-03: [I-3] λ_D PHẢI TĂNG theo ramp (curriculum rule, asymmetric risk, probe_wc_optimality evidence))
 --------------------------------------------------------------------------------
   CÁCH DÙNG BỘ FILE NÀY:
    - Common-Knowledge.txt (file này): cơ chế mô hình, bảng tra lỗi, tín hiệu chẩn đoán,
@@ -135,6 +139,27 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
           unstable-WOBBLE (std cao + dip xuống âm). Trần aleatoric tuỳ policy-stochasticity + env noise
           (Tier-1 probe đo). → đọc std + min + có-dip-âm-không, KHÔNG chỉ mean. Stable-capped = ĐỦ TỐT
           để tiến (đừng đào critic mãi khi nó chỉ "capped" chứ không "loạn").
+          ⚠⚠ CEILING-DEFINITION CAVEAT (general, 2026-06-03 — sửa hiểu nhầm tồn tại từ r5/6): Tier-1 probe
+          (probe_critic_ceiling / temp-sweep) tính ceiling bằng SNAPSHOT env rồi replay → điều kiện trên
+          TOÀN BỘ env-state (channels+positions+blockage), KHÔNG phải trên s_t critic THẤY. → ceiling Tier-1
+          (~0.81 trained) = FULL-STATE upper bound; critic-nhìn-s_t KHÔNG đạt được nếu s_t lossy. TRẦN
+          s_t-THẬT = OFFLINE ORACLE-FIT CÙNG policy. → "stable-capped = at aleatoric ceiling" PHẢI so
+          explVar với s_t-ORACLE (cùng policy), KHÔNG so full-state probe ceiling.
+          ✅ ĐÃ ĐO (probe_critic_repr_ablation, result_11 ep300 TRAINED policy, clean-MC, noise16, 2026-06-03):
+          s_t-oracle (fresh, arch 512x256x128x64) = 0.59 ·  full-state ceiling = 0.82  ·  live ~0.40-0.45.
+          ⭐ KẾT LUẬN (cả 2 giả thuyết BỊ BÁC):
+            – DEAD-UNITS/capacity ❌ BÁC: fresh oracle CÙNG arch đạt 0.59 → capacity/dead-unit KHÔNG phải giới hạn.
+            – REPRESENTATION (richer input) ❌ KHÔNG phải lever sạch: thêm |g|,∠g (V2/V3) ≈ base 0.59 hoặc thấp
+              hơn (channels REDUNDANT với s_t — s_t vốn DERIVED từ |channel|; phase thêm ~0); +blockage/+full
+              (V1 0.31/V4 0.05) RỚT = overfit/optim-instability (same arch+epochs+6k), KHÔNG phải info vô dụng.
+              Gap 0.59→0.82 nằm ở per-element channel detail (M×N×K) mà obs ĐÃ aggregate đi → KHÔNG thực tế để feed.
+            – Residual live(0.40-0.45)→s_t-oracle(0.59) ~0.15 = TRAINING-DYNAMICS (online PPO+GAE+non-stationarity
+              vs offline clean-MSE), KHÔNG phải arch/repr. Lever = critic-side training (epochs/warmup/refit), payoff modest.
+          → critic Ở GẦN TRẦN s_t THỰC DỤNG (~0.59). KHÔNG có lever arch/repr giá trị cao. Judge critic vs ~0.59
+            (KHÔNG vs 0.82). "stable-capped 0.45 = aleatoric" hơi PESSIMISTIC: trần s_t là 0.59, residual là dynamics.
+          ⚠ LESSON: ĐỪNG so oracle RANDOM-policy (0.376) với ceiling TRAINED-policy (0.81) = lệch POLICY (đã sửa:
+            trained s_t-oracle thật = 0.59, không phải 0.376). ⚠ Auto-verdict của 2 probe (temp-sweep "close",
+            repr-ablation "≈ live") THRESHOLD LỎNG → đọc số thủ công, đừng tin dòng verdict tự động.
           ⚠ STABLE-CAPPED CAVEAT (general, Case2 result_8 drift): "stable-capped" chỉ chứng minh critic
           ỔN trong CỬA SỔ ĐO (vd post-anneal ep400-700). Run DÀI HƠN có thể drift muộn: critic destabilize
           sau ep1000+ (explVar dip âm) → advantage nhiễu → actor head trôi degenerate. → mean<0.5 dù
@@ -217,6 +242,16 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     → ⭐ H3: λ-frozen HARMLESS, λ ít ảnh hưởng → KHÔNG cần fix (E-fix2). ⚠ CAVEAT: MLP head capacity cao
     có thể HẤP THỤ λ-variation → λ trông irrelevant. PHẢI re-run trên arch-2 (SoftmaxPQC LINEAR head):
     nếu vẫn phẳng → frozen-λ thật harmless. → ƯU TIÊN chạy discriminator TRƯỚC khi đầu tư bất kỳ λ-fix.
+    ✅✅ CAVEAT ĐÃ GỠ (result_11 arch-2 ep_300, SoftmaxPQC LINEAR head softmax_head=true/r1, 2026-06-03):
+    re-run discriminator → VẪN PHẲNG (Test A ×0.1→×3.0 reward 1.51→1.53, Δ(best−init)=+0.00; Test B
+    per-state gap=+0.03≈0; Test C corr blockage 0.00). Head LINEAR KHÔNG hấp thụ được λ-variation mà
+    landscape VẪN phẳng → H3 CONFIRMED DỨT KHOÁT: frozen-λ GENUINELY HARMLESS. → CHỐT E-fix2 (chấp nhận
+    λ fixed feature-map, có thể freeze hẳn khỏi optimizer). ĐÓNG câu hỏi λ-frozen — KHÔNG xây E-fix1 /
+    bất kỳ λ-lever nào nữa. (Probe vẫn IN dòng CAVEAT mặc định — đọc actor_config.json xác nhận
+    softmax_head=true/r1 trước khi tin verdict; ckpt này đã xác nhận. "⭐ large→H1" cạnh gap=+0.03 chỉ là
+    annotation threshold thô — verdict tích hợp A+B kết luận H3; +0.03 trên reward~1.5 = 2% = negligible.)
+    ⭐ INSIGHT PUBLISHABLE: frozen quantum encoding ở đây = HARMLESS (λ ít ảnh hưởng task), KHÔNG phải
+    bệnh lý barren-plateau. Củng cố honest-prior PQC≈DNN + param-eff (λ fixed = literature-consistent).
     ⚠ SMOKE λgrad r KHÔNG ĐÁNG TIN: smoke 2-ep cho r=0.65 "should move" NHƯNG full run r=0.06 "frozen".
     Vì r = net/mag, net = |mean qua MINI-BATCHES của g_λ|: smoke ~6 mini-batch entries → ít cancel → net
     cao GIẢ TẠO; full rollout ~222 entries → cancel → net→0. → CHỈ đọc r ở FULL-BATCH (full rollout),
@@ -278,6 +313,57 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     QUY TẮC CALIBRATE λ_D: nhắm theo baseline TẦM THƯỜNG TỐT NHẤT (gồm cả Direct-only,
     KHÔNG chỉ All-IRS). Trivial-baseline ~100% QoS → giữ λ_D THẤP. Baseline thấp/khó →
     λ_D cao hơn. (result_1 Case 2: Direct-only=100% mà dùng λ_D=3.0 → critic mù, kẹt 54%.)
+    (I-4) ⭐⭐ λ_D=1.5 = SWEET SPOT cho ramp R_LoS=0.2 BASELINE (chốt 2026-06-08 sweet-spot search):
+          Evidence:
+            r11 Case 2 (λ=1.5 fresh): best 214 @ep1261, mild drift -52% from peak → STABLE
+            r3 Case 1 (λ=1.5 fresh): best 191 @ep552, modest drift to -123 → workable
+            r6 Case 2 (λ=1.5 fresh ongoing): climbing healthy
+            r1/r17 (λ=2.0 fresh): peak early then CATASTROPHIC drift -350% to -420% from peak
+            r2/r4 (λ_D bump on resume): LAMBDA-BUMP-COLLAPSE [K] catastrophic
+          RULE: ramp=0.2 fresh launch → λ_D=1.5 (BOTH Case 1 + Case 2 + Case 3).
+          Higher λ_D at R_LoS=0.2 → drift-prone equilibrium (too aggressive penalty before
+          QoS landscape hardens). Save λ_D≥2 cho ramp 0.3+ where Direct-only QoS drops below 95%.
+
+[K] LAMBDA-BUMP-COLLAPSE — bump λ_D mid-training on resume → cascade failure.
+    Symptoms (canonical r2 Case 1 λ 2→3 from r17/ep1000):
+      • Best reward drops to negative immediately after resume (-226 @ep11)
+      • Reward μ collapses rapidly: -500 → -1000 → -1200 within 200ep
+      • ent_ck → 0 (Ck head deterministic, top user gets ~100% common rate)
+      • ‖∇‖ck explodes pre-clip: 5000-90000 (clipped to 0.5)
+      • V̄ goes deep negative (-100 to -200) reflecting return scale shift
+      • KL_ck > 0.5 DIVERGENCE flag fires
+    Mechanism (5-step cascade):
+      1. λ_D bump shifts reward landscape, returns drop ~λ_D×qp magnitude immediately
+      2. Critic V at OLD scale → advantage = return - V huge negative magnitude
+      3. PPO grad ∝ advantage × (one_hot - π) on smallest-action-space head (CkMLP within-group)
+      4. Ck softmax collapses to one-hot deterministic (ent_ck=0, top user 96%+)
+      5. Once collapsed, saturated softmax keeps grad explosion compounding
+    Why CkMLP specifically (not q/pw/ph):
+      Ck within-group softmax has SMALLEST action space (group size ≤ K) → softmax landscape flat →
+      easiest to push to deterministic under advantage explosion.
+    KHẮC PHỤC: KHÔNG bump λ_D on resume. Always fresh restart cho λ_D changes.
+      Acceptable: graceful gradient λ_D over 200ep linear interp (untested, theoretical).
+      Acceptable: ramp R_LoS on resume (different mechanism, OK per r14 evidence).
+
+    (I-3) ⭐ λ_D PHẢI TĂNG KHI RAMP TĂNG — quy tắc curriculum, áp lực QoS scale theo độ khó.
+          Lý do gốc (chứng minh bằng probe_wc_optimality result_11 ep600 R_LoS=0.2 λ_D=1.5):
+          sum-rate-opt và λ_D-opt KHÁC NHAU (wc=0.80 vs 0.60). λ_D=1.5 đang ÉP wc xuống 0.60
+          để bảo vệ QoS = đúng cho ramp dễ này (Direct-only=100% → QoS slack, ép nhẹ là đủ).
+          Khi ramp lên (0.3, 0.5+): IRS THIẾT YẾU, QoS slack BIẾN MẤT, sum-rate-max bắt đầu
+          phải BỎ RƠI weak users để tối ưu R_tot. Nếu λ_D KHÔNG tăng theo → agent học bỏ user
+          (user-abandonment) → QoS sụp. Mà 1 khi học rồi RẤT KHÓ GỠ (= [B-2d] head trôi degenerate).
+          QUY TẮC RAMP TRANSITION:
+            • Trước mỗi resume sang ramp mới: chạy feasibility probe → đo Direct-only/All-IRS QoS.
+            • Direct-only ≥95% → λ_D thấp (1-2): QoS gần free, ép nhẹ.
+            • Direct-only 70-90% → λ_D trung (2-3): QoS bắt đầu cần lever.
+            • Direct-only <50% → λ_D cao (3-5): IRS thiết yếu, áp lực QoS phải binding.
+            • Direct-only <30% → kiểm Servable trước (có thể [I-1]: cần HẠ vì user bất khả thi).
+          ⚠ ASYMMETRIC RISK: λ_D thấp → "user abandonment" (khó gỡ); λ_D cao → "penalty-dom" ([I-2],
+          sửa được bằng critic warm-up). → khi DOUBT, ưu tiên λ_D HƠI CAO HƠN; nhưng KHÔNG vượt
+          calibrate-rule (tránh [I-2]). Đọc qp/step vs R̄: qp/step ≪ R̄ = an toàn nâng tiếp; qp/step ≫ R̄ = quá cao.
+          ⚠ EVIDENCE PHỤ (probe ep600): ΔR per-state shrink khi λ_D tăng (0.06 ở λ_D=0.5 → 0.04 ở
+          λ_D=1.5) → reward landscape sharper ở λ_D cao → policy ÍT cần per-state-adapt wc, càng ép
+          QoS càng đơn giản hóa choice. Củng cố "λ_D đủ cao = QoS bảo vệ + landscape gọn".
 
 [J] DIRECT-ATTRACTOR / IRS CHICKEN-AND-EGG — agent bỏ dần IRS, kẹt local optimum
     "all-direct"; phase head idle (đói data) → không học pha → IRS mãi tệ → càng tránh.
@@ -344,20 +430,30 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
      train từ đầu nhưng bake sẵn bài học.
   4. KHÔNG thêm độ sâu MLP broadly — hidden đã rộng; thêm = khó train = kém ổn định.
      Chỉ nới bề rộng lớp đầu của net có input theo K (xem Training-Case).
-  5. Re-tune λ_D qua feasibility probe ở MỖI R_LoS (đừng bê số cũ).
+  5. Re-tune λ_D qua feasibility probe ở MỖI R_LoS (đừng bê số cũ). ⭐ DEFAULT: λ_D PHẢI
+     TĂNG theo ramp (xem [I-3] — Direct-only QoS↓ ⇒ λ_D↑). User-abandonment khó gỡ hơn
+     penalty-dom → bias hơi cao thay vì hơi thấp khi doubt.
   6. 1 job GPU/lúc; dừng bằng Ctrl+C. Lấy best model theo QoS từ checkpoints/.
   7. lr_decay_start & beta_entropy_anneal_end là % của --episodes → đổi episodes nhớ
      canh lại fraction.
   8. ⭐ THỨ TỰ ƯU TIÊN TỐI ƯU (khi bắt đầu ramp, đặc biệt R_LoS=0.2 — cũng là thứ tự ĐỌC
      KẾT QUẢ): CRITIC → PhaseMLP (học optimize IRS) → KHÔNG-IDLE (mọi head, đặc biệt các
-     agent SAU VQC: phase/power/ck) → QoS → SUM-RATE.
+     agent SAU VQC: phase/power/ck) → SUM-RATE → QoS.
+     (⭐ ĐỔI 2026-06-03: SUM-RATE giờ ĐỨNG TRƯỚC QoS — trước đây QoS→sum-rate.)
      LÝ DO: (a) critic mù → advantage nhiễu → MỌI ramp sau khó optimize → critic là gốc,
      fix TRƯỚC. (b) PhaseMLP phải học optimize IRS Ở RAMP DỄ (0.2, QoS còn slack); không
      học được ở đây thì ramp khó không bao giờ. (c) head idle (entropy phẳng ~max, không
-     hội tụ) = lãng phí capacity + chặn pipeline phía sau VQC. (d) QoS KHÔNG ép bằng tuning
-     ở 0.2 — trade-off bằng λ_D Ở MỖI RAMP SAU (per feasibility probe). (e) sum-rate là
-     đánh bóng cuối. → ĐỪNG nhảy xuống QoS/sum-rate khi critic/PhaseMLP/head chưa khỏe;
-     đo task-metric trên nền chưa ổn = vô nghĩa (xem [B-2b] lưu-ý QoS⊥critic).
+     hội tụ) = lãng phí capacity + chặn pipeline phía sau VQC.
+     (d) ⭐ SUM-RATE TRƯỚC QoS vì: sum-rate là objective PhaseMLP TRỰC TIẾP cải thiện (phase tốt
+     → effective channel tốt → rate↑) → gradient DÀY & ALIGNED với việc của PhaseMLP. QoS là metric
+     NGƯỠNG (đạt D_k hay không), bị POWER/assignment chi phối, KHÔNG thưởng cải thiện channel biên →
+     tín hiệu NGHÈO/sai cho PhaseMLP. Ở ramp dễ (0.2) Direct-only QoS=100% → QoS BÃO HÒA, vô tín hiệu
+     cho IRS; sum-rate vẫn thưởng dùng IRS. Khớp C1 (sum-rate = OBJECTIVE, QoS = CONSTRAINT).
+     (e) QoS = constraint, ÉP bằng λ_D Ở RAMP SAU (per feasibility probe) khi IRS/QoS trở nên BINDING.
+     ⚠ TIMING: ĐỪNG trade-in QoS QUÁ MUỘN — sum-rate-max kéo dài có thể bake-in USER-ABANDONMENT ([B-2d])
+     khó gỡ; tái áp λ_D Ở RAMP mà IRS bắt đầu CẦN THIẾT (users rớt khỏi tầm direct), đừng để policy khóa
+     vào thói bỏ user. → ĐỪNG nhảy xuống sum-rate/QoS khi critic/PhaseMLP/head chưa khỏe; đo task-metric
+     trên nền chưa ổn = vô nghĩa (xem [B-2b] lưu-ý QoS⊥critic).
 
 
 ================================================================================

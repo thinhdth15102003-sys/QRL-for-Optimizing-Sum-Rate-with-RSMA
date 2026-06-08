@@ -4,7 +4,10 @@
   Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
   File này: hyper ĐÃ DÙNG cho Case 1 theo từng ramp 0.2→0.5, + bài học thực tế
   (result_1→11) và "set thế này → ra sao".
-  Cập nhật lần cuối: 2026-05-29
+  Cập nhật lần cuối: 2026-06-08 (G4 nq=12 UNIFIED: Case 1 now nq=12 D_enc=2 W_proj 10→22 EXPANSION).
+                  Pre-2026-06-08: Case 1 had nq=8 (historical), see params_pre_unify_backup.py.
+                  result_17 (arch-2 Case 1 nq=8 retry @λ=2, ep_00935 oracle) — historical reference.
+                  Future Case 1 runs: K=5, M=1, nq=12, n_var_layers=2, n_hidden_ae=[32].
 --------------------------------------------------------------------------------
 
 # ── CẤU HÌNH CASE 1 (params.py ACTIVE CASE) ─────────────────────────────────
@@ -32,6 +35,14 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
 ================================================================================
 
 ── R_LoS = 0.2 ──────────────────────────────────────────────────────────────
+  ⭐⭐ SWEET SPOT λ_D = 1.5 (chốt 2026-06-08 từ sweet-spot search r1-r6 series):
+   - λ_D=1.5 fresh (Case 2 r11 baseline, Case 1 r5 ongoing): healthy climb, mild drift
+   - λ_D=2.0 fresh (r17, r1 Case 1+2): peak early then DRIFT -350% to -420% from peak
+   - λ_D=3.0 (resume + bump): LAMBDA-BUMP-COLLAPSE [K] catastrophic
+   → λ_D=1.5 = OPTIMAL starting point cho ramp=0.2 (both Case 1 + 2). KHÔNG dùng λ≥2.
+   → Per [I-3] curriculum rule: λ_D scale gently với R_LoS, nâng dần (gợi ý 1.5→1.8→2.2→2.6).
+   → KHÔNG bump λ mid-resume — gây cascade Ck collapse [K]. Fresh restart nếu cần λ change.
+
   Runs: result_1 (λ_D=2, orphan), result_3 (λ_D=3, GỐC chuỗi). [result_2 = debug 9ep, rác]
   λ_D: 3.  gae=0 (giai đoạn đầu, chưa biết bài học gae).
   Kết quả: result_3 dừng sớm ~ep500, QoS ~54% (đang lên thì dừng).
@@ -107,5 +118,19 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
   result_9  R_LoS0.45 λ_D4.5 gae0.9 ←r8/ep1000 → QoS93% ★★ (entropy-dominated)
   result_10 R_LoS0.45 λ_D4.5 gae0.9 β0.004 ←r9/ep400 → 88% (β đánh tụt) [thay bằng r11]
   result_11 R_LoS0.5  λ_D4.5 gae0.9 β0.001 ←r9/ep400 → ep254 QoS83% rồi GPU-hang; có ep_200
-  result___ ...
+  ── ARCH-2 RETRY (2026-06-05/06, fresh K=5 M=1 nq=8) ──
+  result_17 R_LoS0.2 λ_D=2 gae0.9 β0.001 + PopArt + R1readout + SoftmaxPQC + Δ1 fresh
+            → ep~935 RUNNING. Critic ⭐⭐ explVar+0.84 corr+0.92 (vs r1 blind = MAJOR arch win).
+            R_tot climbing 1.17→2.91 STRONG (vs r1@1447: 2.13), QoS 45→49% (rate-favoring equilibrium
+            vs r1's QoS-favoring; same reward objective, different Pareto point).
+            ⭐⭐⭐ IRS/K vs Blk/K BEHAVIORAL MILESTONE: ep~311 first crossover IRS>Blk; ep~700+
+            saturate IRS=Blk=60% (= multi-user beamforming gain learned, not just blockage compensation).
+            ⭐⭐⭐ probe_assignment_oracle ep_00900: POLICY = ORACLE REWARD OPTIMUM (Δ=−0.001).
+            Policy IRS% 60 = oracle-rew IRS% 60 (EXACT match). Oracle-Rtot wants 65% (+5pt) but
+            λ_D=2 penalty correctly suppresses extra IRS. A7 risk-seeking (corr+0.56) 100% picks
+            IRS when it helps regardless variance. A8 oracle-φ contribution only +0.005 → phase
+            essentially optimal. ARCH-2 SOLVES Case 1 by ep_00900.
+            CONTRAST: Case 2 (K=10 M=2, 3^10=59049 combinatorial) has +0.36 reward gap (F2 51%
+            + F4 49% per distill probe). → Hierarchical decomposition is SCALE-LIMITED.
+            Report: results/result_17/assignment_oracle_ep00900.txt.
 ================================================================================

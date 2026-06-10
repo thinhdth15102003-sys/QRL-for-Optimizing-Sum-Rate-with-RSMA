@@ -89,7 +89,7 @@ def _compute_blocked(env: ISTNEnv) -> np.ndarray:
 # Agent loading
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_training_cfg(run_dir: str):
+def load_training_cfg(run_dir: str, kappa=None, noise_var_dBW=None):
     """
     Build a SystemConfig that exactly matches the training-time topology.
 
@@ -97,6 +97,10 @@ def load_training_cfg(run_dir: str):
     N, quantization_bits, P_S_dBm, and D_k_bps_hz, then merges with remaining
     params.py defaults.  This ensures the env and agents are always consistent
     with the saved weights, regardless of what params.py currently says.
+
+    kappa / noise_var_dBW: optional TEST-TIME overrides for the R4 noise-robustness
+    sweep — evaluate a FIXED trained policy under elevated CSI error (kappa) or
+    receiver noise (noise_var_dBW) WITHOUT retraining (zero-shot robustness).
     """
     topo_path = os.path.join(run_dir, 'agents', 'training_config.json')
     if not os.path.isfile(topo_path):
@@ -105,7 +109,7 @@ def load_training_cfg(run_dir: str):
             "Re-train with the current train.py to generate it.")
     with open(topo_path) as f:
         t = json.load(f)
-    return make_config(
+    ov = dict(
         K=t['K'],
         M=t['M'],
         N=t['N'],
@@ -113,6 +117,9 @@ def load_training_cfg(run_dir: str):
         P_S_dBm=t['P_S_dBm'],
         D_k_bps_hz=t['D_k_bps_hz'],
     )
+    if kappa is not None:          ov['kappa']         = float(kappa)
+    if noise_var_dBW is not None:  ov['noise_var_dBW'] = float(noise_var_dBW)
+    return make_config(**ov)
 
 
 def load_agents(run_dir: str, seed: int = None):
@@ -235,10 +242,14 @@ def run_baseline_episode(env: ISTNEnv, policy, policy_name: str,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def evaluate(run_dir: str, n_episodes: int, seed: int,
-             greedy: bool, n_steps: int) -> dict:
+             greedy: bool, n_steps: int,
+             kappa=None, noise_var_dBW=None) -> dict:
 
     # Rebuild cfg from saved topology — guarantees K/M/N/bits match the weights.
-    cfg    = load_training_cfg(run_dir)
+    # kappa/noise_var_dBW = optional R4 test-time noise overrides (no retrain).
+    cfg    = load_training_cfg(run_dir, kappa=kappa, noise_var_dBW=noise_var_dBW)
+    if kappa is not None or noise_var_dBW is not None:
+        print(f"  ⚙ R4 noise override: kappa={cfg.kappa} noise_var_dBW={cfg.noise_var_dBW}")
     env    = ISTNEnv(cfg, seed=seed, n_steps_ep=n_steps)
     demand = np.full(cfg.K, cfg.D_k_bps_hz)
 
@@ -324,6 +335,12 @@ def _parse_args() -> argparse.Namespace:
                         help='Evaluation seed')
     parser.add_argument('--stochastic', action='store_true',
                         help='Use stochastic (sampled) policy instead of greedy')
+    parser.add_argument('--kappa', type=float, default=None,
+                        help='R4 test-time override: CSI error coefficient κ (default = training '
+                             'value 0.05). Sweep up (0.1/0.2/...) for noise-robustness eval (no retrain).')
+    parser.add_argument('--noise-var', dest='noise_var', type=float, default=None,
+                        help='R4 test-time override: receiver noise variance noise_var_dBW (default '
+                             '= training 10.0). Sweep up for SNR-robustness eval (no retrain).')
     return parser.parse_args()
 
 
@@ -335,4 +352,6 @@ if __name__ == '__main__':
         seed       = args.seed,
         greedy     = not args.stochastic,
         n_steps    = args.steps,
+        kappa         = args.kappa,
+        noise_var_dBW = args.noise_var,
     )

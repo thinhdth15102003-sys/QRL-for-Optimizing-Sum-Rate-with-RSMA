@@ -38,10 +38,181 @@
   result_16 (new) WRONG-LAUNCH | 1.5 | = | 16 | PopArt | 16 | = | = (NO warmup, NO freeze) | ⚠ ABORT recommendation @ep~107: resume từ r15/ep_00400 (BROKEN anchor) + vanilla PPO → PhaseMLP UNLEARNING (ph entropy 59.6→62.7, 90%→94% of max, RISING toward random), reward μ -209→-275, QoS 53→50% drift. Critic borderline wobble explVar mean ~0.30, structural functional. ⛔ NOT the EXP-3c design (--phase-warmup --freeze-phase missing). | KILL + relaunch correct EXP-3c từ r11/ep_01000 with both flags. r16 ckpt ep_00100 = no analytic value (vanilla continuation of broken state).
   result_18 EXP-3c WARMUP+FREEZE (R_LoS=0.2) | 1.5 | = | 16 | PopArt | 16 | = | = + --phase-warmup + --freeze-phase | RUNNING ep ~195/600 (launched 2026-06-05 ~15:10). Resume r11/ep_01000 (same anchor as r12, r15 = fair compare across EXP chain). ep_00000 auto-dumped post-warmup (pre-PPO clean attribution). | ⭐⭐ EARLY VERDICT @ep_00100/00200: ASSIGNMENT-QUALITY PRESERVATION CONFIRMED. live(R(q_pol,ORACLE_φ)) 1.447→1.447→1.447→1.465 (STABLE then +0.018, EXCEEDS r11 baseline 1.447 @ep200). Ceiling 1.765→1.645→1.676→1.700 (warmup dip +0.055 recovering through PPO). Compare r15 (warmup only): live 1.475→1.418 DECAY. r18 (+freeze): live 1.447→1.465 IMPROVE. Freeze BLOCKS PPO erosion mechanism. Caveats: live improvement modest (+0.018/200ep), reward μ in log declining (-135→-167) = power/Ck still struggling with frozen phase. Probes: decomp_ep00000.txt + decomp_freeze_trend.txt.
   result_15 EXP-3 PHASE-WARMUP (R_LoS=0.2) | 1.5 | = | 16 | PopArt | 16 | = | = + ⭐ --phase-warmup (oracle CE pretrain) | ⛔ KILLED at machine reset @ep_00414. Phase warmup CE 2.09→1.38, match 25→29% (UNDERTUNED). Verdict history (3 revisions, đọc cuối): (V1) assignment_oracle ep_00400 closure≈-2% → "F4 dominant" — WRONG. (V2) gap_decomp v1 r15 gap_assignment 0.187 vs r11 0.315 → "+40% closure" — ALSO WRONG (power-phase mismatch bug). (V3 FINAL 2026-06-05) gap_decomp v2 + ckpt sweep ep100/200/300/400: DIRECT compare R(q_live, ORACLE_φ): r11=1.447 vs r15: 1.475→1.452→1.442→1.418 (initial +0.028 boost from warmup, then PPO ERODES, ends -0.029 below baseline). Downstream BROKE: gap_downstream r11=23% → r15=53-61% all ckpts. Oracle ceiling also dropped (1.765 → 1.611). | ⭐⭐ V3 FINAL VERDICT: EXP-3 = NET NEGATIVE. F2 IS partially addressable (initial +0.028 boost confirms) BUT warmup destabilizes downstream → PPO erodes gain. KEY INSIGHT: phase-side learning instability affects assignment quality from BOTH directions (EXP-1 freeze 34% closure + EXP-3 warmup +5% peak then decay) → consistent story not contradiction. Probes: assignment_oracle_ep00400.txt + assignment_decomp.txt + assignment_decomp_trend.txt.
+  result_19 (đĩa r6) FRESH nq12 λ1.5 | 1.5 | 0.001/anneal | 16 | PopArt | 16 | factored bias+0.3 | =arch2 (G4 unify W_proj IDENTITY 20→20 = baseline) | RUNNING ep~1210 2026-06-08 (FRESH reproduce r11, KHÔNG resume). QoS ~53-56%, R_tot 1.72-1.88, best 169.7 đang leo (r11 best 214). PhaseMLP ent ↓39.5→31.8 (đang hội tụ). ent q ↓7.79→2.54 (committed 23%). irs split lệch [0.9 5.5] = single-IRS collapse. | SENSITIVITY PROBE ep_01200 → xem FINDING 2026-06-08 dưới: agent PARETO-DOMINATED; 66% QoS reward-suboptimal @λ1.5.
+  result_20 (đĩa r11) Δ7 + β-anneal0.3 | 1.5 | 0.001/anneal0.3 | 16 | PopArt | 16 | = | =arch2 + ⭐⭐ --phase-counterfactual (occupancy-weighted) + --beta-entropy-anneal-end 0.3 (higher entropy) | RUNNING ep~1082/6000 2026-06-10 (FRESH, 19h). Trajectory ON-TRACK với r11-OLD baseline (QoS 51→58, R_tot 1.36→1.65, vs OLD ep~1080 QoS ~55/R_tot ~1.6). Critic wobble explVar 0.1↔0.64 IDENTICAL pattern r11-OLD (no [B-2d]). q ent ↓ 9.58→4.19 (87%→38% max) committed healthy. ent_ph ↓ slow 41→36.4 (62%→55% max, Δ7+β0.3 giữ exploratory). λ FROZEN [E]-harmless. ⭐⭐ **PHASE QUALITY @ep_01000: alignment 33.4%, IRS-beats-direct 65.2% routed users** (vs OLD r8 25%, vs r11-OLD ep300 16.5% = +17pt cùng-ep, on track vượt r11-OLD ep1700 42% nếu giữ rate). | ⭐ Δ7 LEVER VALIDATING: PhaseMLP học phases USEFUL không chỉ low-entropy-bad. KEEP TRAINING tới ep~1700 để chốt peak comparison; probe lại phase_quality @ep_01700.
   -------+-----+--------------+-------+--------------+------+----------------+----------------------+----------------------------------+----------------------------------
   ⚠ result_13 = D_k=0.15 (binary sweet-spot test, R_LoS=0.2) — KHÔNG cùng setup với các run trên (D_k=0.10).
   ⚠ result_14 = R_LoS=0.3 RAMP-2 — KHÔNG cùng setup với các run trên (R_LoS=0.2). Resume từ r11 ep_01400.
   * r13 = run launch 15:09 GIỮA lúc sửa code → chỉ load Δ1, thiếu Δ4/R1-wiring (commit 19:22). Dir xóa nhầm, ko khôi phục.
+
+  ⭐⭐ FINDING 2026-06-08 (r6/đĩa probe sensitivity + direct cross-check — REVISES assignment thesis):
+     Probe analysis/probe_assignment_sensitivity.py ckpt r6 ep_01200, 90 states, POLICY downstream fixed.
+     QoS% / R_tot / reward / IRS%:  live 53.4/1.88/+1.53/72 · coord-oracle 64.7/2.15/+1.91/76 ·
+       FORCED-DIRECT 52.1/2.79/+2.37/0 · random 46.2/1.62/+1.14 · break_10/20/30% QoS 56.4/53.4/52.2.
+     (1) ASSIGNMENT SENSITIVE ✓: oracle→break_20% −11pt QoS, →random −18pt → combinatorial bottleneck real.
+     (2) ⚠ CORRECTION: coord-ascent "oracle" (gap_decomp) = LOCAL optimum. FORCED-DIRECT reward +2.37 >
+         oracle +1.91 → @λ=1.5 reward-optimal ≈ ALL-DIRECT (R_tot 2.79, QoS 52%). Để mixed-IRS QoS-serving
+         reward-beat all-direct cần λ ≳ 5.4 → 66% QoS reward-SUBOPTIMAL @λ1.5 (objective không "muốn" 66%).
+     (3) ⚠ AGENT PARETO-DOMINATED: live reward 1.53 < greedy-improved 1.91 < all-direct 2.37 → kẹt basin
+         XẤU (R_tot THẤP + QoS THẤP), chưa cả tới reward-optimum λ1.5 = OPTIMIZATION/credit gap, KHÔNG phải
+         capacity. Root: F2 credit-corrupt + F4 premature-commit (ent q committed 23% khi phase còn moving).
+     (4) PowerMLP coupling: forced-dir R_tot 2.79 (policy power = concentrated) vs feasibility Direct 1.72
+         (QoS-fair) → wp-concentration (LIMITATION #4) cap QoS ngay cả khi all-direct.
+     IMPLICATION (lever order): 66% QoS @stable-λ KHÔNG phải pure assignment-learning fix.
+       (a) ESCAPE bad basin trước → đẩy SUM-RATE (assignment entropy-schedule chậm hơn / L1 distill / Δ7);
+       (b) RỒI λ-trade cho QoS (λ-sweep 1.6-1.8) hoặc PowerMLP power-fairness.
+     CONFIDENCE: 1×90-state probe + coord-ascent greedy (chính nó lộ all-direct tốt hơn). Confirm bằng
+       λ-sweep trước khi chốt. Reports: results/result_6/assignment_sensitivity.txt + assignment_decomp_ep01200.txt.
+
+  ⭐⭐⭐ UPDATE 2026-06-10 (result_21 = đĩa result_13 = PHASE-WARMUP+FREEZE+LAGRANGIAN — Mức 1 plan):
+     Command: --R-LoS 0.2 --phase-warmup --phase-warmup-episodes 50 --phase-warmup-epochs 300
+              --freeze-phase --lagrangian --qos-target 0.85 --lambda-lr 0.10 --lambda-min 1.5
+              --lambda-max 3.5 --resume result_11/ep_00900 --episodes 3000
+     Mục tiêu: phá plateau phase 33% (PhaseMLP F2 credit) + fix Q-head under-route (Lagrangian).
+     ⭐ WARMUP THÀNH CÔNG (ep_00000 post-warmup ckpt):
+       phase warmup CE 2.873→0.735, per-IRS match 24.4%→71.0%
+       probe_phase_quality ep_00000: alignment 99.0% (coherence q=0.992), IRS-beats-direct 76.2%
+       → vs RL plateau 33% (r19/r6), vs supervised-probe-200ep 87% → warmup 300ep ĐẠT 99% coherence.
+     ĐỌC 2 metric: alignment 99% = N elements gần đồng-pha hoàn toàn (coherent combining tối ưu);
+       beats-direct 76% = pick đúng index-of-4 ~76% (= functional ceiling, khớp match 71% + supervised 77%).
+       Phần 24% chưa-beat = wrong-of-4 hoặc user direct genuinely tốt hơn — KHÔNG còn credit problem.
+     STATUS @check: critic-warmup xong, PPO vừa bắt đầu (chưa có trajectory). freeze-phase giữ 99%.
+     ⏳ PAYOFF PENDING: phase 99% có dịch thành R_tot/QoS jump không (sau khi power/Ck/assignment adapt)?
+       WATCH ep 100-400: ✅ R_tot > 1.85 (vượt r11-HIST gold 1.75) = THE payoff · alignment giữ 99% (freeze)
+       · QoS dip đầu run = power/Ck retune (KEEP). Nếu R_tot KHÔNG leo dù phase 99% → power/Ck/assignment
+       là next bottleneck (priority order #3-4), không phải phase.
+     ⚠⚠ UPDATE @ep70 2026-06-10: ĐANG TỆ ĐI — R1 REGIME-SHIFT CONFIRMED (critic vỡ).
+       explVar 0.78→−0.31 (CRITIC BLIND), PopArt Δμ=3.63 (returns dịch MẠNH), QoS 56→54%, reward μ −54.
+       Phase frozen 99% OK (‖∇ph‖=0), IRS ~5.4/10 OK. Root: warmup nhảy phase 33→99 + FREEZE, nhưng
+       critic+power+Ck fit cho phase-cũ 33% @r11/ep_00900 → regime shift đột ngột → critic không định giá
+       nổi states mới → explVar sụp → policy degrade. = R1 risk đã flag khi recommend.
+       VERDICT GATE @ep~300: explVar hồi >0.3 + QoS leo → R1 transient (GIỮ); explVar vẫn <0 + QoS tụt →
+         freeze-on-resume vỡ critic không cứu (KILL).
+       ⭐ LESSON: hard-freeze phase trên RESUMED policy = regime shift quá đột ngột. Lever hợp FRESH hơn
+         (co-train phase tốt từ ep0). Nếu fail → (1) FRESH warmup+freeze, (2) auxiliary phase-loss thay
+         hard-freeze (phase co-adapt mượt, cần code), (3) critic re-warmup mạnh hơn / lr_actor↓.
+     ⭐⭐⭐ FINAL VERDICT @ep393 (STOPPED power-outage 2026-06-11) — TỆ HƠN DỰ ĐOÁN theo cách KHÁC:
+       • R1 critic regime-shift: explVar 0.78→CRASH −0.31(ep65)→RECOVER→settle 0.40-0.48. = transient,
+         ĐÃ HỒI (đúng "watch tới ep300"). Critic KHÔNG phải vấn đề cuối cùng.
+       • NHƯNG payoff KHÔNG tới: QoS kẹt 53-54% FLAT, R_tot 1.65 (baseline level), reward μ −312→−349
+         (λ-penalty phình), best 117@ep92 không vượt 300ep. Phase frozen 99% suốt.
+       ⭐⭐ KEY NEGATIVE RESULT (paper-worthy): FIX PHASE→99% KHÔNG unlock QoS/R_tot. Ghép supervised-ceiling
+         (phase CAN reach 99%, info đủ) + result_13 (đạt 99% KHÔNG cải thiện objective) ⟹ **PHASE QUALITY
+         KHÔNG PHẢI BINDING CONSTRAINT Case 2**. Bottleneck = downstream: assignment-credit F2 + power-
+         fairness F4 + multi-user structure. QoS 53% (frozen 99%) ≤ baseline 60% (learned ~35% phase) →
+         freeze 99%-COHERENT có thể HẠI multi-user (max-coherence chĩa 1 user; multi-user cần COMPROMISE
+         phase; freeze khóa single-user-optimal). Hypothesis — confirm bằng multi-user-phase probe nếu cần.
+       → ACTION: ĐỪNG relaunch warmup+freeze Case 2 (premise bác). PIVOT: routing-shape (Q-head F2, BUILT)
+         + PowerMLP fairness (F4). Phase KHÔNG phải lever cho Case 2 objective. ckpt result_13 = bỏ.
+       → PAPER: negative result củng cố F1/F4 — "phase fixable nhưng không binding; bottleneck = assignment/power".
+
+  ⭐ UPDATE 2026-06-10 (result_20 = Δ7 phase-counterfactual + β-anneal 0.3 — analysis @ep_01082):
+     - Run = FRESH Case 2 nq12 λ=1.5 + `--phase-counterfactual --beta-entropy-anneal-end 0.3` (đĩa r11, PID 8027).
+     - TRAJECTORY ON-TRACK r11-OLD baseline shape:
+       ep~250 QoS50%/R_tot 1.38 (early-flat như r11-OLD ep250) · ep~750 QoS54%/1.52 (climb bắt đầu)
+       ep~1080 QoS58%/R_tot 1.65 · vs r11-OLD ep~1080 QoS~55/R_tot~1.6 = MATCH or slight edge.
+       r11-OLD peak ep1200 QoS60/R_tot 1.75 — chưa tới.
+     - CRITIC wobble explVar 0.10↔0.64 (latest 0.17), ‖∇‖V μ3.3 clipfrac 0% = HEALTHY-pattern (giống r11-OLD).
+     - λ FROZEN y=0.49 z=0.46 r=0.06-0.08 → [E]-confirmed-harmless cho Case 2 nq12. KHÔNG actionable.
+     - q ent monotonic ↓ 9.58→4.19 (87%→38% max). ent_ph ↓ slow 41→36.4 (62%→55%, Δ7+β0.3 design slow drop để giữ exploration).
+     - ⭐⭐ PROBE phase_quality @ckpt ep_01000 (probe_phase_quality.py):
+         alignment a = 33.4% (mean), coherence q = 0.47, p25=28% p75=41%
+         LIVE IRS beats direct: 65.2% (10620/16279 routed users)
+       So sánh baselines:
+         OLD r8 (arch1): 25% alignment
+         r11-OLD ep300 (arch2): 16.5% (arch2 BAD early)
+         r11-OLD ep1700 (arch2 final): 42.2%
+         result_20 ep1000 (arch2+Δ7+β0.3): 33.4% = +17pt vs r11-OLD ep~300 + on-track vượt 42% nếu rate giữ.
+       VERDICT: Δ7+β0.3 ĐANG GIÚP PhaseMLP — phases USEFUL (65% beats direct) chứ không chỉ low-entropy-random.
+     - ACTION: KEEP TRAINING tới ep~1700. Re-probe phase_quality khi đó để chốt:
+         a ≥ 45% → Δ7+β0.3 BEATS r11-OLD-final (paper-worthy lever finding for arch3)
+         a < 38% → same-as-r11-OLD-baseline, lever neutral
+         a < 25% → regress, abort lever
+     - Frozen-λ + critic wobble được expect, không phải triệu chứng hành động (giống r11-OLD).
+
+  ⭐⭐ HEAD-TO-HEAD r20 vs r11-HIST 2026-06-10 (same K10/M2, R_LoS=0.2, λ=1.5, β=0.001 — chỉ khác Δ7+β-anneal0.3):
+     - SAME-EP rolling-50 (proxy r20 đến ep~1472):
+       ep~672:  r11-H 53/1.50 vs r20 53/1.50  → catch-up
+       ep~1312: r11-H 55/1.56 vs r20 57/1.55  → r20 +2pt QoS
+       ep~1472: r11-H 57/1.61 vs r20 58/1.59  → r20 +1pt QoS, -0.02 R_tot
+     - BEST REWARD timing: r20 đạt 210.6 @ep1038 vs r11-H 214.5 @ep1272 — r20 SỚM HƠN ~234 ep ⇒
+       extrapolate r20 best @ep1272 ~220-225 = LIKELY VƯỢT r11-H.
+     - r11-H PEAK: QoS 61% R_tot 1.70 @ep~2100, late plateau QoS 56-61/R_tot 1.70-1.85 ep1356-1727.
+       r20 chưa tới timepoint này.
+     - ADAPTABILITY: r20 ent_q HIGHER ~3-5pt vs r11-H ở cùng ep (β-anneal0.3 design giữ exploration).
+     - PHASE alignment APPLES-TO-APPLES (probe trực tiếp 2026-06-10, REVISES doc 16.5%/42.2% claims):
+         r11-HIST ep_01000: 36.0% (q=0.49, beats-direct 64.6%)
+         r11-HIST ep_01400: 38.2% (q=0.51, beats-direct 67.4%)
+         r11-HIST ep_01700: 40.3% (q=0.53, beats-direct 68.1%)  ← thực tế, không phải 42.2% như doc cũ
+         r20      ep_01000: 33.4% (q=0.47, beats-direct 65.2%)  ← -2.6pt vs r11-HIST same-ep
+       r11-HIST grow rate mid-late ~+0.7pt/100ep. r20 extrapolate ep1700 ~38.4% — LIKELY ra sau r11-HIST.
+     - CRITIC: cả 2 wobble identical 0.0-0.6, không stable >0.5 = Case 2 structural pattern.
+     - VERDICT REVISED: Δ7+β0.3 KHÔNG strictly beat baseline trên phase quality. Tạo equilibrium khác:
+         (+) IRS-beats-direct +0.6pt, QoS +1-2pt, ent_q adaptability +3-5pt, best reward sớm 234 ep
+         (-) phase coherence -2.6pt, R_tot -0.02 to -0.03
+       NET: similar performance, trade adaptability để đổi phase coherence — KHÔNG paper-worthy "lever beats baseline".
+     - RAMP TRANSIT GATE @ep1200 (REVISED dựa actual probe data):
+         a ≥ 35% → ✓ transit OK (on-track-r11-HIST, adaptability edge giúp cross-ramp)
+         30% ≤ a < 35% → ⚠ wait thêm 200-300 ep, re-probe @ep_01400-01500
+         a < 30% → ❌ abort Δ7; resume r11-HIST ep_01400 (alignment 38.2%) cho ramp 0.3 transit
+     - ⭐⭐⭐ 3-WAY PHASE_QUALITY CONFIRMATION 2026-06-10 (isolation test):
+         r11-HIST ep_01000 (Δ1+R1+SoftmaxPQC arch, no Δ7, β0.1): alignment **36.0%**, IRS-beats 64.6%
+         r19 ep_01000   (G4 unify arch CONTROL, no Δ7, β0.1):   alignment **34.2%**, IRS-beats 69.8%
+         r20 ep_01000   (G4 unify + Δ7 + β0.3):                  alignment **33.4%**, IRS-beats 65.2%
+       ISOLATION r19 vs r20 (cùng arch, chỉ khác Δ7+β0.3): Δ -0.8pt = NOISE → **#1 CONFIRMED: Δ7+β0.3
+         net effect ≈ 0 trên phase alignment**. Lever no-op cho priority-#2 metric.
+       3-way SPREAD chỉ 2.6pt (33-36%) qua arch khác xa → ⭐⭐ **#5 INFO/CAPACITY CEILING STRONGLY
+         SUPPORTED**: bottleneck NẰM NGOÀI arch + lever variations đã thử.
+       TEST-A (probe_irs_vs_direct Case 2): optimal-phase IRS beats direct 100% blocked users, +37.8dB
+         median → per-user theoretical ceiling 100%. Multi-user serving (5users/IRS) → compromise →
+         realistic ceiling ~50-70%. Run hit 33-36% = ~70% multi-user-ceiling.
+       PHÂN BIỆT info vs capacity vs credit cần SUPERVISED BASELINE (train PhaseMLP với oracle phase
+         label, no RL): supervised hit 60-70% → CREDIT bottleneck; supervised cũng plateau 35% →
+         INFO/CAPACITY confirmed. ~1 ngày code + 1 fresh run.
+     - ⭐⭐⭐⭐ SUPERVISED CEILING PROBE 2026-06-10 (probe_phase_supervised_ceiling.py, r19/r6 ep_01000):
+       BEFORE (RL): alignment 33.6%
+       AFTER (200 ep supervised CE on collected (s_phase, oracle_idx) buffer): alignment **87.1%** (+53.5pt!)
+       Training curve: CE 1.35→0.88, match 32%→68.8% (still rising — supervised could go higher).
+       ⭐⭐⭐ **HYPOTHESIS #5 INFO/CAPACITY-CEILING REJECTED**: PhaseMLP arch + input ĐỦ cho 87%.
+         33-36% plateau ở 3 arch variants → KHÔNG structural, mà là SHARED RL CREDIT barrier trên phase head.
+       ⭐ ROOT CAUSE UPDATED:
+         - PhaseMLP plateau 33% = PHASE-credit-bottleneck (F2 for phase head)
+         - Under-routing blocked-direct = Q-head-credit-bottleneck (F2 for assignment)
+         - 2 F2 problems ĐỘC LẬP trên 2 head khác nhau. Need 2 levers riêng.
+       LEVER MAP:
+         Q-head (routing fix):    Lagrangian + L1 distill + Q-entropy schedule. r12 lagrangian
+           qos-target0.95 đang work (18.9% under-route ep_00100 vs r8-burned 76.3%).
+         PhaseMLP (alignment fix): Oracle-CE supervised warmup (tuned LONGER than r15's 30 epoch) +
+           freeze-phase post-warmup. Probe proved supervised reaches 87%; PPO erodes → freeze
+           prevents (đã partial test r18).
+       ⚠ DON'T pursue FULL densify-all-IRS Δ7 — supervised already proves achievable mechanism.
+         Δ7 chỉ là một biến thể credit-fix; supervised-warmup-freeze cleaner và proven 87% ceiling.
+
+     - (Blocked-direct under-routing probe — Case 1 only — moved to docs/Training-Case-1.txt)
+     - ⭐⭐ ROOT-CAUSE Δ7 NOT IMPROVING (4 causes, 2026-06-10):
+         #1 PRIMARY: Δ7 occupancy-weighted CONSERVATIVE — IRS routed 23-28%/rollout → counterfactual weight
+            tương đương → effective sample ≈ vanilla. CHỈ giảm variance nhẹ, KHÔNG tăng sample efficiency.
+            Handoff đã caveat: "NOT full densify-all-IRS which needs rollout change". FULL Δ7 = effective
+            sample 100% luôn = lever đúng nghĩa, NHƯNG chưa code.
+         #2 SECONDARY: β-anneal0.3 confound — Δ7-variance-reduction (+) ≈ β0.3-noise (-) cancel → đo
+            không tách được lực nào. Phase -2.6pt do β0.3 noise hay Δ7 weak? Không biết.
+         #3 STRUCTURAL: q-head non-stationarity ăn vào phase signal. Δ7 design fix F2 phase-credit, KHÔNG
+            fix F4 q-non-stationarity. Phase nhận c^SRU_m thay đổi mỗi update khi q-head shift.
+         #4 ARCHITECTURAL: critic wobble explVar 0.0-0.6 → advantage noisy → counterfactual advantage cũng
+            noisy. Δ7 không tốt hơn critic underlying. Đã là Case 2 baseline.
+       NEXT-STEP recommend: (A) continue r20 → ep1700 cho honest null result paper claim; (B) implement
+       FULL densify-all-IRS Δ7 (rollout change) → fresh Case 2 run.
+
+  ⭐ UPDATE 2026-06-09 (xem memory handoff-2026-06-09 + Common-Knowledge [L]/[M]):
+     - result_9 (đĩa) = Case 2 fresh VANILLA (KHÔNG counterfactual — Δ7 chưa code lúc launch). Critic wobbly
+       explVar 0.2-0.55, ent cao (early). Standard early Case 2 (như r6). KHÔNG phải thí nghiệm Δ7.
+     - P-FEASIBILITY [probe_feasibility_at_P.py]: servable% 100%(P70)→72%(P60)→58%(P50)→11%(P40). HẠ P=50 để
+       "encourage IRS" = ❌ BẤT KHẢ THI (trần QoS 58%<66%). IRS-gain là multiplier → hạ P scale cả 2 xuống.
+       KHÔNG có P nào vừa IRS-needed vừa feasible-66%. → GIỮ P=70 Case 2 (P-scale {K5:50,K10:70,K20:100}
+       = giữ power/user đủ). Muốn IRS-critical phải đổi GEOMETRY (β_block), không phải power.
+     - Δ7 PhaseMLP counterfactual BUILT 2026-06-09 (--phase-counterfactual, occupancy-weighted, M≥2). Test PASS.
+       Đây là lever F2 cho Case 2/3. Chạy: --phase-counterfactual + --beta-entropy-anneal-end 0.3 (entropy cao hơn).
+     - Lagrangian λ_D BUILT (--lagrangian) = cách raise λ an toàn cho Case 2 QoS push (xem [L]; lr 0.10-0.15).
 
   ⭐ GOLD BASELINE = r8 (best reward 233, QoS peak 60%). Mọi arch mới phải VƯỢT r8.
   ⭐ LIMITATION CỐT LÕI (cập nhật 2026-06-04 sau result_11 STOP ep1730; priority order Common Part5 #8):

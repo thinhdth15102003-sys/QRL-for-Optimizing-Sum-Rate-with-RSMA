@@ -17,12 +17,17 @@ Training cases (G4 nq=12 UNIFIED — 2026-06-08)
     Encoding capacity profile (W_proj input 2K → output 2(nq-M)):
       Case 1  K=5,  M=1   →  10 → 22   EXPANSION  (DƯ qubit → more expressivity)
       Case 2  K=10, M=2   →  20 → 20   IDENTITY   (vừa đủ, baseline)
-      Case 3  K=20, M=4   →  40 → 16   SOFT-CLUSTER (compression, multi-user/qubit)
+      Case 3  K=15, M=3   →  30 → 18   SOFT-CLUSTER (compression, multi-user/qubit)
+              [CHANGED 2026-06-10: K=20/M=4 → K=15/M=3, Case 3 scaled down.]
 
     Per-case depth D_enc (data_reuploading=True, depth = n_var_layers):
       Case 1: 2  (less depth, W_proj does the lift)
       Case 2: 3  (baseline)
       Case 3: 5  (more depth to encode larger state via soft-cluster)
+
+    P_S tier (DECIDED 2026-06-10): Case 3 K=15 → giữ tier K>10 → P_S=100 dBm (user chốt,
+      KHÔNG thêm tier K≤15). R3 scale-K sweep (K=5..9 M=1) thì FIX P_S=50 (theo paper gốc) —
+      cần --P-S override vì K6-9 auto rơi tier P_S=70. See docs/TODO.txt SECTION 0B.
 
     Theory (Jerbi App. C.2 + Goto 2021): data-reuploading + λ + sufficient depth
     = universal approximator independent of nq.
@@ -33,8 +38,8 @@ from istn.config import SystemConfig
 # ══════════════════════════════════════════════════════════════════════════════
 # ACTIVE CASE  ←  change ONLY K and M; per-case hypers auto-derive
 # ══════════════════════════════════════════════════════════════════════════════
-K        = 5    # Case 1: 5 | Case 2: 10 | Case 3: 20   (K-flex: post-Q1 G8)
-M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 4
+K        = 10    # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
 
 # ── UNIFIED VQC register (DO NOT change per case) ──────────────────────────────
 n_qubits = 12    # ⭐ G4 UNIFIED: fixed 12 qubits across all cases (NISQ-feasible)
@@ -258,6 +263,12 @@ ae_weight     = 0.5     # autoencoder reconstruction weight in total actor loss
 lr_actor_ae   = 1e-4    # Adam lr — AE weights ω
 lr_actor_qc   = 1e-4    # Adam lr — quantum parameters λ, θ  [halved from 3e-4: SPSA gradients are noisy]
 lr_actor_xi   = 3e-4    # Adam lr — post-NN weights ξ
+
+# ── ClassicalActor (DNN baseline, --actor-mode classical; paper A2/R5 VQC-vs-DNN) ──
+# Pure-MLP actor replacing AE+VQC+head. ~52K params @ Case 2 (vs VQC ~2K) = param-eff story.
+classical_enc_hidden = (128,)        # encoder MLP hidden (s_t → z_t[n_latent])
+classical_pol_hidden = (256, 128)    # policy MLP hidden (z_t → assignment logits)
+lr_classical_actor   = 3e-4          # Adam lr for the MLP actor (schedule follows lr_actor_qc frac)
 lr_critic     = 3e-4    # Adam lr — critic ψ  (↑ from 3e-4: at R_LoS=0.4/λ_D=4 the
                         # return variance is higher → critic lagged (explVar ~0.2,
                         # TD ~0.3) → noisy advantages → reward wavering. Faster

@@ -3,7 +3,9 @@
 ================================================================================
   Kiến thức CHUNG về mô hình & cách train, KHÔNG phụ thuộc (K,M) hay R_LoS.
   Hyperparameter cụ thể theo từng case → xem Training-Case-<N>.txt.
-  Cập nhật lần cuối: 2026-06-01  (Case1 r1→11; +[I-2],[J](C2 r1), [B-2](r2), [B-2b]GAE(r3), [H-2]TDR(r4),
+  Cập nhật lần cuối: 2026-06-09  (+[L]Lagrangian-λ_D-lever, [M]Pareto-dominated-diagnosis, RESUME-auto-detect-infra,
+                                 entropy-new-arch, Δ7-counterfactual-M≥2; trước đó 2026-06-08 +[K]+[I-4]).
+  (lịch sử) 2026-06-01  (Case1 r1→11; +[I-2],[J](C2 r1), [B-2](r2), [B-2b]GAE(r3), [H-2]TDR(r4),
                                  [B-2b] clipfrac-trước-lr + clip-là-triệu-chứng (C2 r6/r7), [B-2c] oracle-sweep,
                                  lưu-ý QoS⊥critic (C2 r5/6/7); +PopArt-stable-capped + đọc-explVar-đúng + counterfactual
                                  power-probe (C2 r8); +code-clean gỡ TD/target-net (PopArt+GAE-return only);
@@ -364,6 +366,36 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
           ⚠ EVIDENCE PHỤ (probe ep600): ΔR per-state shrink khi λ_D tăng (0.06 ở λ_D=0.5 → 0.04 ở
           λ_D=1.5) → reward landscape sharper ở λ_D cao → policy ÍT cần per-state-adapt wc, càng ép
           QoS càng đơn giản hóa choice. Củng cố "λ_D đủ cao = QoS bảo vệ + landscape gọn".
+
+[L] LAGRANGIAN λ_D (constrained-RL lever — BUILT 2026-06-09, train.py --lagrangian).
+    Thay λ_D cố định bằng dual variable: maximize R_tot s.t. QoS ≥ qos-target. Dual-ascent mỗi rollout:
+      λ_D ← clip(λ_D + lambda_lr·(qos_target − QoS_roll50), λ_min, λ_max)
+    QoS dưới target → λ_D tăng (siết); trên → giảm (nhả cho R_tot). Mutate cfg.lambda_D (env by-ref); PopArt
+    hấp thụ return-scale shift. Đây là cách RAMP λ AN TOÀN qua curriculum (gentle ramp → KHÔNG [K] bump).
+    ⚠ lambda_lr=0.05 QUÁ CHẬM cho QoS target cao (r8: λ 1.5→1.81/700ep, ko tới result_11 λ=4.5) → dùng 0.10-0.15.
+    ⚠ Watch [K] khi λ qua ~2 (Ck tot>2, ent_ck→0, explVar sụp). Validated safe ở lr≤0.05; faster cần canh.
+    Flags: --lagrangian --qos-target(0.8) --lambda-lr(0.05) --lambda-min(1.0) --lambda-max(3.0).
+
+[M] PARETO-DOMINATED (agent kẹt TRONG frontier — kém CẢ R_tot LẪN QoS). Chẩn đoán bằng
+    probe_assignment_sensitivity.py / probe_assignment_decomp.py: nếu oracle assignment đạt R_tot CAO HƠN
+    ở CÙNG QoS (hoặc reward cao hơn) → agent chưa tới frontier = OPTIMIZATION/credit gap (F2+F4 premature-commit),
+    KHÔNG phải capacity/representation (distill: z_t mang đủ info). Phân biệt 2 loại fix:
+      • Type A (GAIN thật, KHÔNG trade-off): escape dominated-basin → tới frontier → CẢ R_tot+QoS đều ↑.
+        Lever: Δ7 counterfactual, assignment entropy-schedule (chống commit sớm), L1 distill.
+      • Type B (TRADE-OFF, trượt dọc frontier): đẩy QoS lên cao = R_tot xuống. Lever: λ↑ (Lagrangian).
+    ⚠ CAVEAT: coord-ascent "oracle" (gap_decomp/sensitivity) là GREEDY → có thể kẹt LOCAL optimum.
+      Cross-check bằng forced_dir/random variants: nếu forced_dir reward > coord-oracle reward → coord-oracle
+      = local, reward-global ≈ all-direct (Case 2 @λ1.5 ví dụ). QoS↔R_tot ANTI-CORRELATED (trade-off thật).
+    ⚠ "đạt trần vật lý chưa?" = (a) servable% (feasibility probe = trần QoS tuyệt đối) + (b) oracle-vs-live gap
+      (Pareto check). Trên-baseline-R_tot ≠ best (vẫn dominated nếu oracle hơn ở cùng QoS).
+
+    (INFRA 2026-06-09) RESUME case auto-detect (train.py): --resume đọc K/M từ ckpt actor_config.json →
+      override cfg → env khớp ckpt bất kể params.py ACTIVE CASE. Fix crash env↔actor mismatch (matmul
+      _dual_encode "size X ≠ Y"). → khỏi juggling params.py mỗi ramp/resume.
+    (ENTROPY new-arch 2026-06-09) Arch PopArt-fixed critic NỚI ràng buộc [C] entropy-dom cũ → CHỊU được
+      entropy cao/lâu hơn. Premature-commit assignment (ent q thấp NHƯNG Pareto-dominated [M]) = lỗi THẬT →
+      anneal CHẬM hơn (--beta-entropy-anneal-end 0.1→0.3) chống commit sai, nhất là case cao (space 3^K lớn).
+      Watch [C] tái xuất (ent/pg ph>0.3 + reward phẳng). Δ7 counterfactual = lever M≥2 only (≈no-op M=1).
 
 [J] DIRECT-ATTRACTOR / IRS CHICKEN-AND-EGG — agent bỏ dần IRS, kẹt local optimum
     "all-direct"; phase head idle (đói data) → không học pha → IRS mãi tệ → càng tránh.

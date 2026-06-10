@@ -6,9 +6,10 @@ PUSH (tự động):
   • status định kỳ, ⚠ cảnh báo TREO (log đứng), 🔴 báo DỪNG.
 LỆNH (bạn nhắn bot từ điện thoại):
   /status  ep/QoS/explVar/gradV   /tail [N]  N dòng log cuối (mặc định 20)
-  /diag    critic health          /gpu       nvidia-smi (util/mem)
-  /kill    kill training (treo)    /rerun     chạy lại training (chặn nếu đang chạy)
-  /help    danh sách lệnh
+  /diag    critic health          /process   list training đang chạy (pid/runtime/args) + GPU
+  /kill [result_N|pid]  kill all hoặc 1 run  /rerun  chạy lại training (chặn nếu đang chạy)
+  /ramp <R_LoS> <λ> <result_N|ckpt> [eps] [shape lag ent= dnn]  — resume + levers
+  /analysis <result_N>  spawn Claude session phân tích    /help  danh sách lệnh
 
 Chạy (WSL, ĐÚNG thư mục project):
   cd "/mnt/c/Project/IRS-assisted RSMA Quantum-RL"
@@ -24,7 +25,6 @@ except Exception:
     CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "PASTE_CHAT_ID")
 PROJECT_DIR = "/mnt/c/Project/IRS-assisted RSMA Quantum-RL"
 RESULTS_DIR = PROJECT_DIR + "/results"
-INBOX       = RESULTS_DIR + "/claude_inbox.jsonl"   # /claude messages → file queue (no tmux)
 HANG_MIN    = 12     # log đứng quá N phút → cảnh báo treo
 # Auto-push (2026-06-01): notify on EVERY new diag panel (≈ every 12 ep PPO update),
 # replacing fixed-interval 30-min status. STATUS_MIN giữ làm fallback nếu diag không
@@ -36,7 +36,10 @@ TRAIN_CMD   = (f'cd "{PROJECT_DIR}" && '
                ' source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null); '
                'conda activate IRS_QRL; '
                'nohup python train.py --episodes 4000 > /dev/null 2>&1 &')
-TMUX_TARGET = "claude"   # tmux session/window đang chạy Claude Code (cho lệnh /claude)
+# Lệnh spawn 1 Claude Code HEADLESS cho /analysis. {prompt} = đã shlex.quote.
+# ⚠ Sửa cho đúng máy: cần `claude` CLI trong PATH WSL + đã auth. --dangerously-skip-permissions
+#   để chạy autonomous (đọc log + probe + tele.py) không cần người duyệt.
+CLAUDE_CMD = 'claude --dangerously-skip-permissions -p {prompt}'
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -71,7 +74,8 @@ def latest_log():
 
 
 def train_running() -> bool:
-    return "train.py" in sh("ps -eo cmd | grep -v grep")
+    # match ' train.py' or '/train.py' → excludes this bot (monitor_train.py)
+    return bool(sh("ps -eo cmd | grep '[ /][t]rain.py'").strip())
 
 
 def read(log):
@@ -191,17 +195,81 @@ def cmd_diag(log):
     return ("\n\n".join(parts) or "(chưa có diag)")[:3800]
 
 
-def cmd_gpu():
-    g = sh("nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader")
-    p = sh("nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader")
-    return f"🖥️ GPU: {g}\ncompute-apps:\n{p or '(none)'}"
+def cmd_process():
+    """List các training train.py đang chạy: pid · runtime · args chính (R_LoS, eps,
+    resume-source, levers) + active output dirs (training_log advancing) + GPU mem."""
+    raw = sh("ps -eo pid,etimes,cmd | grep '[ /][t]rain.py'")
+    rows = []
+    for l in raw.splitlines():
+        if not l.strip():
+            continue
+        parts = l.split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid, et, cmd = parts
+        try:    et_h = f"{int(et)//3600}h{(int(et)%3600)//60:02d}m"
+        except Exception: et_h = f"{et}s"
+        def grab(flag):
+            m = re.search(rf"{re.escape(flag)}\s+(\S+)", cmd)
+            return m.group(1) if m else None
+        rlos = grab("--R-LoS") or "?"
+        eps  = grab("--episodes") or "?"
+        res  = grab("--resume")
+        m    = re.search(r"result_\d+", res) if res else None
+        resn = m.group(0) if m else "fresh"
+        tags = []
+        if "--lagrangian"     in cmd: tags.append("lag")
+        if "--routing-shape"  in cmd: tags.append("shape")
+        if "--phase-warmup"   in cmd: tags.append("warmup")
+        if "--freeze-phase"   in cmd: tags.append("freeze")
+        if "--actor-mode classical" in cmd: tags.append("dnn")
+        rows.append(f"• pid {pid} · {et_h} · R_LoS={rlos} eps={eps} ←{resn}"
+                    + (f" [{' '.join(tags)}]" if tags else ""))
+    head = (f"🏃 {len(rows)} training đang chạy:\n" + "\n".join(rows)) if rows \
+           else "ℹ️ Không có training nào đang chạy."
+    # active OUTPUT dirs (training_log advancing < HANG_MIN)
+    now, act = time.time(), []
+    for lg in sorted(glob.glob(os.path.join(RESULTS_DIR, "result_*", "training_log.txt"))):
+        try:
+            if (now - os.path.getmtime(lg)) / 60.0 > HANG_MIN:
+                continue
+        except OSError:
+            continue
+        rn = os.path.basename(os.path.dirname(lg))
+        ep = latest_diag_ep(lg)
+        act.append(f"{rn}@ep{ep}" if ep is not None else rn)
+    act_line = ("\n📂 đang ghi: " + " · ".join(act)) if act else ""
+    g = sh("nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader")
+    return f"{head}{act_line}\n🖥️ GPU mem: {g}"
 
 
-def cmd_kill():
-    if not train_running(): return "ℹ️ Không có training nào đang chạy."
-    sh("for p in $(ps -eo pid,cmd | grep train.py | grep -v grep | awk '{print $1}'); do kill -9 $p; done")
+def cmd_kill(arg: str = ""):
+    """Không arg → kill TẤT CẢ train.py. arg = <pid> → kill đúng pid đó. arg = <result_N>
+    (hoặc bất kỳ chuỗi) → kill train.py có cmd khớp (vd resume-source result_12). Dùng
+    /process xem pid trước."""
+    arg = arg.strip()
+    if not train_running():
+        return "ℹ️ Không có training nào đang chạy."
+    if not arg:
+        sh("for p in $(ps -eo pid,cmd | grep '[ /][t]rain.py' | awk '{print $1}'); do kill -9 $p; done")
+        time.sleep(2)
+        return ("✅ Đã kill TẤT CẢ training.\n" + cmd_process()) if not train_running() \
+               else "⚠️ Vẫn còn process (thử lại /kill)."
+    if arg.isdigit():
+        chk = sh(f"ps -p {arg} -o cmd= 2>/dev/null")
+        if "train.py" not in chk or "monitor_train.py" in chk:
+            return f"⚠️ pid {arg} không phải training train.py (hoặc đã tắt). /process để xem."
+        sh(f"kill -9 {arg}"); time.sleep(2)
+        return f"✅ Đã kill pid {arg}.\n" + cmd_process()
+    pids = sh(f"ps -eo pid,cmd | grep '[ /][t]rain.py' | grep -F -- {shlex.quote(arg)} "
+              "| awk '{print $1}'").split()
+    if not pids:
+        return (f"⚠️ Không thấy train.py nào khớp '{arg}'. "
+                "Lưu ý: khớp theo cmd (thường là resume-source). /process xem pid rồi /kill <pid>.")
+    for p in pids:
+        sh(f"kill -9 {p}")
     time.sleep(2)
-    return ("✅ Đã kill training.\n" + cmd_gpu()) if not train_running() else "⚠️ Vẫn còn process (thử lại /kill)."
+    return f"✅ Đã kill {len(pids)} process khớp '{arg}' (pid {' '.join(pids)}).\n" + cmd_process()
 
 
 def cmd_rerun():
@@ -210,62 +278,131 @@ def cmd_rerun():
     return "✅ Đã khởi chạy training lại." if train_running() else "⚠️ Chưa thấy process — xem TRAIN_CMD/env."
 
 
-def cmd_claude(msg: str) -> str:
-    """Ghi tin của user vào FILE INBOX (claude_inbox.jsonl) — KHÔNG cần tmux.
-    Session Claude đang chạy sẽ tự poll inbox định kỳ, xử lý, rồi đẩy kết quả
-    về Telegram (qua tele.py). Không cần mở Claude mới."""
-    if not msg.strip():
-        return "Dùng: /claude <tin nhắn cho Claude>  (vd: /claude phân tích result_7 hiện tại)"
-    # ── HYBRID: thử tmux inject TRƯỚC (real-time nếu Claude chạy trong tmux WSL) ──
-    injected = (f'[Lệnh từ điện thoại qua Telegram] {msg} '
-                f'— (làm xong gửi kết quả NGẮN GỌN về Telegram: '
-                f'cd "{PROJECT_DIR}" && python tele.py "kết quả")')
-    has_tmux = "SESSIONOK" in sh(
-        f'tmux has-session -t {shlex.quote(TMUX_TARGET)} 2>/dev/null && echo SESSIONOK')
-    if has_tmux:
-        r = sh(f'tmux send-keys -t {shlex.quote(TMUX_TARGET)} -l -- {shlex.quote(injected)} '
-               f'&& tmux send-keys -t {shlex.quote(TMUX_TARGET)} Enter && echo SENTOK')
-        if "SENTOK" in r:
-            return (f"📨 Đã bơm thẳng vào Claude (tmux '{TMUX_TARGET}') — real-time. "
-                    f"Chờ Claude xử lý + đẩy kết quả về đây.")
-    # ── FALLBACK: không có tmux → LƯU inbox + trả status ngay ──
-    rec = {"ts": time.time(), "msg": msg.strip(), "done": False}
+def cmd_ramp(args_str: str) -> str:
+    """/ramp <R_LoS> <λ> <result_N|ckpt> [eps] [opts...] — resume sang ramp mới + levers.
+    OPTS (sau eps, thứ tự bất kỳ):
+      shape[=coef]  → --routing-shape [--routing-shape-coef coef]   (mặc định 0.1; IRS≥Blk lever)
+      lag[=target]  → --lagrangian --qos-target target (λ = lambda-min) thay vì λ_D FIXED (né [K])
+      ent[=end]     → --beta-entropy-anneal-end end    (mặc định 0.3; entropy cao hơn)
+      lmax=X        → --lambda-max X   (chỉ khi lag; mặc định 5.0)
+      dnn           → --actor-mode classical (DNN baseline)
+    Multi-run OK (chỉ cảnh báo nếu đã có run)."""
+    a = args_str.split()
+    if len(a) < 3:
+        return ("Dùng: /ramp <R_LoS> <λ> <result_N|ckpt> [eps] [shape lag ent= dnn]\n"
+                "vd: /ramp 0.5 2.5 result_12 1500 shape lag=0.90   (shaping + Lagrangian)\n"
+                "    /ramp 0.4 3 result_8                          (λ FIXED, auto-pick ckpt)\n"
+                "    /ramp 0.2 1.5 result_5 2000 shape=0.2 ent=0.3")
     try:
-        with open(INBOX, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        log = latest_log()
-        snap = parse(log) if log else "(chưa có log)"
-        return ("📨 Đã LƯU tin vào hàng đợi (không tmux → không real-time; trả lời khi "
-                "bạn quay lại session & ping, xem /inbox).\n"
-                "⚡ Cần xem NGAY: /status /diag /tail — trực tiếp:\n\n" + snap)
-    except Exception as e:
-        return f"⚠️ Lỗi ghi inbox: {e}"
-
-
-def cmd_inbox() -> str:
-    """Hiển thị trạng thái hàng đợi inbox (tin chờ xử lý / đã xong)."""
-    if not os.path.exists(INBOX):
-        return "📭 Inbox trống (chưa có /claude nào)."
-    pend, done = [], 0
-    for ln in read(INBOX).splitlines():
-        if not ln.strip():
-            continue
+        rlos, lam = float(a[0]), float(a[1])
+    except ValueError:
+        return "⚠️ R_LoS và λ phải là số (vd: /ramp 0.5 2.5 result_12 shape lag)."
+    src = a[2]
+    # ── parse trailing opts (eps = số trần đầu tiên; còn lại = key[=val]) ──
+    eps = 1500
+    use_lag, qos_t, lag_max = False, 0.90, 5.0
+    shape, shape_coef = False, 0.1
+    ent_end, dnn = None, False
+    for tok in a[3:]:
+        if tok.isdigit():
+            eps = int(tok); continue
+        k, _, v = tok.partition("=")
+        k = k.lower()
         try:
-            r = json.loads(ln)
-        except Exception:
-            continue
-        if r.get("done"):
-            done += 1
-        else:
-            pend.append(r.get("msg", "")[:60])
-    head = f"📬 Inbox: {len(pend)} chờ · {done} xong"
-    if pend:
-        head += "\nChờ:\n" + "\n".join(f"• {m}" for m in pend[-5:])
-    return head
+            if   k in ("shape", "routing"): shape = True;  shape_coef = float(v) if v else 0.1
+            elif k in ("lag", "lagrangian"): use_lag = True; qos_t = float(v) if v else 0.90
+            elif k in ("ent", "entropy"):   ent_end = float(v) if v else 0.3
+            elif k in ("lmax", "lambdamax"): lag_max = float(v) if v else 5.0
+            elif k in ("dnn", "classical"): dnn = True
+            # else: bỏ qua token lạ
+        except ValueError:
+            return f"⚠️ Giá trị không hợp lệ ở '{tok}'."
+    # ── resolve resume target ──
+    if ("checkpoints" in src) or ("ep_" in src):
+        cdir = src if src.startswith("/") else os.path.join(RESULTS_DIR, src)
+        if not cdir.rstrip("/").endswith("agents"):
+            cdir = os.path.join(cdir, "agents")
+        if not os.path.isdir(cdir):
+            return f"⚠️ Ckpt không tồn tại: {cdir}"
+        pick_note = ""
+    else:
+        cdir = src if src.startswith("/") else os.path.join(RESULTS_DIR, src)
+        if not os.path.isdir(os.path.join(cdir, "checkpoints")):
+            return f"⚠️ Không thấy {src}/checkpoints/."
+        pick_note = " (train.py auto-pick BEST ckpt)"
+    # ── build flags ──
+    if use_lag:
+        lam_part = (f"--lagrangian --qos-target {qos_t} --lambda-lr 0.10 "
+                    f"--lambda-min {lam} --lambda-max {lag_max}")
+        lam_desc = f"Lagrangian target={qos_t} λ∈[{lam},{lag_max}]"
+        krisk = ""
+    else:
+        lam_part = f"--lambda-D {lam}"
+        lam_desc = f"λ_D={lam} FIXED"
+        krisk = "⚠ λ FIXED bump trên resume = [K] risk → /status theo dõi Ck/explVar 50-100ep.\n"
+    opts = []
+    if shape:               opts.append(f"--routing-shape --routing-shape-coef {shape_coef}")
+    if ent_end is not None:  opts.append(f"--beta-entropy-anneal-end {ent_end}")
+    if dnn:                  opts.append("--actor-mode classical")
+    opt_str = " ".join(opts)
+
+    def nproc():
+        try: return int(sh("ps -eo cmd | grep -c '[t]rain.py'").strip())
+        except Exception: return -1
+    n0 = nproc()
+    cmd = (f'cd "{PROJECT_DIR}" && '
+           '(source ~/anaconda3/etc/profile.d/conda.sh 2>/dev/null || '
+           ' source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null); '
+           'conda activate IRS_QRL; '
+           f'nohup python train.py --R-LoS {rlos} {lam_part} {opt_str} '
+           f'--resume "{cdir}" --episodes {eps} > /dev/null 2>&1 &')
+    sh(cmd); time.sleep(5)
+    n1 = nproc()
+    par = f"⚠️ {n0} training khác đang chạy (GPU parallel — coi chừng OOM).\n" if n0 > 0 else ""
+    status = (f"✅ process mới đã lên (train.py: {n0}→{n1})." if n1 > n0
+              else f"⚠️ chưa thấy process mới (kiểm tra env/path). train.py: {n0}→{n1}")
+    return (f"{par}🚀 RAMP: R_LoS={rlos} · {lam_desc} · eps={eps}\n"
+            f"levers: {opt_str or '(none)'}\nresume: {cdir}{pick_note}\n{status}\n{krisk}")
 
 
-HELP = ("🤖 Lệnh:\n/status · /tail [N] · /diag · /gpu · /kill · /rerun\n"
-        "/claude <tin> — nhắn Claude qua inbox (KHÔNG cần tmux) · /inbox — xem hàng đợi\n/help")
+def cmd_analysis(args_str: str) -> str:
+    """/analysis <result_N> — TỰ TẠO tmux session Claude MỚI, chạy analysis run đó, báo về Telegram.
+    Spawn session RIÊNG (không đụng session chính nếu đang mở)."""
+    a = args_str.strip().split()
+    if not a:
+        return "Dùng: /analysis <result_N>   (vd: /analysis result_8)"
+    res = a[0]
+    run_dir = res if res.startswith("/") else os.path.join(RESULTS_DIR, res)
+    if not os.path.isdir(run_dir):
+        return f"⚠️ Không thấy run-dir: {run_dir}"
+    if "TMUXOK" not in sh("command -v tmux >/dev/null && echo TMUXOK"):
+        return "⚠️ tmux không có trong WSL (sudo apt install tmux)."
+    if "CLOK" not in sh("command -v claude >/dev/null && echo CLOK"):
+        return ("⚠️ 'claude' CLI không thấy trong PATH WSL → không spawn được. "
+                "Cài + auth Claude Code trong WSL.")
+    rn = os.path.basename(run_dir.rstrip("/"))
+    name = f"ana_{rn}_{int(time.time()) % 100000}"
+    prompt = (f"Analyze training run results/{rn} (IRS-RSMA project) using the irs-rsma-log-reading "
+              f"skill: R_tot/QoS trend, critic + per-head health, any [K]/drift/degeneration. "
+              f"Run ONE cheap probe only if it changes the verdict. Then send a SHORT (<800 char) "
+              f'verdict to Telegram: cd "{PROJECT_DIR}" && python comms/tele.py "...". '
+              f"Be concise. Do NOT launch/kill training.")
+    claude = CLAUDE_CMD.format(prompt=shlex.quote(prompt))
+    inner = (f'cd "{PROJECT_DIR}" && {claude}; '
+             f'python comms/tele.py "[analysis {rn}] session kết thúc."')
+    sh(f'tmux new-session -d -s {shlex.quote(name)} {shlex.quote(inner)}')
+    time.sleep(2)
+    ok = "OK" in sh(f'tmux has-session -t {shlex.quote(name)} 2>/dev/null && echo OK')
+    return (f"🔬 Spawned analysis session '{name}' cho {rn}.\n"
+            f"{'✅ tmux session đang chạy — Claude phân tích + đẩy verdict về đây khi xong.' if ok else '⚠️ session ko thấy — kiểm tra claude CLI/auth/quota.'}\n"
+            f"(xem trực tiếp: tmux attach -t {name})")
+
+
+HELP = ("🤖 Lệnh:\n/status · /tail [N] · /diag · /process · /rerun\n"
+        "/kill [result_N|pid] — kill tất cả, hoặc 1 run cụ thể (xem pid ở /process)\n"
+        "/ramp <R_LoS> <λ> <result_N|ckpt> [eps] [shape lag ent= dnn] — resume + levers\n"
+        "   vd: /ramp 0.5 2.5 result_12 1500 shape lag=0.90\n"
+        "/analysis <result_N> — spawn Claude session phân tích run đó + báo về đây\n/help")
 
 
 def handle(text: str) -> str:
@@ -277,11 +414,11 @@ def handle(text: str) -> str:
     if c == "/status": return parse(log)
     if c == "/tail":   return cmd_tail(log, int(t[1]) if len(t) > 1 and t[1].isdigit() else 20)
     if c == "/diag":   return cmd_diag(log)
-    if c == "/gpu":    return cmd_gpu()
-    if c == "/kill":   return cmd_kill()
+    if c in ("/process", "/gpu", "/ps"): return cmd_process()   # /gpu alias giữ cho quen tay
+    if c == "/kill":   return cmd_kill(text[len(t[0]):].strip())
     if c == "/rerun":  return cmd_rerun()
-    if c == "/inbox":  return cmd_inbox()
-    if c == "/claude": return cmd_claude(text[len(t[0]):].strip())
+    if c == "/ramp":   return cmd_ramp(text[len(t[0]):].strip())
+    if c == "/analysis": return cmd_analysis(text[len(t[0]):].strip())
     return "❓ " + HELP
 
 
@@ -292,8 +429,8 @@ def main():
     offset = None
     old = get_updates(None, timeout=0)
     if old: offset = old[-1]["update_id"] + 1
-    last_status, hang_alerted, stop_alerted = 0.0, False, False
-    last_diag_ep = None   # per-diag auto-push tracker (replaces fixed-interval)
+    # MULTI-RUN: state keyed per-run (result_N) → push cho MỌI run song song.
+    last_status, hang_alerted, last_diag_ep = {}, {}, {}
     while True:
         for u in get_updates(offset, timeout=25):
             offset = u["update_id"] + 1
@@ -304,30 +441,24 @@ def main():
             if text:
                 try: send(handle(text))
                 except Exception as e: send(f"lỗi xử lý lệnh: {e}")
-        # ── push tự động ──
-        log = latest_log()
-        if log is None: continue
+        # ── push tự động (MULTI-RUN: push cho MỌI result_* đang active song song) ──
         now = time.time()
-        stale = (now - os.path.getmtime(log)) / 60.0
-        running = train_running()
-        if stale > HANG_MIN and running and not hang_alerted:
-            send(f"⚠️ NGHI TREO: log đứng {stale:.0f} phút (process còn sống).\n{parse(log)}\n→ /gpu /kill /rerun")
-            hang_alerted = True
-        if stale <= HANG_MIN: hang_alerted = False
-        if not running and not stop_alerted:
-            send(f"🔴 Training DỪNG.\n{parse(log)}\n→ /rerun để chạy lại"); stop_alerted = True
-            last_diag_ep = None   # reset for next run
-        if running: stop_alerted = False
-        # ── per-diag push: gửi mỗi khi diag[N] mới xuất hiện ──
-        if running and stale <= HANG_MIN:
-            cur_diag = latest_diag_ep(log)
-            if cur_diag is not None and (last_diag_ep is None or cur_diag > last_diag_ep):
-                send(parse(log))
-                last_diag_ep = cur_diag
-                last_status = now
-            elif now - last_status > STATUS_MIN * 60:
-                # Fallback: nếu không có diag mới trong STATUS_MIN phút (warmup edge case)
-                send(parse(log)); last_status = now
+        for log in sorted(glob.glob(os.path.join(RESULTS_DIR, "result_*", "training_log.txt"))):
+            run = os.path.basename(os.path.dirname(log))      # "result_N"
+            try: stale = (now - os.path.getmtime(log)) / 60.0
+            except OSError: continue
+            if stale <= HANG_MIN:
+                # ACTIVE run → push mỗi diag[N] mới (label theo run), fallback STATUS_MIN.
+                hang_alerted[run] = False
+                cur = latest_diag_ep(log)
+                if cur is not None and cur > last_diag_ep.get(run, -1):
+                    send(f"[{run}]\n{parse(log)}"); last_diag_ep[run] = cur; last_status[run] = now
+                elif now - last_status.get(run, 0.0) > STATUS_MIN * 60:
+                    send(f"[{run}]\n{parse(log)}"); last_status[run] = now
+            elif run in last_diag_ep and not hang_alerted.get(run, False):
+                # Chỉ alert run TỪNG active trong session này rồi đứng (treo/dừng) → tránh spam run cũ.
+                send(f"⚠️ [{run}] log đứng {stale:.0f} phút (treo hoặc đã dừng) — kiểm tra.\n{parse(log)}\n→ /process /kill /rerun")
+                hang_alerted[run] = True
 
 
 if __name__ == "__main__":

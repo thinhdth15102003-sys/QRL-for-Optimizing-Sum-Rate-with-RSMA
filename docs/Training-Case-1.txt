@@ -121,6 +121,8 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
   result_9  R_LoS0.45 λ_D4.5 gae0.9 ←r8/ep1000 → QoS93% ★★ (entropy-dominated)
   result_10 R_LoS0.45 λ_D4.5 gae0.9 β0.004 ←r9/ep400 → 88% (β đánh tụt) [thay bằng r11]
   result_11 R_LoS0.5  λ_D4.5 gae0.9 β0.001 ←r9/ep400 → ep254 QoS83% rồi GPU-hang; có ep_200
+  result_15 R_LoS0.3 LAGRANGIAN(lr0.05) gae0.9 ←r5/ep_00900 (đĩa r8) → QoS78→70% drift; PARETO-DOMINATED; ckpt ep_00600
+  result_16 R_LoS0.3 λ_D2.5 gae0.9 ←r5/ep_00900 (đĩa r8) → ep~1271 P1(0-910)improve-both 77→87%/2.15→2.65, P2(910-1150)Pareto-improve 84%/3.05, P3(1150-)PARETO-DEGRADE+reward DROP 76%/3.18 514→496. ⚠ overshoot R_tot. PICK ep_01000 (sweet-spot, ent_ph 46% adapt-ready). NOT-AT-CEILING: sensitivity ep_01000 oracle 2.18/72% vs live 1.08/59% IRS28→59 = F1 BASIN HARD-CONFIRMED.
   ── ARCH-2 RETRY (2026-06-05/06, fresh K=5 M=1 nq=8) ──
   result_12 R_LoS0.2 λ_D=2 gae0.9 β0.001 + PopArt + R1readout + SoftmaxPQC + Δ1 fresh  (thư mục đĩa: results/result_17)
             → ep~935 reached oracle RỒI STOPPED 2026-06-08 (drift −419% từ peak = λ=2 instability; xem r13/r14).
@@ -158,4 +160,143 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
        nq=8 nén → không thấy → cần λ=2 ép → λ mạnh thì destabilize.
      - CAVEAT: "unify" = CẢ GÓI (chưa tách riêng nq vs n_lat vs n_var); r14 mới ep311, chưa kiểm
        long-run drift — canh thêm ~1000ep mới khẳng định nó GIỮ QoS không drift muộn.
+  ── UPDATE r14 (đĩa r5) LONG-RUN 2026-06-09: peak QoS 86%@ep428 → MILD-DRIFT 72%@ep1000 (R_tot 1.5→1.98).
+     HEALTHY, không degenerate. nq12 drift NHẸ HƠN nq8 (86→72 vs r13's 54→38) NHƯNG VẪN drift @λ1.5 → sửa
+     framing: "đỉnh cao hơn + drift nhẹ hơn nhiều", KHÔNG phải hết drift. Best stable ckpt = ep_00900 (4/4).
+  ── RAMP-0.3 (2026-06-09) ──
+  result_15 (đĩa result_8) R_LoS0.3 LAGRANGIAN(qos-target0.85 lr0.05) ←r5/ep_00900  (đĩa: results/result_8)
+     → STOPPED. ✅ RESUME auto-detect fix worked (Case1 chạy dù params.py=Case2). ✅ Agents HEALTHY/non-degenerate
+       qua ramp 0.2→0.3 + λ-change: explVar 0.60-0.71, KHÔNG [K], phase converged (ent ph 50%) = curriculum+
+       Lagrangian robustness VALIDATED. QoS 78→70% drift về sum-rate (R_tot 2.34→2.87), λ ramp 1.5→1.81.
+     ⚠ Lagrangian lr=0.05 QUÁ CHẬM → QoS ko tới target 85% (λ ko đủ cao). ⚠ PARETO-DOMINATED (sensitivity probe
+       ep700: oracle R_tot 2.43 @ CÙNG QoS 60%, +0.79; live UNDER-route IRS 42% vs oracle 61%). Best ckpt ep_00600.
+  result_16 (đĩa result_8, ghi đè r15) R_LoS0.3 λ_D2.5 gae0.9 β0.001 ←r5/ep_00900 nq=12 non-Lagrangian (2026-06-09)
+     → RUNNING @ep~1271/1500 (2026-06-10 update). ⭐ ep119-pessimism OVERTURNED; nhưng đã ra khỏi sweet-spot.
+       TREND chia 3 phase (diag-mapped):
+         P1 ep 0–~910:    QoS 77→87, R_tot 2.15→2.65, reward 255→469. IMPROVING BOTH (real learning).
+         P2 ep ~910–~1150: QoS 87→84, R_tot 2.65→3.06, reward 469→514. Pareto-improve vs P1-peak.
+         P3 ep ~1150→now: QoS 84→75 (−9pt), R_tot 3.06→3.19 (+0.13), reward 514→496 ↓. PARETO-DEGRADE
+           + reward DROP — agent overshoot R_tot; tiền-[A] (chưa collapse nhưng đi sai hướng). STOP-NOW
+           tốt hơn chờ ep_01500.
+       CRITIC: STABILIZED to HEALTHY — explVar +0.63 stable, corr(V,ret)+0.79, V̄+50.8≈ret μ+50.9 (PopArt),
+         ‖∇‖V μ9/max32 clipfrac0% (the ep119 [B-2b] wobble 0.41-0.71 was cold-start, resolved by ~ep900).
+       PER-HEAD: q committed (ent~9% max, grp dir=4.5 irs=0.5); phase LEARNING (ent_ph 11→8, ~27% max,
+         DECREASING — the ep119 [F]-flat read was premature); power/ck structured.
+       λ FROZEN [E]: y=z=0.52 stuck at init (r=0.07 zero-mean noise) — CONFIRMED HARMLESS (Prop2 λ-invariance):
+         run reached QoS87%/R_tot3.18 WITHOUT unfreezing λ. ⇒ the ep119 ACTION (lr_qc↑/SPSA to unfreeze λ) was
+         WRONG — NOT taken, NOT needed. Frozen-λ is not the bottleneck here. [DON'T-REPEAT: spsa↑ ruled out.]
+       UNDER-IRS: irs=0.5/5 = F1 Pareto-dominated basin, but BENIGN @ramp0.3 (Direct-only feasible 100% QoS);
+         becomes a real lever only at ramp 0.4/0.5 (blockage forces IRS). Watch on ramp advance.
+       LESSON: classic early-flat-pessimism (skill Step-1 guard) — a <ep600 flat+wobble read resolved by ep900
+         WITHOUT any hyper change. Frozen-λ [E] confirmed harmless ở Case 1 nq12.
+       PROBES 2026-06-10 (đã chạy):
+         • pick_resume_ckpt → ep_01000 (3/4 criteria; ent_ph 46% trong sweet-zone 40-65). ep_01100/1200 đã
+           collapse ent_ph 35%/28% → KHÔNG adapt-ready dù QoS×R_tot Pareto tốt hơn.
+         • probe_assignment_sensitivity ep_01000 (R_LoS=0.2 default; relative chuẩn):
+             live    R_tot 1.08 QoS 59% IRS 28%
+             oracle  R_tot 2.18 QoS 72% IRS 59%   →  +1.10 R_tot AND +12.5 pt QoS by routing alone.
+             break_20% Δ +15.8 pt QoS (high combinatorial sensitivity = F2 credit-assignment).
+           ⇒ NOT physical-ceiling; F1 Pareto-dominated basin HARD-CONFIRMED (under-IRS).
+         • probe_feasibility_at_P R_LoS=0.4 P=70: Servable 100% / Direct% 100% / All-IRS 89.2% /
+           Direct-blocked 57.5%. ⇒ ramp 0.4 feasible @ QoS=100%; physical pressure ép dùng IRS.
+       ⚠ IRS-BURN-OUT trajectory (per-ep IRS/5 tại từng ckpt — KEY): r5/ep_00900 mang vào IRS≈54%,
+         rồi λ_D=2.5 + R_LoS=0.3 burn dần:
+           ep_00100: IRS54%/QoS76 · ep_00300: 50%/84 · ep_00500: 44%/82 · ep_00600: 36%/84
+           ep_00800: 36%/84 · ep_01000: 14%/82 ← picker pick (committed F1) · ep_01200: 10%/78
+         ⇒ ep_01000 = COMMITTED-DIRECT (F1 burned). Resume từ đó cho ramp 0.4 sẽ KHÔNG dùng IRS dù
+            R_LoS=0.4 có 57.5% direct-blocked (agent đã quên IRS-routing prior).
+       ★ PICKER LACUNA (F7 confirmed): pick_resume_ckpt check ent_ph + reward + explVar — KHÔNG
+         check ent_q hay IRS%. → cần extend criterion #5: IRS-usage ≥ 40% (no-F1-basin) hoặc ent_q
+         ≥ band. Đến lúc đó, override picker thủ công khi resume cross-ramp.
+       ⚠⚠ FEASIBILITY-SAMENESS (probe 2026-06-10): Direct-blocked 57.5% GIỐNG HỆT @ R_LoS 0.2/0.3/0.4
+         (P=70 dBm). Direct-only QoS=100% ở cả 3 ramp. ⇒ env-pressure KHÔNG tăng theo ramp →
+         IRS không structurally needed; agent CHỌN dùng IRS hay không là REWARD-decision, not env-force.
+       ⭐⭐⭐ R5-VS-R16 ROOT-CAUSE DIAGNOSIS (NEW 2026-06-10, replaces earlier "F1 basin" framing):
+         r5 (fresh λ=1.5 ramp 0.2): power-alloc CHƯA learned → R_tot via direct yếu (1.5-2.0) → IRS
+           win reward → agent stuck in IRS-heavy basin (IRS 50-64%, IRS > Blk ổn định).
+         r16 (resume r5/ep_900 + ramp 0.3 + λ=2.5): power-alloc đã warmed → direct + power-opt cho
+           R_tot 3.0+ (gấp đôi IRS-heavy 1.5) → migrate sang direct-heavy basin (IRS 14% cuối run).
+         Crossover @ ~ep500: ΔR_tot +0.5 từ bỏ IRS vs ΔQoS-penalty chỉ -0.04 với λ=2.5 (3pt × 0.1
+           × 2.5) → agent ĐÚNG khi bỏ IRS theo reward function. KHÔNG phải F1 optimization bug,
+           là reward-landscape SHIFT.
+         ⇒ "λ chưa đủ cao" hypothesis user: ĐÚNG MARGINALLY. Tính ngược: cần λ ≥ ~4-5 mới đủ
+           tilt reward để giữ IRS. λ=2.5→4.5 fixed bump = chắc chắn [K] → KHÔNG được fixed-bump.
+         → DIAGNOSIS: cần Lagrangian (qos-target cao + lr nhanh) để λ tự rise theo nhu cầu.
+       NEXT (ramp 0.4) — Path B Lagrangian (KHÔNG Path A fixed, sẽ burn lại):
+         train.py --R-LoS 0.4 --lagrangian --qos-target 0.90 --lambda-lr 0.10 --lambda-min 2.5
+                  --lambda-max 5.0 --resume results/result_8/checkpoints/ep_00300/agents
+                  --episodes 1500 --seed 0
+         Params: target 0.90 (vs r15's 0.85 quá thấp), lr 0.10 (vs r15's 0.05 quá chậm), max 5.0
+           (room cho λ rise nếu env structurally cần). Min 2.5 chặn rớt khỏi prior.
+         Watch ep~50-200: ✅ λ rising 2.5→2.8 + IRS/5 ≥ 1.5; ⚠ λ→5.0 + QoS<target = struct issue
+           (không phải λ); ⚠ IRS<1.0 dù λ rising = P_S quá cao → cân nhắc hạ P_S 70→60 dBm để
+           physically ép IRS (probe: hạ P → Direct% tụt → IRS structurally needed).
+
+  ⭐⭐⭐ BLOCKED-DIRECT UNDER-ROUTING PROBE (Case 1) 2026-06-10 — probe_blocked_direct_quality.py:
+     Hỏi: blocked users mà agent route sang DIRECT — liệu LIVE PhaseMLP IRS có tốt hơn không?
+     Phương pháp: |h_irs_live|² (LIVE PhaseMLP phase) vs |g_SU|² per blocked-direct user.
+     Kết quả 3 ckpts Case 1:
+       r12 ep_00100 (đĩa r12, ramp 0.4 lagrangian qos-target 0.95 ←r8/ep_00300):
+         9149 blocked total · 81.1% routed IRS · 18.9% routed direct (1726 cases analyzed)
+         IRS-live beats direct: 99.9% · gain median +27.97 dB (p25 +24.14, p75 +31.23)
+       r8 ep_01000 (đĩa r8, ramp 0.3 sweet):
+         9178 blocked · 38.6% routed IRS · 61.4% routed direct (4034 analyzed)
+         IRS-live beats direct: 100.0% · gain median +30.29 dB
+       r8 ep_01200 (đĩa r8, ramp 0.3 burned):
+         9178 blocked · 23.7% routed IRS · 76.3% routed direct (3109 analyzed)
+         IRS-live beats direct: 99.9% · gain median +29.00 dB
+     ⭐⭐ VERDICT: UNDER-ROUTING OBJECTIVELY CONFIRMED 100% across CASE 1 ramps:
+       - LIVE PhaseMLP đủ tốt (alignment ~33% nhưng N=24 elements + blocked direct → +28 dB SNR).
+       - Phase NOT bottleneck cho routing-decision của blocked users.
+       - Root cause Case 1 under-routing = Q-HEAD F2 CREDIT (assignment), không phải PhaseMLP.
+     ⭐ TRAJECTORY: càng train ở ramp 0.3+ với λ fixed 2.5 → càng under-route (38%→24% blocked-IRS).
+       Lagrangian r12 ngay ep_00100 đã đảo ngược (81.1% blocked-IRS) → Lagrangian high-qos-target
+       IS the right Q-head lever cho Case 1. L1 distill / q-entropy schedule là alternatives.
+     IMPLICATIONS Case 1:
+       - Path B Lagrangian (đã recommended) đang work cho Q-head fix
+       - PhaseMLP improvement (supervised warmup / freeze) sẽ giúp R_tot polish, KHÔNG fix routing
+       - Probe reports: results/result_12, results/result_8 → output qua stdout (chưa save .txt)
+
+  ⭐ UPDATE result_12 (đĩa, ramp 0.4 Lagrangian qos-target0.95 lr0.10 ←r8/ep_00300) @ep~300 2026-06-10:
+     blocked_direct probe ep_00300: 77.9% blocked→IRS, 22.1% under-routed (2022 cases), IRS-live beats
+       direct 99.9% +28.18dB median. λ creep 2.60→2.68 (QoS_roll 90% vs target 95%, viol +0.05 → λ chậm).
+     ⭐⭐ LAGRANGIAN VALIDATED vs fixed-λ (apples-to-apples blocked→IRS %):
+       fixed-λ2.5: r8 ep1000=38.6%, r8 ep1200=23.7%  |  Lagrangian: r12 ep100=81.1%, ep300=77.9%
+       → Lagrangian giữ IRS GẤP ĐÔI fixed-λ. Aggregate IRS drop 2.5→2.0 là do non-blocked composition,
+         KHÔNG phải burn (conditioning trên blocked vẫn ~78%).
+     VERDICT: under-routing NHẸ (22% blocked mis-routed, drift chậm 81→78%/200ep). Residual 22% =
+       reward-irrational (+28dB unused) = F2 Q-HEAD CREDIT limit (phase fine). Lagrangian-on-QoS là
+       INDIRECT lever (QoS⊥IRS: QoS 90% đạt qua direct+power-concentration wc72-76%, không cần max IRS;
+       λ bò chậm vì viol nhỏ) nhưng VẪN hiệu quả hơn fixed-λ nhiều.
+     ACTION: để chạy tiếp + watch blocked→IRS giữ >70%. Nếu muốn đóng 22%: lr 0.10→0.15 (watch [K]) hoặc
+       Q-head direct-routing reward bonus (code mới, chỉ nếu 22% blocker cho paper). KHÔNG kill Lagrangian.
+
+  ⭐⭐ Q-HEAD CREDIT FIX — ROUTING SHAPING (Option 1) BUILT 2026-06-10 (--routing-shape):
+     Mục tiêu user: IRS ≥ Blk (hiện IRS~2.3 < Blk~2.6, gap ~0.3 = 22% blocked under-routed).
+     Cơ chế: directed CE gradient kéo assignment policy → IRS-favored link cho users mà IRS>direct
+       (dùng _irs_favored_target: argmax IRS path > direct). +shape_coef·mask·(π−onehot_IRS) cộng vào
+       dL/dlogits của Q-head. Chỉ shape IRS-favored users → KHÔNG over-route non-blocked.
+     ⭐ KHÁC entropy re-raise (F5 bác): shaping = gradient CÓ HƯỚNG → kéo được CẢ committed policy
+       (lực nhất quán, không phải exploration vô hướng) → RESUME-SAFE, KHÔNG cần restart.
+     VALIDATED: finite-diff grad 5.98e-08 · quantum+classical no-crash · integration smoke qc-grad↑.
+     Flags: --routing-shape --routing-shape-coef(0.1). Default OFF. train.py + cả 2 actor.
+     COMMAND ramp 0.5 (resume result_12 best IRS-ckpt, shaping + Lagrangian giữ λ):
+       train.py --R-LoS 0.5 --routing-shape --routing-shape-coef 0.1 --lagrangian --qos-target 0.90
+                --lambda-lr 0.10 --lambda-min 2.5 --lambda-max 5.0
+                --resume results/result_12/checkpoints/ep_XXXX/agents --episodes 1500 --seed 0
+       Pick ckpt: blocked→IRS cao nhất (probe_blocked_direct_quality) + ent_q chưa quá thấp.
+       WATCH: IRS/Blk → IRS≥Blk; nếu IRS vẫn < Blk @ep~300 → coef 0.1→0.2-0.3. Nếu IRS≫Blk (over-route)
+         → coef↓. ⚠ UNCOMMITTED.
+
+  ⭐ result_12 STOPPED @ep801 (POWER OUTAGE 2026-06-11, dừng sạch). Final: QoS giữ 80% suốt, R_tot 2.33,
+     λ leo 2.6→3.08 (Lagrangian đẩy tiếp), best reward 481@ep292. ⭐ CRITIC KHỎE explVar 0.67-0.73 stable
+     (ổn định late). 8 ckpts ep_00100→ep_00800.
+     IRS/Blk per ckpt: ep400(2.4/2.7) ep500(2.4/2.4=CROSSOVER) ep800(2.2/3.0↓). Blocked-direct probe
+     ep400+ep500: cả 2 = 100% under-route, phase mạnh +27-28dB → Q-head credit (routing-shape đúng lever).
+     → RESUME RAMP 0.5 từ ep_00500 (IRS=Blk crossover + critic khỏe + IRS-usage cao nhất):
+       train.py --R-LoS 0.5 --routing-shape --routing-shape-coef 0.1 --lagrangian --qos-target 0.90
+                --lambda-lr 0.10 --lambda-min 2.5 --lambda-max 5.0
+                --resume results/result_12/checkpoints/ep_00500/agents --episodes 1500 --seed 0
+       (Telegram: /ramp 0.5 2.5 result_12/checkpoints/ep_00500 1500 shape lag=0.90)
+       Resume KHÔNG freeze phase → KHÔNG regime-shift như result_13. λ reset lambda-min trên resume.
 ================================================================================

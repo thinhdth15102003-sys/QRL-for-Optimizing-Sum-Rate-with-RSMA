@@ -447,7 +447,8 @@ class PhaseMLP:
 
     def compute_grads_batch(self, trans_list: list,
                             eff_adv_b: np.ndarray,
-                            beta_entropy: float = 0.0) -> tuple:
+                            beta_entropy: float = 0.0,
+                            counterfactual: bool = False) -> tuple:
         """
         Vectorised REINFORCE+PPO gradient for PhaseMLP over a mini-batch.
 
@@ -471,12 +472,26 @@ class PhaseMLP:
         panels_s   = []
         panels_idx = []
         sample_ids = []
+        panel_w    = []   # Δ7: per-panel occupancy weight (1.0 unless counterfactual)
 
         for b, trans in enumerate(trans_list):
-            for m in _active_irs_from_phi(trans['phi']):
+            act = _active_irs_from_phi(trans['phi'])
+            if counterfactual and len(act) > 0 and 'q_pi' in trans:
+                # Δ7 COUNTERFACTUAL: scale each active IRS's phase gradient by its
+                # π_q EXPECTED OCCUPANCY (Σ_k π_q[k, m+1]) so phase credit tracks the
+                # routing distribution smoothly instead of the jumpy sampled-active
+                # set (F2 mitigation). Normalised to mean=1 over active IRS → overall
+                # gradient magnitude unchanged (reduces to vanilla when occupancy uniform).
+                occ   = np.asarray(trans['q_pi'])[:, 1:].sum(axis=0)   # (M,) expected #users per IRS
+                w_act = np.array([occ[m] for m in act], dtype=float)
+                w_act = w_act / (w_act.mean() + 1e-8)
+            else:
+                w_act = np.ones(len(act), dtype=float)
+            for m, w in zip(act, w_act):
                 panels_s.append(_layer_norm(trans['s_phase'][m]))
                 panels_idx.append(trans['phase_idx'][m])
                 sample_ids.append(b)
+                panel_w.append(float(w))
 
         if not panels_s:
             return 0.0, 0.0, {}
@@ -492,7 +507,7 @@ class PhaseMLP:
         ).reshape(T, self.N, self.n_levels)                    # (T, N, L)
 
         one_hot_3d = np.eye(self.n_levels)[idx_all]            # (T, N, L)
-        eff_t      = eff_adv_b[sample_ids]                     # (T,) per-panel eff adv
+        eff_t      = eff_adv_b[sample_ids] * np.asarray(panel_w)  # (T,) Δ7 occupancy-weighted
 
         dL_pg_3d  = -eff_t[:, None, None] * (one_hot_3d - probs_3d)  # (T, N, L)
         log_p_3d  = np.log(probs_3d + 1e-10)                         # (T, N, L)

@@ -1,12 +1,124 @@
 ================================================================================
   PROJECT TODO LIST  ·  source of truth cho "việc gì tiếp theo"
 ================================================================================
-  Last updated: 2026-06-05 sau EXP-3 launch + USER PRIORITY PIVOT: training tasks ↑,
-                paper writing (trừ ablation drafts) lùi tới khi có full results.
+  Last updated: 2026-06-08 (REFRESH — xem STATUS SNAPSHOT ngay dưới). Trước: 2026-06-05
+                EXP-3 launch + USER PRIORITY PIVOT (training tasks ↑, paper trừ ablation-drafts lùi).
                 Strategy: train song song các Case sau khi assignment bottleneck được giải quyết.
   Convention:  [✅] done · [⏳] in-flight · [ ] pending · [🚫] skip/deferred · [⚠] blocked
   Priority tags: 🔴 critical-path · 🟡 important · 🟢 nice-to-have
 --------------------------------------------------------------------------------
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ⭐ STATUS SNAPSHOT 2026-06-08 (REFRESH — supersedes stale items below)      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  Đọc block này TRƯỚC. Các mục bên dưới giữ làm reference lịch sử, đã bị superseded.
+
+  ═══ 2026-06-09 UPDATE (4 lever mới BUILT + findings — xem memory handoff-2026-06-09) ═══
+  🟢 ACTIVE: result_8 (Case1 ramp0.3 +lagrangian λ→1.81, HEALTHY) · result_9 (Case2 fresh VANILLA).
+     USER launching: ramp0.4 từ r8/ep_00600 (lr0.10 max5.0 +entropy0.3) + Case2 +counterfactual khi rảnh GPU.
+  ✅ CODE BUILT (additive, default-OFF, py_compile PASS, UNCOMMITTED):
+     [✅] Lagrangian λ_D: --lagrangian --qos-target --lambda-lr --lambda-min --lambda-max (dual-ascent QoS target,
+          gentle ramp né [K]). ⚠ lr=0.05 TOO SLOW → dùng 0.10-0.15 cho QoS push. Validated r7/r8.
+     [✅] RESUME case auto-detect (train.py): đọc K/M từ ckpt → khỏi juggling params.py. FIXES env↔actor mismatch crash.
+     [✅] Entropy CLI: --beta-entropy[-min][-anneal-end]. "Cao hơn" = --beta-entropy-anneal-end 0.3.
+     [✅] Δ7 PhaseMLP counterfactual: --phase-counterfactual (occupancy-weighted, CONSERVATIVE; ≈no-op M=1;
+          M≥2 only). NOT full-densify (rollout-change future). Unit test tests/test_phase_counterfactual.py ALL PASS.
+  ⭐ FINDINGS: (F1) Case2 agent PARETO-DOMINATED — 66% QoS reward-SUBOPTIMAL @λ1.5 (need λ~5.4); coord-ascent
+     "oracle" = LOCAL opt; reward-optimal≈all-direct. 2 headroom: assignment escape-basin (both↑) + λ (trade-off).
+     (F2) P=50 INFEASIBLE Case2 (servable 58%<66%); keep P=70. (F3) r5 nq12 peak QoS86%→mild-drift72%, HEALTHY.
+     (F4) curriculum+Lagrangian robustness VALIDATED. (F5) entropy: new-arch PopArt nới [C] → enhance entropy phase.
+  🔴 COMMIT new code khi stable. Best ckpts: r5 ep_00900, r8 ep_00600. New probes: probe_assignment_sensitivity,
+     probe_feasibility_at_P.
+  ═════════════════════════════════════════════════════════════════════════════════════
+
+  🟢 IN FLIGHT (user-launched; Claude chỉ probe + short analysis):
+    - r5 = Case 1 (K5 M1) nq12 λ1.5 FRESH — leo tốt @ep~311, best 259 (vượt baseline cũ 191).
+      → READY-TO-LOCK khi xong (pipeline final post-G4; chỉ cần results-check no-drift).
+    - r6 = Case 2 (K10 M2) nq12 λ1.5 FRESH — vừa phá plateau best→169.7, R_tot→1.72 (tiến gold r11 1.75).
+      → watch explVar wobble 0.1-0.3 (likely transient do breakthrough); PhaseMLP ent giảm 39.5→31.8.
+
+  🔴 STOPPED (λ=2 quá aggressive / [K]):
+    - r1 (Case2 λ2) drift −350% · r17 (Case1 λ2, đã reach oracle) drift −419% · r4 (Case1 λ_D bump) [K].
+
+  ✅ DONE since 2026-06-05:
+    - G4 nq=12 UNIFY — params.py auto-derive _per_case_hyper(K); ZERO RL/ change; smoke 3 cases pass;
+      backup params_pre_unify_backup.py. Future Case 1/3 runs chỉ cần edit K, M.
+    - EXP chain CLOSED: EXP-1 freeze = F2∩F4 mix 34% · EXP-3 warmup = NET NEGATIVE (V3 final) · D_k=0.15 FAIL.
+      → bottleneck levers (EXP-3b/Δ7/L1/EXP-2) = Case 2/3 only; Case 1 reached ORACLE (solved, r17 Δ=−0.001).
+
+  ⭐ NEW FINDINGS (chốt 2026-06-08; chi tiết Common-Knowledge [I-4]/[K] + Training-Case-1 r13/r14):
+    - [I-4] λ_D=1.5 = sweet-spot R_LoS=0.2 (cả Case 1+2); λ≥2 → drift catastrophic.
+    - [K] LAMBDA-BUMP-COLLAPSE: NEVER bump λ_D on resume (fresh restart cho λ change; R_LoS bump on resume OK).
+    - UNIFY giúp Case 1 (controlled): nq8(đĩa r3) vs nq12(đĩa r5) CÙNG λ1.5 → +28pt QoS matched-ep;
+      unify TÁCH "QoS cao" khỏi "λ cao gây drift" (paper C3 AE-VQC). nq8 drift cả ở λ1.5.
+
+  🔴 NEXT IMPLEMENTATION (TOP): G5 A1 ClassicalActor (--actor-mode flag; ADDITIVE, default quantum
+     KHÔNG đổi → không invalidate r5). Cần result_5 config làm reference → lock Case 1 trước/song song.
+     Chi tiết Section 4B + handoff. Effort ~1 ngày code + 1 ngày smoke.
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ⭐ SECTION 0B — PAPER RESULTS + ABLATION PLAN (chốt 2026-06-10 với user)     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  Cấu trúc bảng paper (user-defined 2026-06-10). Số trong ngoặc = tên user dùng.
+  CASE 3 SCALED DOWN: K=20/M=4 → K=15/M=3 (params.py comments updated; nq=12 giữ nguyên).
+
+  ── RESULT TABLES ──────────────────────────────────────────────────────────────
+  [✅] R1 (1) Case 1 vs other papers (Tan 2026 + baselines) — DONE, đã vượt. Chỉ cần
+       reconcile tab:hyper khớp config CŨ (xem Section 2 LỆCH PAPER vs CODE).
+  [⏳] R2 (2) Case 1/2/3 @ nq=12 — Case1 ✅(r5/r8 đĩa) · Case2 ✅(r11 arch2 gold) ·
+       Case3 ❌ CHƯA CHẠY (K15/M3). → cần full curriculum Case 3 (~4 ramp runs 0.2→0.5).
+       Blocker: chốt P_S tier (xem ⚠ DECISIONS) + lock Case1/Case2 final ckpt.
+  [ ] R3 (3) Scale K=5,6,7,8,9 @ M=1 — chỉ K5 ✅. Cần K6,7,8,9 M1 (4 runs FULL RETRAIN từ scratch).
+       ⚠ PHẢI RETRAIN mỗi K (kiến trúc K-dependent: W_proj 2K, assignment (M+1)^K, post-NN K×(M+1),
+       AE dims) — model K=5 KHÔNG chạy được input K=6. Khác R4 noise (cùng net, chỉ đổi env).
+       ✅ DECIDED 2026-06-10: FIX P_S=50 cho cả sweep (theo paper gốc không đổi P_S). K6-9 auto rơi
+       tier P_S=70 → CẦN --P-S TRAIN flag để ép 50. Clean scale-K axis (no P confound). K5 đã P_S=50.
+  [ ] R4 (4) Scale noise env ↑ — ✅ DECIDED 2026-06-10: INFERENCE MODE (KHÔNG retrain). Load 1 locked
+       ckpt → eval dưới nhiều mức noise → degradation curve. Robustness/zero-shot generalization claim
+       (khớp C1 imperfect-CSI). Sweep kappa (CSI err, chính) ± noise_var_dBW. reward_noise_avg irrelevant.
+       Code: add --kappa/--noise-var flag cho INFER.PY (make_config đã nhận 2 param; ~10 dòng passthrough).
+       ⚠ Paper caveat: = robustness của policy CỐ ĐỊNH dưới shift, KHÔNG phải 'train được dưới noise cao'.
+  [ ] R5 (5) vs DNN — = ClassicalActor (G5 TOP-NEXT, chưa build). impl + runs. SHARED với A2.
+
+  ── ABLATIONS ──────────────────────────────────────────────────────────────────
+  [✅] A1 (1) Frozen-λ — DATA ĐỦ: Frozen-Lambda-Proposition.txt (778 lines, 4 Props),
+       probes lam_landscape/lam_interference (r11 ep300-1700), anchor r11 ep_01400. → chỉ WRITE-UP.
+  [ ] A2 (2) VQC vs DNN — = R5 ClassicalActor (shared impl). param-eff ~2K SoftmaxPQC vs ~50K MLP.
+  [ ] A3 (3) VQC design — VQC-Readout-Design.txt (20KB) + arch-2 LIVE (R1 readout 42obs + SoftmaxPQC
+       + B1/B2/B4 observables). Cần controlled 1-knob runs: readout on/off, observable variant,
+       SoftmaxPQC vs PostNN (PostNN = r1-9 baseline ĐÃ CÓ data → 1 nửa controlled-pair sẵn).
+  [⏳] A4 (4) Hierarchy design — F3 (assignment oracle +18% rew/+17pt QoS) + F4 (distill 51% z_t)
+       probes ĐÃ CÓ; EXP-1 freeze (mix 34%) + EXP-3 warmup (net-neg) CLOSED. → framing + maybe
+       1-2 confirm run. Sequential 4-var chain (assign→phase→power→Ck) = design choice to defend.
+
+  ⚠ DECISIONS (chốt 2026-06-10 với user):
+   D1. ✅ Case 3 P_S = GIỮ 100 (tier K>10, không thêm tier K≤15).
+   D2. ✅ R3 scale-K = FIX P_S=50 cả sweep (paper gốc) → cần --P-S override flag.
+   D3. ⏳ Numbering: Ablation-Plan A1-A7 ≠ paper-tex A1-A5 ≠ user 1-4. Pick canonical map 1 lần
+       (Ablation-Plan SEC dòng 51-57). Để khi fill ablation appendix.
+
+  ── ⭐ EXECUTION ORDER (chốt 2026-06-10) ─────────────────────────────────────────
+   1. Case 1: đợi ramp 0.5 (curriculum r8/r12 chain) → LOCK. Gần xong, chỉ còn 1 ramp.
+   2. Case 2: tiếp tục chạy để quyết (plateau fix — phase-warmup+freeze+Lagrangian experiment).
+   3. ⭐ KHI Case 1 LOCK + trống 1 GPU slot → build R5+A2 ClassicalActor, CHẠY TRƯỚC TRÊN CASE 1
+      (Case 1 config = locked reference, sạch nhất cho param-eff DNN-vs-VQC compare).
+   4. Sau đó: Case 3 K15/M3 curriculum (R2) · R3 scale-K (cần --P-S) · R4 noise (cần --kappa/--noise).
+
+  ── CODE GAPS (cần build cho results trên) ──────────────────────────────────────
+  [✅] G5 ClassicalActor (--actor-mode classical) → R5 + A2. BUILT 2026-06-10 (RL/classical_actor.py).
+       Pure-MLP actor (s_t→enc→z_t[n_latent]→pol→logits); AE+VQC+head thay bằng DNN. Sub-actors giữ
+       classical. 52,022 params @ Case2 (vs VQC ~2K = param-eff story C2/C3). VALIDATED: py_compile +
+       interface smoke + finite-diff gradient check (rel-err 8e-08) + end-to-end train smoke EXIT=0
+       (diag ae=0/qc=real/xi=0, λ=0 stub, sub-actors+critic train OK, ckpt save+resume roundtrip).
+       params.py knobs: classical_enc_hidden/classical_pol_hidden/lr_classical_actor. Default OFF
+       (--actor-mode quantum unchanged). ⚠ UNCOMMITTED. → CHẠY trên Case 1 locked ckpt config.
+  [ ] --P-S TRAIN flag (train.py) → R3 clean scale-K (P_S=50 fixed, K6-9 retrain). [DECIDED cần]
+  [ ] --kappa / --noise-var flag cho INFER.PY (KHÔNG train.py) → R4 inference noise sweep. [nhẹ]
+  [ ] A3 VQC-design 1-knob toggles (readout/observable/head) nếu chưa có flag riêng.
+  [✅] --routing-shape (Q-head credit fix Option 1) BUILT 2026-06-10 → IRS≥Blk lever cho Case 1
+       under-routing. Directed CE pull → IRS-favored link. RESUME-SAFE (gradient-only, kéo committed
+       policy được — khác entropy F5). VALIDATED grad 5.98e-08 + quantum/classical smoke. Chi tiết
+       docs/Training-Case-1.txt. ⚠ UNCOMMITTED.
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  SECTION 1 — IN FLIGHT + RECENT KILLED (2026-06-05 machine reset incident)   ║
@@ -14,6 +126,9 @@
   ⛔ NEW WORKFLOW RULE (2026-06-05): user tự launch training, Claude chỉ probe+analysis
      ngắn. Lý do: Claude background-spawn training → stuck task → Claude update không mở
      được → reset máy → mất training progress. Xem MEMORY.md top.
+
+  ✅✅ SEC 1 KILLED-RUNS RESOLVED (→ ALREADY DONE): r14 ramp2 / r15 EXP-3 / r16 wrong-launch — verdicts closed.
+     Active runs HIỆN TẠI = STATUS SNAPSHOT (top). Các mục [💀] dưới = reference lịch sử, ĐÃ XỬ LÝ.
 
   ⚠ [💀] result_14 RAMP-2 (R_LoS=0.3)                       KILLED @ ep_01100 (reset)
          Last ckpt: results/result_14/checkpoints/ep_01100
@@ -92,8 +207,12 @@
          in docs/Frozen-Lambda-Proposition.txt. Math/scripts invariant.
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  SECTION 3 — EXP CHAIN (D_k verdict = WEAK, EXP-1 verdict = MIX 34%)         ║
+║  SECTION 3 — ✅ EXP CHAIN CLOSED (D_k FAIL · EXP-1 mix 34% · EXP-3 net-neg)    ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+
+  ✅✅ EXP CHAIN HOÀN TẤT (→ ALREADY DONE): D_k=0.15 FAIL · EXP-1 freeze = F2∩F4 mix 34% ·
+     EXP-3 warmup = NET NEGATIVE (V3 final). Bottleneck XÁC ĐỊNH = assignment (F2+F4); lever cho
+     Case2/3 = Δ7 counterfactual (BUILT 2026-06-09) / L1 distill. Phần dưới = reference lịch sử.
 
   This section is a REFERENCE for EXP-chain status + decision matrix. Concrete code todos
   live in Section 4A (bottleneck levers) and Section 4B-4D (training infrastructure).
@@ -211,7 +330,7 @@
          [ ] Smoke pilot 200ep verify pipeline + no shape errors
          [ ] Deploy on Case 2 conditional on transfer verdict
        Estimated: 1 day code + 1 day pilot.
-  🗓 [ ] TASK B: G4 nq=12 unification (paper-ready uniform arch)
+  🗓 [✅] TASK B: G4 nq=12 unification — ✅ DONE 2026-06-08 (xem SNAPSHOT top; chi tiết steps dưới)
        Goal: Case 1/2/3 all use nq=12. Per Ablation-Plan PHẦN C.
        Why now: paper claim "fixed 12 qubits, NISQ-feasible" needs this; postpone-after-results
        was acceptable when Case 1 baseline ongoing — now Case 1 solved, ready to unify.
@@ -226,13 +345,12 @@
        Estimated: 1-2 days code + ~3 days pilots.
 
 
-  🔴 [ ] G4 nq=12 unification — Case 1 (nq=8) + Case 3 (nq=16) → nq=12 unified
-       Soft-cluster trainable via data re-uploading depth + trainable λ scaling.
-       Per Ablation-Plan PHẦN C: D_enc=2 (C1), 3 (C2), 5 (C3). Implementation:
-       [ ] params.py auto-detect K,M → D_enc map (3 cases)
-       [ ] Test current code @ nq=12 K=5 M=1 (Case 1 smoke) + nq=12 K=20 M=4 (Case 3 smoke)
-       [ ] Verify VQC + AE shapes accommodate new (K,M,nq) combinations
-       Unblocks: Case 1 + Case 3 fresh runs on unified architecture.
+  ✅ [✅] G4 nq=12 unification — DONE 2026-06-08. Case 1 (nq8→12, D_enc=2, W_proj 10→22 EXPANSION),
+       Case 2 (D_enc=3, W_proj 20→20 IDENTITY = baseline unchanged), Case 3 (D_enc=5, W_proj 40→16).
+       [✅] params.py auto-derive _per_case_hyper(K) → P_S/n_var_layers/n_hidden_ae + D_enc map (3 cases)
+       [✅] Smoke nq=12 K=5 M=1 + K=10 M=2 + K=20 M=4 — forward OK, shapes OK, ZERO RL/ change
+       [✅] Backup params_pre_unify_backup.py · r5/r6 đang chạy trên arch unified này.
+       Unblocked: Case 1 + Case 3 fresh runs chỉ cần edit K, M.
   🔴 [ ] G5 A1 ClassicalActor — VQC-vs-classical matched-param ablation infrastructure
        Per Ablation-Plan A1a (iso-VQC-param) + A1b (iso-total-param):
        [ ] Implement actor_mode='classical' ClassicalActor in RL/
@@ -271,6 +389,24 @@
          [ ] Smoke pilot at Case 2 K-flex (K ∈ [5,10])
          [ ] Full Case 3 K-flex (K_max=15) if pilot OK
 
+  4E. ⭐ CURRICULUM-INIT SELECTION PROTOCOL (chọn ckpt ramp=0.2 làm init — 2026-06-09, mình làm sau)
+      Mục tiêu: init = ADAPTABLE/ROBUST (không collapse khi đổi ramp/λ), KHÔNG phải best-performer.
+      (R_tot/QoS cao tương đối là HỆ QUẢ của stable+balanced, không phải target.)
+      Code TRANSFER on resume: actor (4 sub) + critic ĐỀU warm-start (chỉ PopArt μ,σ re-snap) → cả 2 stable đáng giá.
+      Protocol 4 lớp:
+        L1 source-metrics (pick_resume_ckpt — ĐÃ CÓ): reward≥80%peak · ent_ph∈[40,60]% · explVar>0.5 · ≥20ep post-peak.
+        L2 no-degen + phase-quality: scan behaviour (KHÔNG single-IRS collapse / wc-lock>75% / Ck-sink) +
+           probe_phase_quality (alignment THẬT, không idle-dù-mid-entropy).
+        L3 ⭐ TRANSFER smoke (test THẬT cho "không collapse"): top-1-2 → smoke ~100-150ep ở ramp+λ MỚI → watch
+           explVar>0.4, no [K], QoS/R_tot không crash, phase không unlearn. Cái HOLD = init.
+        L4 ưu tiên robustness > peak: nhiều entropy headroom hơn + ít mầm-degenerate.
+      🔴 [ ] EXTEND pick_resume_ckpt: thêm (a) ent_q ASSIGNMENT-entropy band (KHÔNG chỉ ent_ph phase — GAP: r8/ep600
+             ent_ph 50% NHƯNG ent_q committed → resume under-IRS persists, xem result_12), (b) no-degen
+             (wc-lock/single-IRS/Ck-sink), (c) phase-alignment.
+      🔴 [ ] BUILD transfer-smoke-eval: đánh giá ckpt ở ramp mới KHÔNG train (probe-style) → degrade gracefully hay break.
+      ⚠ KEY LESSON (result_12): entropy-extension (--beta-entropy-anneal-end) chỉ giúp khi FRESH/sớm (TRƯỚC commit);
+         RESUME policy đã-committed (ent_q thấp) → entropy bonus KHÔNG un-commit → init PHẢI chọn ent_q-headroom.
+
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  SECTION 5 — OPERATIONAL / MAINTENANCE                                       ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -308,6 +444,15 @@
 ║  ✅ ALREADY DONE (recent — keep here so không re-do)                        ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
+  Major 2026-06-09 (session: 4 lever BUILT — xem memory handoff-2026-06-09 + Common-Knowledge [L]/[M]):
+  [✅] Lagrangian λ_D · RESUME auto-detect · entropy CLI flags · Δ7 counterfactual (occupancy-weighted, M≥2) — all
+      additive/default-off/validated (tests/test_phase_counterfactual.py PASS). ⚠ UNCOMMITTED.
+  [✅] SEC 1 killed-runs RESOLVED: r14 ramp2 / r15 EXP-3 (net-neg) / r16 wrong-launch — closed.
+  [✅] SEC 3 EXP CHAIN CLOSED: D_k=0.15 FAIL · EXP-1 mix 34% · EXP-3 net-neg → bottleneck = assignment (F2+F4).
+  [✅] FINDINGS: Case2/Case1 PARETO-DOMINATED (66%QoS reward-suboptimal@λ1.5) · P=50 infeasible (servable 58%) ·
+      r5 nq12 mild-drift healthy · curriculum+Lagrangian robustness validated · entropy-enhance-for-new-arch.
+  [✅] New probes: probe_assignment_sensitivity, probe_feasibility_at_P. Best ckpts: r5 ep_00900, r8 ep_00600.
+
   Major findings 2026-06-03 → 2026-06-04:
   [✅] Drift-resistance test (arch-2 vs r8 collapse) — PASSED, Finding #6
   [✅] Assignment deep-dive (oracle +17pt headroom, distill 51%)
@@ -341,6 +486,9 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  GREEDY PRIORITY ORDER (next 7 days — strategy: training tasks ↑, paper end) ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+  ⚠ KẾ HOẠCH 7-NGÀY DƯỚI ĐÂY LẬP 2026-06-05 — ĐÃ ELAPSED + SUPERSEDED bởi STATUS SNAPSHOT (top).
+    Day 0-1 (build G4/G5, probe EXP-3) đã xong/đã verdict. Ưu tiên HIỆN TẠI: (1) monitor r5/r6,
+    (2) lock Case 1 khi r5 xong, (3) build G5 A1 ClassicalActor. Phần dưới giữ làm reference.
   ⭐ STRATEGY: training-related tasks (code unblocking runs + actual runs) ưu tiên #1.
      Paper writing chỉ ablation drafts (chưa có prose) trong while-waiting slots; phần
      polished prose chờ đến khi có FULL RESULTS (post curriculum + ablation runs).

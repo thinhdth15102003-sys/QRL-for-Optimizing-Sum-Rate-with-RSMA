@@ -1197,7 +1197,10 @@ class QuantumActor:
                                      ppo_epsilon:  float,
                                      ae_weight:    float,
                                      beta_entropy: float,
-                                     K_active: int = None) -> tuple:
+                                     K_active: int = None,
+                                     routing_target_b=None,
+                                     shape_mask_b=None,
+                                     shape_coef: float = 0.0) -> tuple:
         """
         Fused log-prob + gradient in ONE quantum forward pass.
 
@@ -1303,10 +1306,21 @@ class QuantumActor:
         one_hot_b = np.zeros_like(pi_b)
         one_hot_b[np.arange(B_s)[:, None], np.arange(K)[None, :], phi_np] = 1.0
 
-        dL_dlogits_b = (
+        dL_dlogits_3d = (
             -eff_q_b[:, None, None] * (one_hot_b - pi_b)
             + beta_entropy * pi_b * (log_pi_b + H_b[:, :, None])
-        ).reshape(B_s, K * nc)
+        )
+        # ── Routing shaping (Option 1): per-user CE pull toward the IRS-favored ──
+        #    link for users where IRS beats direct (shape_mask=1). Directed gradient
+        #    (+coef·mask·(π−onehot_target)) → biases assignment toward IRS for the
+        #    +Δ-gain users, addressing F2 under-routing. Default OFF (coef=0).
+        if shape_coef > 0.0 and routing_target_b is not None:
+            tgt_b = np.asarray(routing_target_b)            # (B_s, K) 1-based IRS id
+            msk_b = np.asarray(shape_mask_b, dtype=float)   # (B_s, K)
+            onehot_tgt = np.zeros_like(pi_b)
+            onehot_tgt[np.arange(B_s)[:, None], np.arange(K)[None, :], tgt_b] = 1.0
+            dL_dlogits_3d = dL_dlogits_3d + shape_coef * msk_b[:, :, None] * (pi_b - onehot_tgt)
+        dL_dlogits_b = dL_dlogits_3d.reshape(B_s, K * nc)
 
         # Assignment head backward (Δ4) → head grads + dL/dz_post + dL/do_hat
         _grads_head, dL_dz_post_b, dL_do_hat_b = self._head_backward_batch(

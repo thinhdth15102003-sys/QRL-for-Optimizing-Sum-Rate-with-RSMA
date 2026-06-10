@@ -41,7 +41,7 @@ import params as P
 from params  import make_config
 from CSI.env import ISTNEnv
 from CSI.baselines import DirectOnlyPolicy, AllIRSPolicy
-from RL        import QuantumActor, ClassicalCritic, PhaseMLP, PowerMLP, CkMLP
+from RL        import QuantumActor, ClassicalActor, ClassicalCritic, PhaseMLP, PowerMLP, CkMLP
 from RL.critic_diag import (compute_critic_diag, format_critic_diag_lines,
                             write_critic_diag_jsonl)
 from RL.quantum_circuit import GPU_BACKEND
@@ -202,6 +202,24 @@ def _compute_blocked(env: ISTNEnv) -> np.ndarray:
         for m in range(env.cfg.M)
     ])
     return h_irs.max(axis=0) > h_direct
+
+
+def _irs_favored_target(env: ISTNEnv):
+    """Routing-shaping target (Option 1): per user, the IRS id (1-based) whose
+    estimated-CSI path is strongest, plus a mask = (best IRS path > direct).
+    Reuses the _compute_blocked channel math → target is the IRS that makes the
+    user 'IRS-favored'. Returns (target (K,) int 1-based, mask (K,) float)."""
+    ch       = env.channels
+    h_direct = np.abs(ch['g_SU_hat'])
+    h_irs    = np.array([
+        ch['beta'][m] * np.abs(np.sum(
+            ch['g_SR_hat'][m].conj() * np.diag(env.Phi[m])[:, np.newaxis] * ch['g_RU_hat'][m],
+            axis=0))
+        for m in range(env.cfg.M)
+    ])                                                       # (M, K)
+    target = (h_irs.argmax(axis=0) + 1).astype(int)          # (K,) 1-based IRS id
+    mask   = (h_irs.max(axis=0) > h_direct).astype(np.float64)
+    return target, mask
 
 
 def _save_agents(run_dir: str, actor, phase_net, power_net, ck_net, cfg,
@@ -713,6 +731,11 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
             "D_k_bps_hz":     cfg.D_k_bps_hz,
             "lambda_D":       cfg.lambda_D,
             "epsilon_qp":     cfg.epsilon_qp,
+            "lagrangian":            getattr(args, 'lagrangian', False),
+            "lagrangian_qos_target": getattr(args, 'qos_target', None),
+            "lagrangian_lambda_lr":  getattr(args, 'lambda_lr', None),
+            "lagrangian_lambda_clip": [getattr(args, 'lambda_min', None),
+                                       getattr(args, 'lambda_max', None)],
         },
         "training": {
             "n_episodes":      args.episodes,
@@ -741,6 +764,7 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
             "seed":               args.seed,
         },
         "actor": {
+            "actor_mode":    getattr(args, 'actor_mode', 'quantum'),
             "d_s":           actor.d_s,
             "n_latent":      actor.N_LATENT,
             "n_qubits":      actor.N_QUBITS,
@@ -905,46 +929,127 @@ def _save_plots(run_dir: str, hist: dict, args, window: int = 10) -> list:
 # Training loop
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _pick_best_agents(run_dir):
+    """Run analysis/pick_resume_ckpt.py on a run-dir → best (sweet-spot) ckpt's agents/ path,
+    or None. Lets --resume take a results/result_N dir and auto-select the best agents."""
+    import subprocess, re as _re
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'analysis', 'pick_resume_ckpt.py')
+    try:
+        out = subprocess.run([sys.executable, script, '--run', run_dir],
+                             capture_output=True, text=True, timeout=90).stdout
+    except Exception:
+        return None
+    m = _re.search(r'(?:PICK|BEST-AVAILABLE):\s*ep_(\d+)', out)
+    if not m:
+        return None
+    p = os.path.join(run_dir, 'checkpoints', f'ep_{int(m.group(1)):05d}', 'agents')
+    return p if os.path.isdir(p) else None
+
+
 def _build_components(args):
     """
     Build all environment and agent objects without printing anything.
     Called before the log file is opened so that hyperparameters.json
     can be written first.
     """
+    # Entropy-schedule overrides (mutate P.* so _compute_beta + the json dump + the
+    # banner all reflect them). Default None → params.py value unchanged.
+    if getattr(args, 'beta_entropy', None) is not None:
+        P.beta_entropy = float(args.beta_entropy)
+    if getattr(args, 'beta_entropy_min', None) is not None:
+        P.beta_entropy_min = float(args.beta_entropy_min)
+    if getattr(args, 'beta_entropy_anneal_end', None) is not None:
+        P.beta_entropy_anneal_end = float(args.beta_entropy_anneal_end)
     cfg_overrides = {}
     if getattr(args, 'D_k', None) is not None:
         cfg_overrides['D_k_bps_hz'] = float(args.D_k)
     if getattr(args, 'R_LoS_km', None) is not None:
         cfg_overrides['R_LoS_km'] = float(args.R_LoS_km)
+    if getattr(args, 'lambda_D_fixed', None) is not None:
+        cfg_overrides['lambda_D'] = float(args.lambda_D_fixed)
+    if getattr(args, 'P_S_dBm', None) is not None:
+        cfg_overrides['P_S_dBm'] = float(args.P_S_dBm)   # R3 scale-K: fix P_S across K sweep
+    # ── RESUME run-dir → AUTO-PICK BEST ckpt (chọn agents tốt nhất) ───────────
+    # Nếu --resume trỏ vào RUN-DIR (results/result_N, có checkpoints/ nhưng không phải
+    # agents/ckpt) → tự chọn sweet-spot ckpt qua pick_resume_ckpt. Fallback: ep mới nhất.
+    _rs = getattr(args, 'resume', None)
+    if (_rs and os.path.isdir(os.path.join(_rs, 'checkpoints'))
+            and not os.path.isfile(os.path.join(_rs, 'actor_config.json'))):
+        _best = _pick_best_agents(_rs)
+        if _best:
+            print(f"  ⭐ RESUME AUTO-PICK best ckpt: {_best}")
+            args.resume = _best
+        else:
+            _eps = sorted(d for d in os.listdir(os.path.join(_rs, 'checkpoints'))
+                          if d.startswith('ep_'))
+            if _eps:
+                args.resume = os.path.join(_rs, 'checkpoints', _eps[-1], 'agents')
+                print(f"  ⚠ pick_resume_ckpt no pick → fallback latest: {args.resume}")
+    # ── RESUME case auto-detect ──────────────────────────────────────────────
+    # On --resume the env MUST match the checkpoint's Case (K,M); otherwise the
+    # loaded actor (sized for the ckpt) gets a wrong-sized state from an env built
+    # off params.py's CURRENT ACTIVE CASE → matmul shape crash in _dual_encode.
+    # Read K,M from the ckpt's actor_config.json (B field = M) and override cfg so
+    # resume is robust to whatever Case params.py is set to. make_config re-derives
+    # all per-case hypers (P_S, N, …) from the overridden K.
+    if getattr(args, 'resume', None):
+        _rd = args.resume
+        if (not os.path.isfile(os.path.join(_rd, 'actor_config.json'))
+                and os.path.isfile(os.path.join(_rd, 'agents', 'actor_config.json'))):
+            _rd = os.path.join(_rd, 'agents')
+        _acfg = os.path.join(_rd, 'actor_config.json')
+        if os.path.isfile(_acfg):
+            with open(_acfg) as _f:
+                _ac = json.load(_f)
+            _ck_K = int(_ac.get('K', P.K)); _ck_M = int(_ac.get('B', P.M))
+            if _ck_K != P.K or _ck_M != P.M:
+                cfg_overrides['K'] = _ck_K
+                cfg_overrides['M'] = _ck_M
+                print(f"  ⚠ RESUME CASE AUTO-DETECT: ckpt K={_ck_K} M={_ck_M} "
+                      f"≠ params.py K={P.K} M={P.M} → overriding env cfg to match ckpt")
     cfg = make_config(**cfg_overrides)
     if cfg_overrides:
         print(f"  ⚠ CFG OVERRIDE: {cfg_overrides}  (D_k_HYPOTHESIS test)")
     env = ISTNEnv(cfg=cfg, seed=args.seed, n_steps_ep=args.steps,
                   reward_noise_avg=getattr(P, 'reward_noise_avg', 1))
 
-    actor = QuantumActor(
-        cfg,
-        n_qubits         = P.n_qubits,
-        n_latent         = P.n_latent,
-        n_hidden_ae      = P.n_hidden_ae,
-        n_hidden_post    = P.n_hidden_post,
-        n_var_layers     = P.n_var_layers,
-        n_shots          = P.n_shots_train,
-        lr_ae            = P.lr_actor_ae,
-        lr_qc            = P.lr_actor_qc,
-        lr_xi            = P.lr_actor_xi,
-        data_reuploading = P.data_reuploading,
-        ae_pretrain_lr   = P.ae_pretrain_lr,
-        spsa_n_reps      = P.spsa_n_reps,
-        spsa_epsilon     = P.spsa_epsilon,
-        extra_cz_pairs   = P.extra_cz_pairs,
-        extra_zz_pairs   = P.extra_zz_pairs,
-        full_zz_pairs    = getattr(P, 'full_zz_pairs', ()),
-        readout_mode     = getattr(P, 'vqc_readout_mode', 'generic'),
-        softmax_head     = getattr(P, 'vqc_softmax_head', False),
-        softmax_beta_init= getattr(P, 'vqc_softmax_beta_init', 1.0),
-        seed             = args.seed,
-    )
+    if getattr(args, 'actor_mode', 'quantum') == 'classical':
+        # DNN baseline (paper A2 / R5): pure-MLP actor replacing AE+VQC+head.
+        actor = ClassicalActor(
+            cfg,
+            n_latent   = P.n_latent,
+            enc_hidden = getattr(P, 'classical_enc_hidden', (128,)),
+            pol_hidden = getattr(P, 'classical_pol_hidden', (256, 128)),
+            lr         = getattr(P, 'lr_classical_actor', P.lr_actor_qc),
+            seed       = args.seed,
+        )
+        print(f"  🧮 CLASSICAL ACTOR (DNN baseline): {actor.num_params():,} params "
+              f"(enc {list(actor.ENC_HIDDEN)} → z{actor.N_LATENT} → pol {list(actor.POL_HIDDEN)})")
+    else:
+        actor = QuantumActor(
+            cfg,
+            n_qubits         = P.n_qubits,
+            n_latent         = P.n_latent,
+            n_hidden_ae      = P.n_hidden_ae,
+            n_hidden_post    = P.n_hidden_post,
+            n_var_layers     = P.n_var_layers,
+            n_shots          = P.n_shots_train,
+            lr_ae            = P.lr_actor_ae,
+            lr_qc            = P.lr_actor_qc,
+            lr_xi            = P.lr_actor_xi,
+            data_reuploading = P.data_reuploading,
+            ae_pretrain_lr   = P.ae_pretrain_lr,
+            spsa_n_reps      = P.spsa_n_reps,
+            spsa_epsilon     = P.spsa_epsilon,
+            extra_cz_pairs   = P.extra_cz_pairs,
+            extra_zz_pairs   = P.extra_zz_pairs,
+            full_zz_pairs    = getattr(P, 'full_zz_pairs', ()),
+            readout_mode     = getattr(P, 'vqc_readout_mode', 'generic'),
+            softmax_head     = getattr(P, 'vqc_softmax_head', False),
+            softmax_beta_init= getattr(P, 'vqc_softmax_beta_init', 1.0),
+            seed             = args.seed,
+        )
     # State-value critic V(s) — action-independent baseline (d_action=0).
     # A Q(s,a) baseline cancels the action's own value, giving E[advantage]≈0
     # and a vanishing policy gradient; V(s) is the correct PPO/GAE baseline.
@@ -1000,13 +1105,24 @@ def _build_components(args):
     if resume_dir:
         if not os.path.isdir(resume_dir):
             raise FileNotFoundError(f"--resume dir not found: {resume_dir}")
-        actor     = QuantumActor.from_dir(resume_dir, seed=args.seed)
+        # Auto-detect actor type from the saved actor_config.json 'mode' field
+        # (classical runs write mode='classical'); falls back to quantum.
+        _ac_cfg_path = os.path.join(resume_dir, 'actor_config.json')
+        _is_classical = False
+        if os.path.isfile(_ac_cfg_path):
+            with open(_ac_cfg_path) as _f:
+                _is_classical = (json.load(_f).get('mode') == 'classical')
+        if _is_classical:
+            actor = ClassicalActor.from_dir(resume_dir, seed=args.seed)
+            print(f"  🧮 CLASSICAL ACTOR resumed: {actor.num_params():,} params")
+        else:
+            actor = QuantumActor.from_dir(resume_dir, seed=args.seed)
+            # Keep training-time shot count / spsa settings from params.py
+            actor.n_shots     = P.n_shots_train
+            actor.spsa_n_reps = P.spsa_n_reps
         phase_net = PhaseMLP.from_dir(resume_dir, seed=args.seed)
         power_net = PowerMLP.from_dir(resume_dir, seed=args.seed)
         ck_net    = CkMLP.from_dir(resume_dir, seed=args.seed)
-        # Keep training-time shot count / spsa settings from params.py
-        actor.n_shots     = P.n_shots_train
-        actor.spsa_n_reps = P.spsa_n_reps
         # Warm-start the critic if it was persisted alongside the actors.
         if os.path.isfile(os.path.join(resume_dir, 'critic_config.json')):
             critic = ClassicalCritic.from_dir(resume_dir, seed=args.seed)
@@ -1190,7 +1306,8 @@ def _train_body(args, run_dir: str, run_id: int,
         print(f"  ❄ EXP-1 FREEZE-PHASE: PhaseMLP params FROZEN (grad apply skipped). "
               f"Assignment trains vs stationary phase → watch IRS-share catch up to oracle (F2 test).")
     if (P.ae_pretrain_epochs > 0 and not getattr(args, 'no_pretrain', False)
-            and not getattr(args, 'resume', None)):
+            and not getattr(args, 'resume', None)
+            and getattr(args, 'actor_mode', 'quantum') == 'quantum'):  # classical has no AE
         print(f"  Pre-training AE encoder/decoder for {P.ae_pretrain_epochs} steps …")
         rng_pre = np.random.default_rng(args.seed + 9999)
         pre_loss_log = []
@@ -1350,6 +1467,8 @@ def _train_body(args, run_dir: str, run_id: int,
             # ════════════════════════════════════════════════════════════════
             blocked = _compute_blocked(env)
             ep_blocked_count.append(int(np.sum(env.channels['su_blocked'])))
+            # Routing-shaping target (Option 1): IRS-favored users → their best IRS.
+            _route_tgt, _route_msk = _irs_favored_target(env)
             s_t     = actor.extract_state(obs, demand, blocked)
             phi, _, actor_info = actor.forward(s_t)
             z_t = actor_info['z_t']                              # (n_latent,) spatial latent
@@ -1399,6 +1518,9 @@ def _train_body(args, run_dir: str, run_id: int,
                 'a_t':             a_t.copy(),
                 's_t_next':        s_t_next.copy(),
                 'phi':             phi.copy(),
+                'q_pi':            actor_info['pi'].copy(),   # Δ7: per-user routing probs (K,M+1)
+                'route_tgt':       _route_tgt.copy(),         # Option 1: best IRS id per user (1-based)
+                'route_msk':       _route_msk.copy(),         # Option 1: 1.0 where IRS-favored
                 's_phase':         s_phase.copy(),
                 'phase_idx':       phase_idx.copy(),
                 's_power':         s_power.copy(),
@@ -1567,7 +1689,8 @@ def _train_body(args, run_dir: str, run_id: int,
                 L_ck_b    = float(l_ck_arr.mean())
 
                 _, L_ent_ph, g_phase_acc = phase_net.compute_grads_batch(
-                    mini, eff_ph_b, beta)
+                    mini, eff_ph_b, beta,
+                    counterfactual=getattr(args, 'phase_counterfactual', False))
                 _, L_ent_pw, g_power_acc, pw_axis = power_net.compute_grads_batch(
                     mini, eff_pw_b, beta,
                     beta_entropy_private_extra=P.beta_entropy_pwr_private)
@@ -1590,13 +1713,20 @@ def _train_body(args, run_dir: str, run_id: int,
                     np.array([t['ret'] for t in mini]))
 
                 # ── Phase 2: fused quantum log-prob + gradient (1 QC forward) ─
+                _shape_coef = float(getattr(args, 'routing_shape_coef', 0.0)) \
+                    if getattr(args, 'routing_shape', False) else 0.0
                 l_q_arr, L_ae_b, L_ent_q, g_ae_acc, g_qc_acc, g_xi_acc, clip_q_b, kl_q_b = \
                     actor.compute_logprobs_grads_batch(
                         [t['s_t']      for t in mini],
                         [t['phi']      for t in mini],
                         np.array([t['lp_old_q'] for t in mini]),
                         np.array([t['gae_adv']  for t in mini]),
-                        P.ppo_epsilon, P.ae_weight, beta)
+                        P.ppo_epsilon, P.ae_weight, beta,
+                        routing_target_b=(np.array([t['route_tgt'] for t in mini])
+                                          if _shape_coef > 0.0 else None),
+                        shape_mask_b=(np.array([t['route_msk'] for t in mini])
+                                      if _shape_coef > 0.0 else None),
+                        shape_coef=_shape_coef)
                 L_pg_b  = float(l_q_arr.mean())
                 L_ent_b += L_ent_q
 
@@ -1716,6 +1846,22 @@ def _train_body(args, run_dir: str, run_id: int,
                     f"QoS μ={float(np.mean(hist['mean_qos_rate'][-_w:]))*100:4.0f}%  "
                     f"Rtot μ={float(np.mean(hist['mean_sum_rate'][-_w:])):.2f}  │ "
                     f"best={best_reward:.1f} ({(ep+1)-best_ep} ep ago)")
+          # ── Lagrangian λ_D dual ascent (constrained-RL: max R_tot s.t. QoS ≥ target) ──
+          #   λ_D = Lagrange multiplier on the QoS constraint, updated ONCE per rollout from
+          #   the SMOOTHED rolling QoS so the ramp is GENTLE — a fast λ bump cascades into
+          #   [K] LAMBDA-BUMP-COLLAPSE (Ck softmax collapse). dual ascent:
+          #     viol = qos_target − QoS_rolling   (>0 under target → tighten λ_D; PopArt re-scales)
+          #     λ_D ← clip(λ_D + lambda_lr·viol, λ_min, λ_max)
+          if getattr(args, 'lagrangian', False) and _w > 0:
+              _qos_roll = float(np.mean(hist['mean_qos_rate'][-_w:]))
+              _viol     = args.qos_target - _qos_roll
+              _lam_old  = cfg.lambda_D
+              cfg.lambda_D = float(np.clip(_lam_old + args.lambda_lr * _viol,
+                                           args.lambda_min, args.lambda_max))
+              _flog(f"  · Lagrangian: QoS_roll={_qos_roll*100:4.1f}% "
+                    f"target={args.qos_target*100:.0f}% viol={_viol:+.3f} → "
+                    f"λ_D {_lam_old:.3f}→{cfg.lambda_D:.3f} "
+                    f"[{args.lambda_min:.1f},{args.lambda_max:.1f}]")
           # (3) Behaviour: grouping / power allocation / common-rate split (this episode).
           #     Reveals HOW the agent acts — e.g. power concentrated on few strong users
           #     (wp-top2 high) = abuse; how common rate is shared; group balance.
@@ -1911,8 +2057,10 @@ def _parse_args() -> argparse.Namespace:
                         help='Skip AE hot-start pre-training (fast pipeline inspection)')
     parser.add_argument('--resume', type=str, default=None,
                         help='Path to an agents/ dir to load the 4 actors from and continue '
-                             'training (curriculum transfer; critic re-init). E.g. '
-                             'results/result_2/best/agents')
+                             'training (curriculum transfer; critic warm-start). E.g. '
+                             'results/result_2/checkpoints/ep_00900/agents. '
+                             'OR a RUN-DIR (results/result_N) → AUTO-PICK best sweet-spot ckpt '
+                             '(pick_resume_ckpt) = chọn agents tốt nhất tự động.')
     parser.add_argument('--freeze-phase', dest='freeze_phase', action='store_true',
                         help='EXPERIMENT-1: freeze PhaseMLP params (skip its grad apply) so the '
                              'assignment head trains against a STATIONARY phase. Diagnostic for '
@@ -1941,6 +2089,63 @@ def _parse_args() -> argparse.Namespace:
                         help='Override satellite LoS coverage radius R_LoS (km). Default = params.py '
                              'value (0.2). Curriculum ramps: 0.2 → 0.3 → 0.4 → 0.5 progressively '
                              'increasing blockage. Use with --resume for ramp transition.')
+    parser.add_argument('--P-S', dest='P_S_dBm', type=float, default=None,
+                        help='Override P_S (satellite TX power, dBm). Default = per-case auto (K≤5:50, '
+                             'K≤10:70, else:100). R3 scale-K sweep: FIX P_S=50 across K=5..9 so the '
+                             'scale-K axis is clean (no P_S tier-jump confound).')
+    parser.add_argument('--lambda-D', dest='lambda_D_fixed', type=float, default=None,
+                        help='Override FIXED λ_D (QoS penalty weight). Default = params.py value. '
+                             '⚠ λ_D bump on --resume (e.g. 1.5→3) = [K] LAMBDA-BUMP-COLLAPSE trigger; '
+                             'watch Ck-tot/ent_ck/explVar early. Mutually exclusive với --lagrangian.')
+    # ── Lagrangian / constrained-RL: adapt λ_D as a dual variable on a QoS target ──
+    parser.add_argument('--actor-mode', dest='actor_mode', choices=['quantum', 'classical'],
+                        default='quantum',
+                        help='High-level actor type. "quantum" (default) = AE+VQC+SoftmaxPQC actor; '
+                             '"classical" = pure-MLP DNN baseline (paper A2/R5 VQC-vs-DNN, param-eff). '
+                             'Sub-actors (phase/power/Ck) stay classical in both. ADDITIVE — default '
+                             'quantum unchanged.')
+    parser.add_argument('--routing-shape', dest='routing_shape', action='store_true',
+                        help='Q-HEAD CREDIT FIX (Option 1): add a directed CE shaping gradient that '
+                             'pulls the assignment policy toward the IRS-favored link for users where '
+                             'IRS beats direct (the under-routed +Δgain users → IRS≥Blk). Resume-safe '
+                             '(gradient-only, no arch change). Default OFF.')
+    parser.add_argument('--routing-shape-coef', dest='routing_shape_coef', type=float, default=0.1,
+                        help='Strength of routing shaping (--routing-shape). 0.1 = gentle nudge; raise '
+                             'to push IRS-routing harder. Too high → overrides RL objective. ')
+    parser.add_argument('--lagrangian', dest='lagrangian', action='store_true',
+                        help='CONSTRAINED-RL: treat λ_D as a Lagrange multiplier and adapt it via '
+                             'dual ascent on a QoS target (maximize sum-rate s.t. QoS ≥ --qos-target) '
+                             'instead of a FIXED λ_D trade-off. λ_D updates ONCE per rollout from the '
+                             'smoothed rolling QoS (gentle ramp — avoids [K] LAMBDA-BUMP-COLLAPSE). '
+                             'Default OFF (fixed λ_D unchanged).')
+    parser.add_argument('--qos-target', dest='qos_target', type=float, default=0.80,
+                        help='Lagrangian target QoS fraction (0.80 = 80%% of users meet D_k). '
+                             '--lagrangian only.')
+    parser.add_argument('--lambda-lr', dest='lambda_lr', type=float, default=0.05,
+                        help='Lagrangian dual-ascent step for λ_D per rollout. KEEP SMALL = gentle '
+                             'ramp; a fast λ bump cascades into [K] Ck-collapse. --lagrangian only.')
+    parser.add_argument('--lambda-min', dest='lambda_min', type=float, default=1.0,
+                        help='Lower clip for adaptive λ_D. --lagrangian only.')
+    parser.add_argument('--lambda-max', dest='lambda_max', type=float, default=3.0,
+                        help='Upper clip for adaptive λ_D (cap to bound penalty-dom [I-2] / drift; '
+                             'watch for drift as λ_D rises past ~2). --lagrangian only.')
+    # ── Δ7: PhaseMLP counterfactual gradient (M≥2 lever — Case 2/3) ──
+    parser.add_argument('--phase-counterfactual', dest='phase_counterfactual',
+                        action='store_true',
+                        help='Δ7: weight each active IRS phase-gradient by its π_q expected '
+                             'occupancy (F2 mitigation — phase credit tracks routing dist, not '
+                             'the jumpy sampled-active set). Only meaningful for M≥2 (Case 2/3); '
+                             '≈ no-op at M=1. Default OFF.')
+    # ── Entropy-schedule overrides (per-run, no params.py edit) ──
+    parser.add_argument('--beta-entropy', dest='beta_entropy', type=float, default=None,
+                        help='Override params.py beta_entropy (initial entropy coeff). Higher = '
+                             'more exploration → avoid premature assignment commit (esp. high cases).')
+    parser.add_argument('--beta-entropy-min', dest='beta_entropy_min', type=float, default=None,
+                        help='Override params.py beta_entropy_min (entropy floor after anneal).')
+    parser.add_argument('--beta-entropy-anneal-end', dest='beta_entropy_anneal_end',
+                        type=float, default=None,
+                        help='Override params.py beta_entropy_anneal_end (fraction of training over '
+                             'which β anneals; raise 0.1→0.3 to keep entropy high LONGER).')
     return parser.parse_args()
 
 

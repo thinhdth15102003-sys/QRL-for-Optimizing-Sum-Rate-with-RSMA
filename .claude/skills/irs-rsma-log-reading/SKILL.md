@@ -23,6 +23,21 @@ consistent health assessment. Always follow Steps 0→4 in order, then emit the 
 template. For signal meanings / fixes see `docs/Common-Knowledge.txt`; for per-case hyper
 context see `docs/Training-Case-<N>.txt` (match by K,M in params.py / hyperparameters.json).
 
+## ⛔ NUMBERING — ALWAYS USE THE DOC NUMBER (not the disk name)
+The disk dir `results/result_N` and the doc run-number DIVERGE (disk dirs get reused /
+overwritten; the doc keeps a CONTINUOUS sequence). **When you reference or PERSIST a run,
+use the DOC number from `docs/Training-Case-<N>.txt`**, mapped via the `(đĩa: results/result_N)`
+labels — never invent a new row under the bare disk name.
+- Before persisting (Step 5): `grep -oE "result_[0-9]+" docs/Training-Case-<N>.txt | sort -t_ -k2 -n -u | tail`
+  to find the run's existing doc-number (search for its `(đĩa result_N)` label). If it already
+  has a doc row → UPDATE it idempotently. Only if the disk dir is genuinely a NEW run with no
+  doc row → append the NEXT doc number in sequence.
+- A single disk dir can hold several doc runs over time (re-launches): e.g. disk `results/result_8`
+  = doc result_15 (lagrangian) THEN doc result_16 (λ_D2.5 rerun, "ghi đè r15"). Match by the
+  CONFIG (resume source / λ_D / lagrangian flag), not just the disk path.
+- In the report header and any prose, lead with the doc number; note the disk dir in parens
+  e.g. "result_16 (đĩa results/result_8)".
+
 ## ★ PRIORITY ORDER (judge & fix in THIS order — Common-Knowledge Part 5 #8)
 **CRITIC → PhaseMLP (learning to optimize IRS) → NO-IDLE heads (esp. post-VQC:
 phase/power/ck) → QoS → SUM-RATE.**

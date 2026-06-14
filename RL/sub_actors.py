@@ -629,11 +629,15 @@ class PowerMLP:
     """
 
     def __init__(self, d_s: int, K: int, M: int, P_S: float,
-                 hidden=64, lr: float = 3e-4, seed: int = None):
+                 hidden=64, lr: float = 3e-4, seed: int = None,
+                 power_fairness: float = 0.0):
         self.d_s = d_s
         self.K   = K
         self.M   = M
         self.P_S = P_S
+        # ③ power-fairness α∈[0,1]: blend applied private power toward equal-split
+        # (set per-run via --power-fairness; consumed in forward()). 0 = learned head.
+        self.power_fairness = float(max(0.0, min(1.0, power_fairness)))
         self._n_split   = 2
         self._n_common  = M + 1
         self._n_private = K
@@ -733,7 +737,17 @@ class PowerMLP:
         w_c_total = float(p_s[0]) * self.P_S
         w_p_total = float(p_s[1]) * self.P_S
         w_c_full  = p_c * w_c_total                                # (M+1,)
-        w_p       = p_p * w_p_total                                # (K,)
+        # ③ power-fairness: blend the private distribution toward uniform BEFORE
+        # allocating w_p. probe_power_qos proved equal-split (uniform p_p) recovers
+        # +28pp QoS at ~zero sum-rate cost — the learned head concentrates power on
+        # already-served users and starves the unmet ones (~3.3×). α=0 → learned head,
+        # α=1 → exact equal-split. Applied to w_p ONLY; the categorical action
+        # (a_private / probs / PPO log-prob below) stays the true softmax, so the
+        # policy-gradient path is unchanged. (Future refinement: QoS-aware reallocation.)
+        a_fair  = float(getattr(self, 'power_fairness', 0.0))
+        p_p_eff = ((1.0 - a_fair) * p_p + a_fair / self._n_private
+                   if a_fair > 0.0 else p_p)
+        w_p       = p_p_eff * w_p_total                            # (K,)
         w_c_vec   = self._extract_wc(w_c_full, active_irs_ids)     # (G+1,)
 
         a_split   = int(self.rng.choice(self._n_split,   p=p_s))

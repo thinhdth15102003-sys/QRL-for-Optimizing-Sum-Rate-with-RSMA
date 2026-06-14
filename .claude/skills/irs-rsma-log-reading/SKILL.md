@@ -126,6 +126,11 @@ Check two things:
   (gets gradient but never converges) → NOT optimizing IRS `[F]/[J]`.
 - **IRS being used?** `behaviour` line `irs=[..]` and `Ck tot` over time: held ~mid
   (still exploring) vs collapsing toward 0 (direct-attractor `[J]`).
+- **IRS COUNT right? (Common-Knowledge `[N]`)** Optimal Σirs ≈ #blocked (≈2K/3); per-IRS
+  load ≈ Blk/M and must stay ≤ capacity n*(K,G). Read it off the `behaviour` line vs `Blk/K`:
+  Σirs ≪ Blk → **UNDER-assign** (blocked users left on dead direct links); Σirs ≫ Blk or any
+  `irs[m]` > n* → **OVER-assign** (non-block crammed on, dilutes the G+1 common-stream split —
+  catastrophic at K=15). Confirm + score the gap-to-oracle with probe_assignment_quality.py (Step 3.5).
 Root causes if phase idle: blind critic `[B]` (no directional signal) and/or
 entropy-domination `[C]` (β keeps phase random). BOTH must clear before phase can learn
 — so phase won't converge until critic works (explVar>0.5) AND β anneals to floor.
@@ -247,6 +252,17 @@ the QoS bottleneck was PowerMLP, not phase/critic). Run on the best-QoS checkpoi
   PhaseMLP: entropy dropping but IS the phase actually  | probe_phase_quality.py         | |Σφ|live/N coherence +
   ALIGNING the channel? (priority-#2 — necessary check  |  (greedy live PhaseMLP)        | alignment% (0 rand→1 opt);
   that arch-2 unblocked phase, not just lower entropy)  |                                | live-IRS beats direct?
+  -----------------------------------------------------+--------------------------------+-----------------------------
+  QoS capped / IRS routing looks off — is the agent     | probe_assignment_quality.py    | over/under/mis-assign vs
+  OVER- or UNDER-assigning vs the blocked set? Is the   |  --ckpt <best-QoS ckpt>        | oracle {blocked→its-IRS};
+  remaining gap STRUCTURAL or just OPTIMIZATION/credit? |  (oracle blocked→IRS routing)  | QoS gap to oracle = credit/
+  (behaviour `irs=[..]` total vs Blk/K)                 |                                | opt gap, NOT capacity [N]
+
+  PRINCIPLE-N (assignment): optimal #IRS-routed ≈ #blocked (route each blocked user to ITS building's
+  IRS; non-block → direct). Σirs ≫ Blk OR any IRS load > n*(K,G) = OVER-assign (dilutes common-stream,
+  crowds blocked — Case3 all-IRS→0%). Σirs ≪ Blk = UNDER-assign (dead direct links wasted). The oracle
+  blocked→IRS ceiling (C1 100% · C2 99.9% · C3 73%) ≫ the agent's trained QoS ⟹ the gap is credit/
+  optimization (F2 assignment + phase), not a per-IRS user-count "cap". Capacity n* + regime in [N].
 
   PRINCIPLE: phase entropy dropping is NECESSARY but NOT SUFFICIENT for "PhaseMLP learning
   to optimize IRS" — entropy can converge to a BAD phase. ALWAYS confirm phase QUALITY

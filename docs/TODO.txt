@@ -1,7 +1,8 @@
 ================================================================================
   PROJECT TODO LIST  ·  source of truth cho "việc gì tiếp theo"
 ================================================================================
-  Last updated: 2026-06-08 (REFRESH — xem STATUS SNAPSHOT ngay dưới). Trước: 2026-06-05
+  Last updated: 2026-06-11 (Case2 FINAL-PUSH PLAN revised order N→cf→both — xem SEC 0B "FINAL-PUSH PLAN").
+                2026-06-08 (REFRESH — xem STATUS SNAPSHOT ngay dưới). Trước: 2026-06-05
                 EXP-3 launch + USER PRIORITY PIVOT (training tasks ↑, paper trừ ablation-drafts lùi).
                 Strategy: train song song các Case sau khi assignment bottleneck được giải quyết.
   Convention:  [✅] done · [⏳] in-flight · [ ] pending · [🚫] skip/deferred · [⚠] blocked
@@ -57,7 +58,7 @@
      Chi tiết Section 4B + handoff. Effort ~1 ngày code + 1 ngày smoke.
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  ⭐ SECTION 0B — PAPER RESULTS + ABLATION PLAN (chốt 2026-06-10 với user)     ║
+║  ⭐ SECTION 0B — PAPER RESULTS + ABLATION PLAN (chốt 2026-06-10 với user)    ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
   Cấu trúc bảng paper (user-defined 2026-06-10). Số trong ngoặc = tên user dùng.
   CASE 3 SCALED DOWN: K=20/M=4 → K=15/M=3 (params.py comments updated; nq=12 giữ nguyên).
@@ -78,7 +79,12 @@
        (khớp C1 imperfect-CSI). Sweep kappa (CSI err, chính) ± noise_var_dBW. reward_noise_avg irrelevant.
        Code: add --kappa/--noise-var flag cho INFER.PY (make_config đã nhận 2 param; ~10 dòng passthrough).
        ⚠ Paper caveat: = robustness của policy CỐ ĐỊNH dưới shift, KHÔNG phải 'train được dưới noise cao'.
-  [ ] R5 (5) vs DNN — = ClassicalActor (G5 TOP-NEXT, chưa build). impl + runs. SHARED với A2.
+  [⏳] R5/A2 (5) vs DNN — ClassicalActor BUILT + RUNNING 2026-06-13 (đĩa result_28 = doc Case1 result_24,
+       --actor-mode classical, K5/M1/P_S50/R0.2). SƠ BỘ: DNN peak ~76%@ep400 vs VQC r5 ~86%@ep428 (matched
+       feasibility) = ~10pt VQC edge. ⚠ 1 config CHƯA TUNE → A1/A2 protocol: sweep DNN (lr/width, iso-param +
+       iso-perf) TRƯỚC khi chốt. Claim = PARAM-EFF (~20× ít params), KHÔNG phải VQC superiority (honest-prior).
+       Peak ckpt ep_00400. NEXT: tune DNN + (optional) mirror curriculum 0.3→0.5 cho final-cell. Chi tiết
+       Training-Case-1 result_24 row.
 
   ── ABLATIONS ──────────────────────────────────────────────────────────────────
   [✅] A1 (1) Frozen-λ — DATA ĐỦ: Frozen-Lambda-Proposition.txt (778 lines, 4 Props),
@@ -98,8 +104,18 @@
        (Ablation-Plan SEC dòng 51-57). Để khi fill ablation appendix.
 
   ── ⭐ EXECUTION ORDER (chốt 2026-06-10) ─────────────────────────────────────────
-   1. Case 1: đợi ramp 0.5 (curriculum r8/r12 chain) → LOCK. Gần xong, chỉ còn 1 ramp.
-   2. Case 2: tiếp tục chạy để quyết (plateau fix — phase-warmup+freeze+Lagrangian experiment).
+   1. Case 1: ✅✅ LOCKED 2026-06-12 → **result_23 ep_00400** (đĩa; ramp 0.5, FIXED λ_D=4, P_S=50 CANONICAL,
+      QoS 77.8%, R_tot 2.35, IRS3.0≥Blk2.6, vs Direct 42.9%/All-IRS 59.1% probe @P_S50). USER chốt P_S=50
+      làm canonical Case 1 (khớp R3 scale-K + auto-derive) → R2-table Case 1 = số này.
+      result_18 ep_00400 (84% @P_S70) = P_S-sensitivity reference, KHÔNG vào R2.
+      → GPU slot FREE → chạy ClassicalActor (R5+A2) trên Case 1 config P_S=50 (mục #3 dưới).
+   2. Case 2: ✅ VERDICT 2026-06-11 → LOCK r11-HIST (QoS 60%, R_tot 1.75) làm Case 2 result. Đã chứng
+      minh kịch trần structural ~60% (3 counterfactual: phase BÁC + power BÁC + assignment near-ceiling;
+      warmup+freeze NET-NEG). KHÔNG đầu tư thêm lever (phase/power/routing-shape/L1-distill đều loại/không
+      đáng). result_19 λ-sweep: để chạy lấy Pareto QoS↔R_tot figure (paper), KHÔNG kỳ vọng vượt 60% genuine.
+      ⭐ EXCEPTION (active 2026-06-11): FINAL-PUSH N=48 + counterfactual-assign ĐANG THỬ phá 60% (2 lever KHÔNG
+      nằm trong danh sách loại — ceiling-raise + assignment-credit). Order N→cf→both, xem "FINAL-PUSH PLAN" SEC 0B.
+      LOCK r11-HIST = FALLBACK nếu final-push fail.
    3. ⭐ KHI Case 1 LOCK + trống 1 GPU slot → build R5+A2 ClassicalActor, CHẠY TRƯỚC TRÊN CASE 1
       (Case 1 config = locked reference, sạch nhất cho param-eff DNN-vs-VQC compare).
    4. Sau đó: Case 3 K15/M3 curriculum (R2) · R3 scale-K (cần --P-S) · R4 noise (cần --kappa/--noise).
@@ -119,6 +135,56 @@
        under-routing. Directed CE pull → IRS-favored link. RESUME-SAFE (gradient-only, kéo committed
        policy được — khác entropy F5). VALIDATED grad 5.98e-08 + quantum/classical smoke. Chi tiết
        docs/Training-Case-1.txt. ⚠ UNCOMMITTED.
+  [✅] --counterfactual-assign --cf-coef (Q-head credit fix Option 2, COMA-style) BUILT 2026-06-11 →
+       per-user counterfactual baseline A_cf(k)=R_cf[k,a_k]−Σπ_k(c)R_cf[k,c] (re-run downstream dưới
+       φ_k=c). De-confound assignment credit + discourage IRS-crowding (load-balance Case 2). VALIDATED
+       grad 9.85e-08 (COMA detach) + quantum/classical smoke. Cost K(M+1) downstream/step (~2× step).
+       ⚠ UNCOMMITTED. PENDING TEST (cf chưa launch — user REVISE thứ tự 2026-06-11, xem PLAN ngay dưới).
+       ── ⭐ FINAL-PUSH PLAN Case 2 (chốt 2026-06-11; REVISE order: N TRƯỚC, cf SAU, rồi BOTH) ───────
+        Bước A [⏳ LIVE]: result_22 (đĩa result_21) N=48 FRESH standalone (PID2375, --R-LoS0.2 --lambda-D1.5,
+          NO cf) → CONFIRM N↑→ceiling↑. All-IRS N48=78.6% (vs N24~73%) ✓ raised. STATUS @ep~1100 2026-06-12:
+          QoS 55-57%, R_tot 1.71, best 166 — TRACK r11 baseline shape, CHƯA breakout >60% (đúng dự đoán
+          F2-binding). Verdict window ep~1200-1500 (r11 peak ep~1200@60%): vượt 60% = N giúp; plateau 60% =
+          reconfirm F2-wall, N chỉ nâng ceiling.
+        Bước B [⚠ ĐÃ CHẠY → DIVERGED 2026-06-13]: cf-assign 0.3 @N24 FRESH balanced (đĩa result_25 = doc
+          result_23, PID533, ep~780/2000). KẾT QUẢ: climb 2× nhanh (60-61% @ep580-650 vs r11 ep1200), R_tot
+          1.85-1.90 > gold 1.75, NHƯNG không phá 62-63% (confound-adjusted), IRS-usage GIẢM 5.7→3.0
+          (direct-attractor, cf load-balance FAIL), và ⚠⚠ Q-head DIVERGENCE @ep768 (KL_q=1.71, ‖∇‖ 143/178)
+          → QoS trượt 61→54. ROOT (code-confirmed mechanism): cf-aux KHÔNG qua PPO-clip + A_cf standardized
+          per-minibatch → unit-scale pressure trên committed policy. → KHUYẾN NGHỊ: kill, giữ ep_00600
+          (peak 59.9%), relaunch resume ep_00600 --cf-coef 0.15; tái diễn → code anneal/threshold/clip cf.
+          Chi tiết: Training-Case-2 row result_23.
+          (Lịch sử: launch #1 PID3860 Binomial pre-env-change → killed; đĩa result_24 = orphan 11min.)
+        Bước C [⏳ REVISED 2026-06-13 → COMBO RUN]: premise gốc fail NHƯNG ⭐ USER INSIGHT sửa attribution
+          Bước A: N=48 fail vì PHASE-BLOCKED (ent_ph flat 70% max suốt 864ep, 18×[C] — vs N24 converging
+          37-50%) chứ KHÔNG phải ceiling vô dụng → N=48 CHƯA test đúng nghĩa. → COMBO = N=48 + phase-warmup
+          (FRESH no-freeze, đạt don't-repeat: khác EXP-3 resume-erode + r21-doc freeze-vỡ-critic; ở N48
+          phase LÀ blocker thật khác premise N24) + cf-assign 0.3 với --cf-anneal-end 0.5 (CODE CẦN BUILD:
+          linear decay cf_coef→0, fix divergence root). r27 = control "N48-no-warmup" cho ablation pair.
+          Command: --R-LoS 0.2 --lambda-D 1.5 --phase-warmup --phase-warmup-episodes 50
+            --phase-warmup-epochs 300 --counterfactual-assign --cf-coef 0.3 --cf-anneal-end 0.5
+            --episodes 2000 (params N=48 trước launch). Cost ~90-120s/ep ≈ 2-2.5 ngày.
+          WATCH: ent_ph post-warmup <60% max + GIẢM · KL_q<0.5 · QoS vs 62-63% · IRS-load vs [3,4].
+        ⭐⭐⭐ FINAL-PUSH VERDICT UPDATE 2026-06-13 — COMBO PHÁ ĐƯỢC WALL (đĩa r26 = doc result_25):
+          combo N48+warmup(no-freeze)+cf-anneal0.5 → QoS window 71.6%@ep253 ĐANG LEO, vs gold r11 60.9%.
+          CLEAN: r26 vs r27 (N48-ctrl same env) = +14.7pt → LEVERS phá KHÔNG phải N (r27 N48-alone 56.9 < gold 60.9,
+          phase-blocked). ⟹ tường 60% KHÔNG phải "structural bất khả phá" — phá được bằng warmup(mở-khóa-phase)+
+          cf(assignment-credit) Ở N48. ⚠ EARLY (ep338/2000) — phải HOLD qua cf-anneal-off ep1000 (= r25 divergence
+          zone) TRƯỚC khi lock. r11-HIST VẪN là safe paper-lock tới khi r26 confirm. Tool: analysis/compare_runs.py
+          (pull direct từ folder). NẾU r26 hold → Case-2 narrative đổi từ "structural negative" sang "breakable
+          @higher-N bằng phase-warmup+credit-fix" (POSITIVE result, mạnh hơn cho paper).
+        ⭐⭐ (cũ, superseded) VERDICT TẠM: TƯỜNG 60% đứng sau A-standalone + B-standalone.
+          A (N=48 standalone): phase-blocked (chưa phải verdict ceiling — xem COMBO).
+          B (cf-assign): HALF — tăng tốc 2× + R_tot 1.85>gold NHƯNG không phá 62-63% + diverge @ep768.
+          ⟹ **LOCK r11-HIST làm Case 2 paper result** (fallback đúng kế hoạch). Negative results (5 probe
+          counterfactuals + N=48 ×2 + cf) = củng cố structural-bottleneck story cho paper.
+          ⚠ ENV DECISION cần chốt: paper results hiện hết là BINOMIAL env (Case1 lock + r11-HIST).
+          Case 3 sắp chạy sẽ ăn balanced_blocked_spawn=True nếu không revert → R2 table lệch env.
+          → Khuyến nghị: set balanced_blocked_spawn=False TRƯỚC khi launch Case 3 (env-consistent R2).
+          GPU redirect: Case 3 curriculum + ClassicalActor (R5/A2) = critical path còn lại.
+          Optional: r27 chạy nốt tới ep~1200-1500 lấy peak number chính thức cho negative-table → kill.
+       ⚠ params.py hiện N=24 (đã revert sau khi launch N=48 — run đó capture N=48 trong hyperparameters
+         lúc launch). Muốn chạy N=48 nữa (Bước C) → edit params.py N=48 TRƯỚC khi launch, rồi revert.
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  SECTION 1 — IN FLIGHT + RECENT KILLED (2026-06-05 machine reset incident)   ║

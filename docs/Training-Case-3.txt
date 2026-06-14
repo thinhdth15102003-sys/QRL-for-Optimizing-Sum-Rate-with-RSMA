@@ -1,0 +1,37 @@
+================================================================================
+  TRAINING CASE 3  ·  K=15, M=3  ·  hyperparameter theo từng ramp R_LoS
+================================================================================
+  Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
+  Per-case Case 1 → Training-Case-1.txt · Case 2 → Training-Case-2.txt.
+  Cập nhật lần cuối: 2026-06-13 (TẠO MỚI — first Case-3 run ever, đĩa result_30).
+
+# ── CẤU HÌNH CASE 3 (params.py ACTIVE CASE = K15/M3) ────────────────────────────
+K=15, M=3, N=24, nq=12 (UNIFIED), n_latent=24.  P_S_dBm=100 (auto tier K>10, D1 chốt).
+n_var_layers=5 (D_enc, more depth — soft-cluster compression W_proj 2K=30 → 2(nq-M)=18).
+n_hidden_ae=[256,128,64]. d_s (actor extract_state) = 81.  balanced_blocked_spawn=True (canonical).
+Max-entropy baselines: q=K·ln(M+1)=15·ln4≈20.8 · phase=M·N·ln4=3·24·ln4≈99.8 · ck=ln(group).
+
+# ── ĐẶC THÙ CASE 3 (khác Case 1/2) ──────────────────────────────────────────────
+⚠⚠ All-IRS feasibility = 0.0% @ R0.2 (random-phase IRS phục vụ ZERO user: power chia 15 user +
+   |Σφ|≈√N random quá yếu). ⟹ IRS CHỈ giúp nếu PHASE ĐƯỢC HỌC (M=3 = 3× IRS để coordinate, khó
+   nhất). Direct-only=100% @R0.2 (ΣR_tot 1.81, P_S=100 đủ) → direct gánh R0.2; IRS cần ở R0.4-0.5.
+   #8b (học IRS ở ramp dễ) KHÓ NHẤT ở Case 3 — watch PhaseMLP qua mọi ramp.
+⚠ Assignment space (M+1)^K = 4^15 ≈ 10^9 (vs Case2 3^10, Case1 2^5) — combinatorial bottleneck
+   LỚN NHẤT. Early-flat sẽ DÀI (so baseline shape, không panic).
+⚠ balanced_blocked_spawn=True bắt buộc (M=3 binomial = IRS-load lệch = non-stationary cho pipeline shaky).
+
+# ── BẢNG TÓM TẮT RUN ─────────────────────────────────────────────────────────────
+  result_26-doc (đĩa result_30) R0.2 λ1.5 FRESH BINOMIAL — FIRST CASE-3 TEST 2026-06-13:
+    SMOKE PASS: chạy K15/M3 OK, dimensions sạch (d_s81, phi(15), s_phase(3,69)), CRITIC KHỎE
+    explVar 0.73 stable @ep266 (tốt bất ngờ cho case mới). NHƯNG ep~266/4000 EARLY + binomial.
+    QoS flat ~33% (≪ Direct-only 100%): agent OVER-route IRS 12/15 (irs=[3.7,4.5,3.9] dir2.9) ở R0.2
+    nơi IRS-random=0% → users fail → reward -880 (qp 4.4). Entropy-dom [C] ph0.49 q-ent65% ph-ent74%
+    (β chưa anneal ep400). KL_q0.018 fine. λ frozen[E]. = early-exploration CHƯA verdict.
+    → KILL + RELAUNCH BALANCED (binomial = non-stationary user muốn bỏ). Watch ep400-600 post-β-anneal:
+      QoS leo (route→direct / học phase)? IRS-routing giảm ở R0.2? PhaseMLP bắt đầu converge?
+
+# ── HYPER THEO RAMP (điền dần khi chạy) ──────────────────────────────────────────
+── R_LoS = 0.2 ── (fresh start; Direct-only=100% nên QoS slack, lo critic+PhaseMLP+sum-rate trước)
+   λ_D=1.5 (sweet-spot start, theo Case 1/2). Command: train.py --R-LoS 0.2 --lambda-D 1.5 --episodes 4000.
+   (chưa có run balanced hoàn chỉnh — result_30 binomial = smoke).
+================================================================================

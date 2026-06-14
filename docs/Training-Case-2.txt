@@ -9,6 +9,39 @@
                   (cleanup 2026-06-06: kept r8/11/12/13/14/15/18; deleted redundant + ghosts).
 --------------------------------------------------------------------------------
 
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ⭐⭐⭐ BOTTLENECK SYNTHESIS Case 2 (CLOSED 2026-06-11) — QoS trần ~60%        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  LOCK r11-HIST (QoS 60%, R_tot 1.75) làm Case 2 result. 5 counterfactual loại sạch downstream:
+  ❌ ĐÃ LOẠI (KHÔNG phải bottleneck):
+    1. PHASE — supervised-ceiling: phase CAN→99% (info đủ); r13 freeze 99% → QoS vẫn 53%. KHÔNG binding.
+    2. POWER (F4) — probe_power_qos: equal-split Δ=−4.8(r13)/+0.7(r11); unmet cho thêm power vẫn ko đạt D_k.
+    3. λ / QoS-penalty — result_19 λ-sweep: λ 1.5→3.2 → QoS 56→48% (runaway/destabilize). Ko trade up.
+    4. VQC CAPACITY — distill: classical MLP recover 51% từ z_t, live VQC 0% = credit ≠ capacity.
+    5. CRITIC — QoS⊥critic across runs (r13 explVar0.45→QoS53; r11→QoS60). Ở aleatoric noise-floor, ko binding.
+  ✅ BINDING (REFINED 2026-06-11 sau user-insight "users-per-IRS Case1≈Case2"):
+    ⭐ DOMINANT = ASSIGNMENT-CREDIT F2 (scale-limited bởi (M+1)^K): Case1 2^5=32 SOLVED→QoS90%; Case2
+       3^10=59049 FAILS (distill 0% live)→QoS60%. KEY: users-per-IRS TƯƠNG TỰ (Case1 3.0/IRS, Case2
+       ~3.5-4/IRS đông) → multi-user-sharing KHÔNG phải differentiator. Khác biệt = kích-thước-assignment.
+    A. multi-user IRS-sharing = CONSTRAINT (ko phải dominant cap): probe_irs_vs_direct → 100% blocked
+       servable INDIVIDUALLY (+37.8dB) nhưng 1 phase/IRS serve tốt ~2-3 user. GOOD assignment RESPECT
+       (Case1: route đúng user, thừa→direct); BAD assignment VI PHẠM (Case2 F2-fail: nhồi user-ko-serve
+       vào IRS đông→unmet, IRS-blocked QoS chỉ 56.7%). Case1 CÓ mechanism này: result_18 over-route shape
+       → QoS drift 82→76 (nhồi >3/IRS lộ constraint).
+    B. → nên bottleneck thật = F2 assignment-credit (RL credit-assignment ở scale = bài toán RL khó kinh
+       điển), KHÔNG phải sharing/phase/VQC. Multi-user-sharing chỉ là constraint F2 phải respect.
+  ⟹ QoS ~60% = ASSIGNMENT-CREDIT F2 fail-at-scale (dominant) + multi-user-sharing constraint. SCALE-LIMITED
+     #3 củng cố: cùng physics/sharing per-IRS, khác KÍCH-THƯỚC bài toán assignment. KHÔNG phải VQC capacity.
+  ⭐ FINAL-PUSH LEVER (2026-06-11): TĂNG N (IRS elements) nâng FEASIBILITY CEILING. probe_feasibility_at_P
+     --N: All-IRS QoS (joint shared-phase) N=24→73.2% · N=48→81.6% · N=96→88.3% (|Σφ| max=N → +6dB/doubling,
+     boost đồng đều mọi IRS-user → marginal unmet vượt D_k). Servable vẫn 100% (per-user). → N=48 ceiling 82%
+     thoải mái trên target 75-80%. ⚠ PHẢI fresh-train (N đổi PhaseMLP out-dim, ko resume N=24). Paper justify
+     dễ (N=48/64/100 chuẩn IRS-lit). Đây = lever VẬT LÝ mạnh nhất (ko phụ thuộc crack F2). Nếu N=48 vẫn <75%
+     → N=96 rồi LOCK. Command: params N=48 + train.py --lagrangian --qos-target 0.80 (khả thi, né r19 runaway).
+     PAPER: negative-results (5 counterfactual) = honest contribution "bottleneck structural, ko phải quantum".
+     Probes: power_qos, qos_by_assignment, irs_vs_direct, phase_supervised_ceiling, assignment_sensitivity.
+--------------------------------------------------------------------------------
+
 ================================================================================
   BẢNG TÓM TẮT RUN  (quick-reference — chi tiết xem L1-L14 ở "NHẬT KÝ RUN" cuối file)
 ================================================================================
@@ -40,6 +73,17 @@
   result_15 EXP-3 PHASE-WARMUP (R_LoS=0.2) | 1.5 | = | 16 | PopArt | 16 | = | = + ⭐ --phase-warmup (oracle CE pretrain) | ⛔ KILLED at machine reset @ep_00414. Phase warmup CE 2.09→1.38, match 25→29% (UNDERTUNED). Verdict history (3 revisions, đọc cuối): (V1) assignment_oracle ep_00400 closure≈-2% → "F4 dominant" — WRONG. (V2) gap_decomp v1 r15 gap_assignment 0.187 vs r11 0.315 → "+40% closure" — ALSO WRONG (power-phase mismatch bug). (V3 FINAL 2026-06-05) gap_decomp v2 + ckpt sweep ep100/200/300/400: DIRECT compare R(q_live, ORACLE_φ): r11=1.447 vs r15: 1.475→1.452→1.442→1.418 (initial +0.028 boost from warmup, then PPO ERODES, ends -0.029 below baseline). Downstream BROKE: gap_downstream r11=23% → r15=53-61% all ckpts. Oracle ceiling also dropped (1.765 → 1.611). | ⭐⭐ V3 FINAL VERDICT: EXP-3 = NET NEGATIVE. F2 IS partially addressable (initial +0.028 boost confirms) BUT warmup destabilizes downstream → PPO erodes gain. KEY INSIGHT: phase-side learning instability affects assignment quality from BOTH directions (EXP-1 freeze 34% closure + EXP-3 warmup +5% peak then decay) → consistent story not contradiction. Probes: assignment_oracle_ep00400.txt + assignment_decomp.txt + assignment_decomp_trend.txt.
   result_19 (đĩa r6) FRESH nq12 λ1.5 | 1.5 | 0.001/anneal | 16 | PopArt | 16 | factored bias+0.3 | =arch2 (G4 unify W_proj IDENTITY 20→20 = baseline) | RUNNING ep~1210 2026-06-08 (FRESH reproduce r11, KHÔNG resume). QoS ~53-56%, R_tot 1.72-1.88, best 169.7 đang leo (r11 best 214). PhaseMLP ent ↓39.5→31.8 (đang hội tụ). ent q ↓7.79→2.54 (committed 23%). irs split lệch [0.9 5.5] = single-IRS collapse. | SENSITIVITY PROBE ep_01200 → xem FINDING 2026-06-08 dưới: agent PARETO-DOMINATED; 66% QoS reward-suboptimal @λ1.5.
   result_20 (đĩa r11) Δ7 + β-anneal0.3 | 1.5 | 0.001/anneal0.3 | 16 | PopArt | 16 | = | =arch2 + ⭐⭐ --phase-counterfactual (occupancy-weighted) + --beta-entropy-anneal-end 0.3 (higher entropy) | RUNNING ep~1082/6000 2026-06-10 (FRESH, 19h). Trajectory ON-TRACK với r11-OLD baseline (QoS 51→58, R_tot 1.36→1.65, vs OLD ep~1080 QoS ~55/R_tot ~1.6). Critic wobble explVar 0.1↔0.64 IDENTICAL pattern r11-OLD (no [B-2d]). q ent ↓ 9.58→4.19 (87%→38% max) committed healthy. ent_ph ↓ slow 41→36.4 (62%→55% max, Δ7+β0.3 giữ exploratory). λ FROZEN [E]-harmless. ⭐⭐ **PHASE QUALITY @ep_01000: alignment 33.4%, IRS-beats-direct 65.2% routed users** (vs OLD r8 25%, vs r11-OLD ep300 16.5% = +17pt cùng-ep, on track vượt r11-OLD ep1700 42% nếu giữ rate). | ⭐ Δ7 LEVER VALIDATING: PhaseMLP học phases USEFUL không chỉ low-entropy-bad. KEEP TRAINING tới ep~1700 để chốt peak comparison; probe lại phase_quality @ep_01700.
+  result_22 (đĩa r21) ⭐N=48 FRESH | 1.5 | 0.001/anneal | 16 | PopArt | 16 | factored bias+0.3 | =arch2 SoftmaxPQC + ⭐N=48 (PhaseMLP d_out=N×4, ceiling-raise lever) | RUNNING ep~155/4000 2026-06-11 (FRESH, PID2375, --R-LoS 0.2 --lambda-D 1.5, NO cf). EARLY-HEALTHY: tracks r11-OLD early-flat gần khít (QoS51-52/R_tot1.44/rew-229 ≈ r11 ep~250 52/1.40/-243). Critic HEALTHY EARLY explVar 0.55 stable, V̄-25.8≈ret-24.2, ‖∇‖V13.9 clipfrac0%. Entropy-dom [C] ent/pg ph1.71 q0.36 = EXPECTED pre-β-anneal (anneal_end0.1→ep400). Feasibility N=48: All-IRS 78.6% (vs N24 ~73%), Servable/Direct 100%. λ frozen [E]-harmless. irs=[2.8,3.3]≈Blk6. | ⚠ N=48 nâng FEASIBILITY ceiling NHƯNG binding constraint Case2 = assignment-credit F2 (KHÔNG phải feasibility) → N ALONE có thể KHÔNG crack 60%. KEEP TRAINING tới ep~600: watch QoS leo >52% (r11 leo ~ep500) + ent_ph ↓ sau β-anneal; nếu plateau ~60% như mọi run N24 → reconfirm assignment-wall (N ko phải lever) → LOCK r11-HIST. ⚠ UPDATE 06-12: STOPPED ~ep1100+ (WSL restart; QoS 55-57% track baseline, CHƯA tới verdict window) — SUPERSEDED bởi đĩa r27 = doc result_24 (N48 BALANCED fresh, row dưới).
+  result_23 (đĩa r25) ⭐CF-ASSIGN @N24 BALANCED-SPAWN | 1.5 | 0.001/anneal | 16 | PopArt | 16 | = | =arch2 + ⭐--counterfactual-assign --cf-coef 0.3 + ⭐⭐ ENV MỚI balanced_blocked_spawn=true (spawn {3,4} 100%, All-IRS feasibility 73→77.6%) | FRESH (PID533) ep~778/2000 2026-06-13. ⭐ CLIMB NHANH 2×: QoS 52→61% peak ~ep580-650 (r11-OLD cần ep1200 cho 60%), R_tot 1.39→1.90, best 234.8@ep~657 > r11 gold 214.5. Per-ckpt: ep400 59.0/1.69 · ep500 57.5/1.90 · ⭐ep600 59.9/1.78 · ep700 58.5/1.85 · ep~780 55/1.75 DECLINING. NHƯNG: (a) KHÔNG phá tường 62-63% (ngưỡng confound-adjusted vì balanced spawn nâng env); (b) IRS-load FAIL mục tiêu cf: IRS-usage GIẢM ĐỀU 5.7→3.0, irs=[0.1-1.0, 2.9] vs native [3,4] = direct-attractor drift F1 (dir 6-7/10 với 7 blocked); (c) ⚠⚠ DIVERGENCE @ep768: harness flag KL_q=1.71≫0.5, ‖∇‖ae/qc nổ 143/178 (vs 12-30 mid-run), QoS trượt 61→54 trong ~150ep, best unbeaten 121ep. Critic wobble −0.12↔+0.46 cả run (như r11-OLD). | ⭐ ROOT NGHI (code-confirmed mechanism): cf-aux áp THẲNG vào dL_dlogits KHÔNG qua PPO clip/KL bound + A_cf STANDARDIZED per-minibatch → khi policy committed (ent_q 0.295) signal thật nhỏ đi nhưng standardization khuếch lại unit-scale → đẩy liên tục 6 epoch × minibatch ngoài trust-region → KL blowup. FIX ƯU TIÊN: resume ep_00600 --cf-coef 0.15 (halve); nếu tái diễn → cần code (anneal cf-coef / raw-threshold A_cf / đưa vào clipped objective). VERDICT Bước B: cf TĂNG TỐC + R_tot vượt gold nhưng CHƯA phá wall + gây instability late-run.
+  result_24 (đĩa r27) ⭐N=48 BALANCED relaunch | 1.5 | 0.001/anneal | 16 | PopArt | 16 | = | =arch2 + N=48 + balanced_blocked_spawn=true | FRESH (PID625), thay result_22 (đĩa r21 N48-Binomial, stopped WSL-restart). @ep864 2026-06-13: QoS 52→57%, R_tot 1.40→1.60, best 121 — NẰM KHÍT đường r11-OLD baseline matched-ep (r11@850 ≈ 56-58/1.6). dir=6.2 irs=[1.7,2.0] under-route, critic wobble 0.17, heads healthy, KHÔNG divergence. = run N=48 THỨ HAI track baseline y hệt (r22-doc trước cũng vậy tới ep1100). | ⭐⭐ VERDICT BƯỚC A — REVISED 2026-06-13 (user insight): N=48 KHÔNG cash-in ceiling NHƯNG attribution = PHASE-BLOCKED chứ chưa chắc F2: ent_ph FLAT 90-93 (~70% max 133) suốt 864ep + 18 flag [C], TƯƠNG PHẢN r25-N24 cùng arch ent_ph 25-33 (37-50% max) converging. d_out 96→192 + 1/√N coherence penalty → phase N=48 không tự hội tụ → ceiling 78% chưa bao giờ accessible. ⟹ "N=48 negative" = CHƯA TEST ĐÚNG NGHĨA; cần warmup mở khóa (xem COMBO plan). r27 GIỮ làm CONTROL "N48 no-warmup" cho ablation pair. Kill được sau ep~864 (data control đủ).
+  result_25 (đĩa r26) ⭐⭐⭐ COMBO N48 + PHASE-WARMUP(no-freeze) + CF-ANNEAL — PHÁ ĐƯỢC GOLD WALL (đầu tiên) | 1.5 | 0.001/anneal | 16 | PopArt | 16 | = | =arch2 + N=48 + balanced + --phase-warmup(50ep×300CE, NO freeze) + --counterfactual-assign 0.3 --cf-anneal-end 0.5 | RUNNING (PID1513) ep~338/2000 2026-06-13, EARLY (warmup-boost + cf-on). Warmup: CE 1.83→0.60, per-IRS match 25→78%. QoS window 65.6(ep100)→69.8(ep300), peak-window **71.6%@ep253** ĐANG LEO, R_tot 1.66, reward 97→233. Critic borderline explVar 0.33 wobble (như r11). KL_q 0.026 = KHÔNG diverge (cf-anneal FIX r25-divergence@ep768 — coef_eff 0.20→0@ep1000). ⭐ phase ent_ph ~50-58% max ĐANG GIẢM (warmup MỞ KHÓA N48-phase — TƯƠNG PHẢN r27 flat 70%). | ⭐⭐⭐ HEAD-TO-HEAD (analysis/compare_runs.py, pull TRỰC TIẾP từ folder, sampled ±25ep window-peak): combo-r26 **71.6%** (All-IRS86.4 N48) vs gold-r11 **60.9%** (76.8 N24) vs N48-ctrl-r27 **56.9%** (86.4 N48). ABLATION TRIANGLE: (a) r26 > gold +10.7pt = PHÁ WALL ✓; (b) r26 vs r27 SAME N48+spawn = **+14.7pt = LEVERS (warmup+cf) phá, KHÔNG phải N**; (c) r27 N48-alone 56.9 < r11 N24 60.9 → N48 ALONE HẠI (phase-blocked), warmup+cf convert ceiling→QoS. Design = synthesis 2 fail cũ: KHÔNG freeze (r13 freeze vỡ critic) + anneal cf (r25 diverge). | ⚠ EARLY (ep338/2000): phải HOLD qua cf-anneal-off (~ep1000 = r25 divergence zone + warmup-fade) TRƯỚC khi lockable. Apples-to-apples claim = +14.7pt within-N48 (r26 vs r27). r26-vs-r11 absolute = confound N48(+10pt ceiling)+balanced-spawn. WATCH ep700-1000: QoS hold>65%? KL_q<0.5? → re-analysis.
+  ⭐ UPDATE @ep531 2026-06-13 (re-analysis): KHÔNG DRIFT, QoS LEO ĐƠN ĐIỆU 65.6→68.8→69.8→72.7→74.0% (window-peak
+    74.3%@ep478), R_tot 1.64-1.66 ổn, reward 97→257, vs gold 60.9% = +13.4pt vẫn leo. CRITIC explVar wobble
+    0.0-0.6 mean~0.35 KHÔNG trend lên NHƯNG FUNCTIONAL (KHÔNG phá pipeline): ‖∇‖V μ1.3 max4.5 clipfrac0% (≠[B-2b]),
+    V̄+25.5≈ret, policy leo đơn điệu = bằng chứng. explVar wobble = artifact low-return-variance σV0.68 (xem
+    Common-Knowledge #11). KL_q 0.03-0.07 + 1 spike thoáng 0.911 tự sửa (cf-anneal giữ, coef0.142→0@ep1000). phase
+    ent_ph 83→70 (53%max, converged-ish nhờ warmup, khác r27 flat70%). ⚠ ck WEAK top26%, IRS routing lệch [1.2,4.4].
+    ⚠ ep768 (r25-divergence zone) CHƯA tới — hold-test thật vẫn ở phía trước ep700-1000.
   -------+-----+--------------+-------+--------------+------+----------------+----------------------+----------------------------------+----------------------------------
   ⚠ result_13 = D_k=0.15 (binary sweet-spot test, R_LoS=0.2) — KHÔNG cùng setup với các run trên (D_k=0.10).
   ⚠ result_14 = R_LoS=0.3 RAMP-2 — KHÔNG cùng setup với các run trên (R_LoS=0.2). Resume từ r11 ep_01400.
@@ -105,6 +149,48 @@
        → ACTION: ĐỪNG relaunch warmup+freeze Case 2 (premise bác). PIVOT: routing-shape (Q-head F2, BUILT)
          + PowerMLP fairness (F4). Phase KHÔNG phải lever cho Case 2 objective. ckpt result_13 = bỏ.
        → PAPER: negative result củng cố F1/F4 — "phase fixable nhưng không binding; bottleneck = assignment/power".
+       ⭐ ADDENDUM 2026-06-12 (re-read full log): (a) λ-RUNAWAY instance #2 — Lagrangian tgt0.85 ≫ trần-frozen-phase
+         (~53%) → viol +0.31 persistent → λ_D ratchet 1.5→2.51 (clip 3.5), reward μ −312→−349 = λ-phình không phải
+         policy-degrade thêm (cùng pattern result_20-disk Case 1 tgt0.90; xác nhận handoff rule 2/[L]: target PHẢI ≤
+         trần-khả-thi). (b) irs=[1.5 5.6] @ep384 = single-IRS CROWDING concrete — frozen 99%-coherent phase kéo user
+         dồn 1 IRS, evidence cụ thể cho hypothesis "freeze single-user-optimal HẠI multi-user" (dòng trên).
+         (c) ⚠ log flag "ENTROPY-DOMINATED ph=10.56" = ARTIFACT khi freeze-phase (|L_pg|ph≈0 → ratio nổ), bỏ qua.
+     ⭐⭐ POWER-QOS PROBE 2026-06-11 (probe_power_qos, disambiguate F4-power vs non-stationarity):
+       r13 ep_00300 (phase99% frozen): wp-top2 55%, QoS agent 53.9% vs equal-split 49.1%, **Δ=−4.8** (equal TỆ hơn)
+       r11-HIST ep_01400 (phase~38%):  wp-top2 58%, QoS agent 60.1% vs equal-split 60.8%, **Δ=+0.7** (≈0)
+       ⟹ POWER-CONCENTRATION BÁC ở CẢ 2 run. Unmet users w_p thấp (175 vs met 403) NHƯNG cho thêm power
+         VẪN không đạt D_k (channel quá yếu) → power KHÔNG phải QoS cap.
+       ⭐⭐⭐ BOTTLENECK MAP HOÀN CHỈNH Case 2 (3 counterfactual đã loại 2): phase BÁC (r13) · power BÁC (đây)
+         → binding = ASSIGNMENT-credit (F2, oracle +11pt) + STRUCTURAL multi-user-IRS-sharing (M=2/K=10 →
+         ~5 user share 1 phase → secondary users unmet bất kể power/phase). = SCALE-LIMITED (#3). QoS ~60%
+         gần trần cấu trúc. Lever còn lại: chỉ assignment-credit (L1 distill/counterfactual-assign, chưa build)
+         HOẶC lock r11-HIST. KHÔNG phải: phase/power/routing-shape (Case 2 đã over-route).
+       → câu "downstream non-stationary?": KHÔNG — power+phase (downstream) đều loại; binding là assignment
+         (head VQC, F2) + structural. Non-stationarity chỉ là 1 phần F2, trần thật là structural multi-user.
+     ⭐⭐⭐ QOS-BY-ASSIGNMENT PROBE 2026-06-11 (probe_qos_by_assignment r13 ep_00300) — DECISION-GRADE:
+       OVERALL 53.6% · IRS-assigned 62.8% (non-block 70.4%, blocked 56.7%) · DIRECT-assigned 38.7%
+       (blocked-direct 39.3% n=10937, non-block-direct 37.2%). LỖ HỔNG = direct-assigned, đặc biệt
+       BLOCKED-DIRECT (44% của blocked users bị route direct → chỉ 39% QoS = under-route fixable).
+       NHƯNG: (1) r13 53.6% < r11-HIST 60% → warmup+freeze LÀM XẤU routing → r11-HIST ĐÃ capture phần
+       lớn headroom này; (2) move thêm vào IRS → multi-user dilution ăn bớt gain; (3) non-block-direct 37%
+       = structural floor (channel yếu cố hữu).
+       ⟹ ⭐ DECISION: r11-HIST 60% ≈ TRẦN assignment-achievable. Headroom còn ~0-3pt structurally-capped.
+         L1-distill assignment lever = high-effort (VQC-distill 0% live) + gain nhỏ bounded → KHÔNG đáng.
+         → LOCK r11-HIST làm Case 2 result. Dồn sức Case 3 / ClassicalActor / scale-K.
+       PAPER negative-result đầy đủ: phase BÁC + power BÁC + warmup-freeze NET-NEG + assignment near-ceiling
+         ⟹ Case 2 QoS ~60% = STRUCTURAL ceiling (multi-user M=2/K=10 IRS-sharing + F2 credit), scale-limited
+         (#3), KHÔNG phải VQC capacity. 3 counterfactual + decision-grade assignment probe.
+     ⭐⭐ result_19 (đĩa, λ-sweep ←r6/ep_01100, Lagrangian target0.90 max5.5) @ep484 2026-06-11 —
+       XÁC NHẬN THỨ 4: λ KHÔNG phải lever cho Case 2 QoS.
+       λ-sweep: λ 1.5→3.2 nhưng QoS TỤT 56→48% (NGƯỢC kỳ vọng). R_tot ~1.7-1.8 flat. Critic THRASHING
+       (explVar 0.85↔−0.25 loạn). Base r6 (61%) → 48-50% (sweep làm XẤU).
+       Cơ chế: target 0.90 BẤT KHẢ THI (trần ~60%) → viol +0.34-0.42 không giảm → λ RUNAWAY → penalty-dom
+       [I-2] → reward-scale dịch → critic loạn → QoS tụt. F1 "cần λ~5.4 cho 66%" = static reward-optimal,
+       nhưng DYNAMIC raising λ destabilize TRƯỚC khi tới → KHÔNG có λ nào kéo Case 2 lên.
+       → KILL result_19 (degrade, đang vào [K]). LOCK r11-HIST đứng vững (4 counterfactual: phase/power/
+       assignment/λ đều không phá trần ~60%).
+     ⭐ BÀI HỌC LAGRANGIAN (cả 2 case): qos-target phải ≤ trần-khả-thi (Case1 84%, Case2 60%); set cao hơn
+       → λ runaway → QoS GIẢM (r18 target0.95 drift nhẹ; r19 target0.90 vs trần60% destabilize nặng).
 
   ⭐ UPDATE 2026-06-10 (result_20 = Δ7 phase-counterfactual + β-anneal 0.3 — analysis @ep_01082):
      - Run = FRESH Case 2 nq12 λ=1.5 + `--phase-counterfactual --beta-entropy-anneal-end 0.3` (đĩa r11, PID 8027).

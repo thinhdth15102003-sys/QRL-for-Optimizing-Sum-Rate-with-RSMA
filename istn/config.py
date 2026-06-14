@@ -74,6 +74,10 @@ class SystemConfig:
     # large R_LoS. IRS also keep a minimum mutual separation (no clumping).
     irs_spawn_radius_frac:  float = 0.667      # IRS placed within this·R_LoS
     user_free_radius_frac:  float = 0.5        # free users within this·R_LoS
+    balanced_blocked_spawn: bool  = True       # confined users spread EVENLY over the M
+                                               # buildings (counts differ ≤1; 7 users/M=2 →
+                                               # {3,4}). False = legacy iid-uniform spawn
+                                               # (Binomial split; runs pre-2026-06-12)
 
     # ------------------------------------------------------------------ #
     # User mobility  (walking users, random-walk each time step)

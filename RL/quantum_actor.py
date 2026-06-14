@@ -1200,7 +1200,9 @@ class QuantumActor:
                                      K_active: int = None,
                                      routing_target_b=None,
                                      shape_mask_b=None,
-                                     shape_coef: float = 0.0) -> tuple:
+                                     shape_coef: float = 0.0,
+                                     cf_rew_b=None,
+                                     cf_coef: float = 0.0) -> tuple:
         """
         Fused log-prob + gradient in ONE quantum forward pass.
 
@@ -1320,6 +1322,26 @@ class QuantumActor:
             onehot_tgt = np.zeros_like(pi_b)
             onehot_tgt[np.arange(B_s)[:, None], np.arange(K)[None, :], tgt_b] = 1.0
             dL_dlogits_3d = dL_dlogits_3d + shape_coef * msk_b[:, :, None] * (pi_b - onehot_tgt)
+        # ── Counterfactual-assignment auxiliary (Option 2, COMA-style) ─────────
+        #   A_cf(k) = R_cf[k,a_k] − Σ_c π_k(c)·R_cf[k,c]  (per-user counterfactual
+        #   baseline → de-confounds assignment credit + discourages crowding).
+        #   PG term: −coef·A_cf·(onehot(a_k) − π). A_cf standardized → coef scale-free.
+        if cf_coef > 0.0 and cf_rew_b is not None:
+            cf = np.asarray(cf_rew_b, dtype=float)          # (B_s, K, nc)
+            r_act  = cf[np.arange(B_s)[:, None], np.arange(K)[None, :], phi_np]  # (B_s,K)
+            base   = (pi_b * cf).sum(axis=2)                # (B_s,K) Σ_c π·R_cf
+            a_cf   = r_act - base                           # (B_s,K)
+            a_cf   = (a_cf - a_cf.mean()) / (a_cf.std() + 1e-8)
+            # ⭐ TRUST-REGION GATE (2026-06-14, improvement ②): the cf aux is added straight to
+            #   the logit grad, BYPASSING PPO's ratio clip, and A_cf is standardized → a unit-
+            #   scale push re-applied across all ppo_epochs drives the assignment policy far past
+            #   the trust region (result_32 KL_q→2.77; result_33 crash; đĩa r25 KL_q→1.71). Fade
+            #   cf → 0 as the live KL(old‖new) approaches CF_KL_MAX so cf can NEVER push past the
+            #   trust region; PPO's own clip still governs the on-policy PG term. (= soft trust-
+            #   region on the off-clip aux; replaces the blunt --cf-anneal-end schedule.)
+            CF_KL_MAX = 0.5
+            cf_gate = max(0.0, 1.0 - kl_q / CF_KL_MAX)
+            dL_dlogits_3d = dL_dlogits_3d - (cf_coef * cf_gate) * a_cf[:, :, None] * (one_hot_b - pi_b)
         dL_dlogits_b = dL_dlogits_3d.reshape(B_s, K * nc)
 
         # Assignment head backward (Δ4) → head grads + dL/dz_post + dL/do_hat

@@ -20,6 +20,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--K', type=int, default=10)
     ap.add_argument('--M', type=int, default=2)
+    ap.add_argument('--N', type=int, default=None, help='IRS elements override (default params 24)')
     ap.add_argument('--R-LoS', dest='rlos', type=float, default=0.2)
     ap.add_argument('--P', type=float, nargs='+', default=[70.0, 60.0, 50.0])
     ap.add_argument('--episodes', type=int, default=30)
@@ -34,7 +35,10 @@ def main():
           f"{'blocked%':>9} {'Rtot(Dir)':>10} {'Rtot(IRS)':>10}")
     print("  " + "-" * 74)
     for P in args.P:
-        cfg = make_config(K=args.K, M=args.M, P_S_dBm=P, R_LoS_km=args.rlos)
+        _ov = dict(K=args.K, M=args.M, P_S_dBm=P, R_LoS_km=args.rlos)
+        if args.N is not None:
+            _ov['N'] = args.N
+        cfg = make_config(**_ov)
         r = _env_feasibility_report(cfg, seed=args.seed,
                                     n_ep=args.episodes, n_steps=args.steps)
         print(f"  {P:>9.1f} {r['servable_frac']*100:>10.1f} {r['qos_direct']*100:>9.1f} "

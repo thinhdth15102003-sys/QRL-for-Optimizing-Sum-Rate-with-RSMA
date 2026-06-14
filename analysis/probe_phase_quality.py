@@ -45,9 +45,19 @@ def main():
     ap.add_argument('--seed', type=int, default=20260602)
     ap.add_argument('--sampled', action='store_true',
                     help='use sampled phase instead of greedy (default greedy)')
+    ap.add_argument('--K', type=int, default=None, help='override Case K (else params active case)')
+    ap.add_argument('--M', type=int, default=None, help='override Case M')
+    ap.add_argument('--N', type=int, default=None, help='override IRS elements N')
+    ap.add_argument('--P', dest='P_S_dBm', type=float, default=None, help='override P_S_dBm')
+    ap.add_argument('--R-LoS', dest='rlos', type=float, default=None, help='override R_LoS_km')
     args = ap.parse_args()
 
-    cfg = make_config(); K = cfg.K; N = cfg.N
+    # Allow explicit Case override so the probe matches the ckpt's K/M even when
+    # params.py's ACTIVE CASE differs (e.g. probing a K5 ckpt while params=Case2).
+    _ov = {k: v for k, v in [('K', args.K), ('M', args.M), ('N', args.N),
+                             ('P_S_dBm', args.P_S_dBm), ('R_LoS_km', args.rlos)]
+           if v is not None}
+    cfg = make_config(**_ov); K = cfg.K; N = cfg.N
     greedy = not args.sampled
     env = ISTNEnv(cfg=cfg, seed=args.seed, n_steps_ep=args.steps, reward_noise_avg=1)
 

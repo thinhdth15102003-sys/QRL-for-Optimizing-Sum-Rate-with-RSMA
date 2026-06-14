@@ -47,20 +47,29 @@ n_latent = 24    # ⭐ G4 UNIFIED: = 2 × n_qubits = 24 across all cases
 
 # ── Per-case hypers (auto-derived from K) ──────────────────────────────────────
 def _per_case_hyper(K_val: int) -> dict:
-    """K-tier → P_S, depth (D_enc=n_var_layers), n_hidden_ae shape."""
+    """K-tier → P_S, depth (D_enc=n_var_layers), n_hidden_ae shape.
+    P_S (2026-06-14, user chốt + oracle feasibility probe analysis/probe_irs_group_capacity.py):
+      Case 1/2 = 50 dBm — Direct-only ~30-43% (IRS REQUIRED), smart-routing oracle ceiling ~100%.
+      Case 3 (K15) = 60 dBm — at 50 dBm K=15 users share too little power → per-user rate < D_k
+        & many unservable; at ≥68 dBm Direct-only jumps to 100% (IRS moot, blocking is binary ×0.1).
+        60 keeps Direct-only ~31% (IRS needed) with every user per-user-feasible. NOTE: Case-3 JOINT
+        oracle ceiling ~52% is P_S-INVARIANT = STRUCTURAL multi-user RSMA-sharing cap (private rate
+        interference-limited < D_k → users depend on common stream, throttled by min-SINR_c). =
+        scale-limited hardest case (paper #3/#11/#8b), NOT a power problem."""
     if K_val <= 5:    # Case 1 SMALL: DƯ qubit → expressivity via W_proj expansion
         return dict(P_S_dBm=50.0,  n_var_layers=2, n_hidden_ae=[32])
     elif K_val <= 10: # Case 2 MEDIUM: identity map (baseline)
-        return dict(P_S_dBm=70.0,  n_var_layers=3, n_hidden_ae=[128, 64])
+        return dict(P_S_dBm=50.0,  n_var_layers=3, n_hidden_ae=[128, 64])
     else:             # Case 3 LARGE: soft-cluster compression, more depth
-        return dict(P_S_dBm=100.0, n_var_layers=5, n_hidden_ae=[256, 128, 64])
+        return dict(P_S_dBm=60.0,  n_var_layers=5, n_hidden_ae=[256, 128, 64])
 
 _hyp     = _per_case_hyper(K)
 P_S_dBm  = _hyp['P_S_dBm']
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Network topology ────────────────────────────────────────────────────────────
-N = 24    # reflection elements per IRS (unchanged across cases)
+N = 24    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+          #   feasibility ceiling 73→82% but fresh-train only; test counterfactual-assign @N=24 first.]
 
 # ── Satellite RF  (ITU-R model) ─────────────────────────────────────────────────
 # P_S_dBm defined above (case-dependent)
@@ -115,6 +124,12 @@ h_IRS_km = 0.02   # IRS/building rooftop height (km) = 20 m
 # the LoS edge with no coverage — critical as R_LoS grows toward 0.5.
 irs_spawn_radius_frac = 0.667      # IRS spawn within this·R_LoS, min-separated
 user_free_radius_frac = 0.4        # free (non-confined) users within this·R_LoS
+balanced_blocked_spawn = True      # ⭐ 2026-06-13 CANONICAL (user chốt): blocked chia ĐỀU cho M buildings.
+                                   # LÝ DO: Case 1 M=1 → balanced≡binomial (no-op, lock vẫn valid); Case 2-3
+                                   # M≥2 → binomial = IRS-load LỆCH = non-stationarity nguồn cho pipeline vốn
+                                   # shaky → balanced khử cái này. r26 combo + Case-3 thật đều balanced → R2
+                                   # nhất quán (Case 1 trivially, Case 2/3 explicitly). r11-HIST binomial =
+                                   # historical baseline. False = legacy iid-uniform (Binomial split).
 
 # ── User mobility  (random-walk pedestrian model) ───────────────────────────────
 user_speed_mps = 1.5   # walking speed (m/s)
@@ -268,7 +283,11 @@ lr_actor_xi   = 3e-4    # Adam lr — post-NN weights ξ
 # Pure-MLP actor replacing AE+VQC+head. ~52K params @ Case 2 (vs VQC ~2K) = param-eff story.
 classical_enc_hidden = (128,)        # encoder MLP hidden (s_t → z_t[n_latent])
 classical_pol_hidden = (256, 128)    # policy MLP hidden (z_t → assignment logits)
-lr_classical_actor   = 3e-4          # Adam lr for the MLP actor (schedule follows lr_actor_qc frac)
+lr_classical_actor   = 1e-4          # ⭐ 2026-06-13: 3e-4→1e-4 = ISO-LR với VQC lr_actor_qc (A2 fairness).
+                                     # 3e-4 (đĩa r28) climb nhanh→peak 76%→drift hard (overshoot, dưới
+                                     # All-IRS). 1e-4 = same opt-budget VQC + nhả drift. (schedule follows
+                                     # lr_actor_qc frac). Nếu vẫn cap ~76% = gap structural (VQC bias), KHÔNG
+                                     # chase thêm — đó là DNN honest-best, frame param-eff.
 lr_critic     = 3e-4    # Adam lr — critic ψ  (↑ from 3e-4: at R_LoS=0.4/λ_D=4 the
                         # return variance is higher → critic lagged (explVar ~0.2,
                         # TD ~0.3) → noisy advantages → reward wavering. Faster
@@ -374,6 +393,7 @@ def make_config(**overrides) -> SystemConfig:
         R_LoS_km=R_LoS_km, h_IRS_km=h_IRS_km,
         irs_spawn_radius_frac=irs_spawn_radius_frac,
         user_free_radius_frac=user_free_radius_frac,
+        balanced_blocked_spawn=balanced_blocked_spawn,
         user_speed_mps=user_speed_mps, dt_s=dt_s,
         beta_blocking=beta_blocking, beta_IRS=beta_IRS,
         d_block_km=d_block_km,

@@ -29,6 +29,17 @@ critic_warmup_episodes=16, critic_warmup_epochs=50
 reward_noise_avg=8, D_k_bps_hz=0.1, user_free_radius_frac=0.4
 lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất per-ramp).
 
+# ── FEASIBILITY vs RAMP (P=50, K5M1, probe_feasibility_at_P, 2026-06-14) ────────
+#   R_LoS:   0.2    0.3    0.4    0.5     (IRS spawn = 0.667·R_LoS → IRS XA dần khi ramp↑)
+#   Servable 98.9   98.3   98.3   98.3    (trần vật lý ~98% MỌI ramp → dưới mức này = optimization)
+#   Direct%  42.9   41.2   41.2   41.2    ← PHẲNG: ramp↑ KHÔNG làm direct mạnh hơn (free users trải ra
+#                                            0.4·R_LoS → direct xa hơn, bù lại). blocked 59% cố định.
+#   All-IRS% 72.2   63.6   61.6   60.6    ← IRS YẾU dần (xa hơn, cascaded path-loss) NHƯNG luôn +19~29pp > Direct.
+#   ⟹ IRS KHÔNG BAO GIỜ bypassable: All-IRS ≫ Direct ở MỌI ramp; blocked 59% (cố định, direct bị chặn)
+#     BẮT BUỘC dùng IRS. Nếu assign-IRS TỤT ở ramp cao = UNDER-ASSIGN [N] / ramp-instability [A] (FAILURE),
+#     KHÔNG phải "shift hợp lý sang direct". Phase-quality matter HƠN ở ramp cao (IRS headroom co 72→61) —
+#     nhưng vẫn phải GIỮ IRS-routing, không bỏ. (Trần QoS @0.2 = POWER, không phải phase — probe_power_qos.)
+
 
 ================================================================================
   HYPER THEO TỪNG RAMP R_LoS  (+ bài học)
@@ -50,6 +61,59 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
   λ_D: 3.  gae=0 (giai đoạn đầu, chưa biết bài học gae).
   Kết quả: result_3 dừng sớm ~ep500, QoS ~54% (đang lên thì dừng).
   Lưu ý: bước dễ nhất, dùng để khởi tạo. AE-pretrain bật (fresh, không resume).
+
+  ── result_34 (đĩa results/result_34) — WARMUP-ALONE test @λ_D=1.5 [2026-06-14, LIVE ep~400/2000] ──
+   Cmd: --phase-warmup eps50 epochs300 (KHÔNG cf, KHÔNG oracle-assign). K5M1 P50, n_var_layers=2, SPSA.
+   ⚠ Log MẤT (rm-incident 06-14: fd write-only trên /mnt/c KHÔNG recover được dù process còn sống —
+     pos=130KB nhưng cat=0). Đọc qua critic_diag.jsonl + checkpoints; hyperparameters.json đã RECONSTRUCT
+     từ checkpoints/ep_00400/agents/*_config.json (arch+K/M/N/P/Dk exact) + cmd + r35 physical-const.
+   Log ep132-424 RECOVERED từ user CLI scrollback (fd-DrvFs mất nhưng scrollback còn). Probes @ep_00400:
+   · QoS noise-avg ~70-71% (assignment-probe 71.0% + power-probe 70.1% KHỚP); log per-ep QoS/K spread
+     68-84% (đỉnh 4.2/5=84% @ep235, single-draw noisy). assignment SOLVED 98.9% (#IRS 3.01≈oracle 2.94,
+     over 4.7%, under 1.1%). Returns -4.8→28 PLATEAU từ ~ep275; best reward 316.9 @ep361.
+   · Critic OK tuyệt-đối (bias≈0, V̄≈ret leo +6→+29, grad nhỏ); explVar wobble 0.05-0.81 = ARTIFACT
+     return-variance-collapse KHÔNG [B-2b]. dead_frac ~76% (benign).
+   ⭐ GAP +29pp tới oracle = POWER-DOMINATED (probe_power_qos: equal-split QoS 70.1→98.1% = +27.9pp, sum-
+     rate gần như KHÔNG đổi 1.733 vs 1.720; unmet starved 3.28×, wp-top2 66.7% vs equal 40%). PhaseMLP
+     CŨNG thrashing [F] (ent ph ~60-72% max, ‖∇ph‖ 45-255 spiky, KL_ph bé) NHƯNG KHÔNG phải ràng buộc
+     QoS — equal-split phục hồi 98% NGAY với phase hiện tại. λ|max| frozen 0.48-0.52 [E] harmless.
+   → KẾT: warmup-alone Case 1 ≈70-74% @ep400 (~ngang vanilla), routing solved, trần QoS = POWER. Lever
+     lớn nhất = power-fairness ③ (+28pp ~free sum-rate, GIỐNG Case 2). Phase [F] = health-issue thứ cấp.
+     Doc-number chính thức gán khi run kết thúc.
+
+  ── result_37 (đĩa results/result_37) — ③ POWER-FAIRNESS VALIDATION [2026-06-14, LIVE] ──
+   Resume result_34/ep_00400 + `--power-fairness 1.0` (α=1 = exact equal-split), 300 ep, K5M1 P50.
+   ⭐⭐ XÁC NHẬN ③ IN-LOOP: QoS NHẢY 70% → ep1 90% → ep2+ 97-99% (rolling-50@ep120 = 99%); R_tot GIỮ ~1.75;
+     wp-top2 66.7%→**40%** (= equal-split 2/5). Khớp probe_power_qos (equal-split 98.1%). ⟹ +28pp QoS @
+     ~zero sum-rate cost, ĐÚNG dự đoán. Lever ③ proven end-to-end (không chỉ probe).
+   Critic hồi phục sau resume (explVar 0.24→0.61, bias −0.72→+0.007). Assignment converged (ent q 0.21,
+     irs≈blk 2.8≈2.6). Common-stream khỏe (wc 58%, Ck 0.93).
+   ⚠ PhaseMLP VẪN thrashing [F] (‖∇ph‖ 132→288, KL_ph spike 1.5→0.45, ent/pg ph 1.51 "ENTROPY-DOMINATED")
+     NHƯNG BENIGN: QoS saturated → phase L_pg→0 → entropy dominates; equal-power làm phase đủ-tốt. KHÔNG
+     phải QoS-limiter. (Scale/giữ lâu: ↓β hoặc fix [F].)
+   → ③ XONG validate.
+
+  ── ⭐⭐ CHỐT RECIPE CASE 1 + α-CURVE + WARMUP-VERDICT [2026-06-14] ──
+   α-sweep QoS-vs-power-fairness trên r34/ep_00400 (no-train, blend tĩnh — predict trained vì effect tức-thì):
+     α:        0.0    0.3    0.5    0.7    1.0
+     QoS%:    70.1   76.7   89.2   97.8   98.1
+     SumRate: 1.733  1.724  1.720  1.719  1.720   ← PHẲNG (concentration KHÔNG tạo sum-rate — chốt dứt khoát)
+     wp-top2: 67     59     53     48     40
+   → **α=0.5 = SWEET-SPOT** cho target 85-90% (QoS 89.2%, sum-rate ~free, wp-top2 53% → power-head CÒN
+     learnable, không bị override như α=1). α=1 (99%) = saturation regime DỄ → head vô dụng, overfit, KHÔNG transfer.
+   WARMUP-VERDICT (confirm 06-14 từ r5-vs-r34): `--phase-warmup` (frozen-actor own-routing) PHẢN TÁC DỤNG —
+     ‖∇ph‖ spike **255** vs vanilla **≤24**, 0 divergence(vanilla) vs KL_ph=1.5(warmup), 0 perf-gain ("VANILLA
+     thắng"). Cơ chế: phase warm trên routing init-frozen ≠ joint routing → yank. ① `--oracle-warmup` (warm
+     trên ORACLE routing) = bản SỬA nhưng CHƯA validate. ⟹ CASE 1 BỎ warmup hẳn.
+   ⭐ PHASE-COHERENCE KHÔNG phải lever (probe_phase_quality + α-sweep, 06-14): warmup r34 coherence
+     **94%** vs vanilla r5 **48%** — NHƯNG 48% ĐỦ: r5 giữ NGUYÊN phase 48%, chỉ equal-power (α=1) → QoS
+     **99.7%** (clean proof, same policy/phase, chỉ đổi power). Warmup 94%-coherence (r34) KHÔNG hơn
+     (98.1% ≤ 99.7%; sum-rate 1.72 < 1.92). IRS beats direct 99.9% cả hai. ⟹ ramp 0.2 IRS gần → 48%
+     coherence saturate; POWER là ceiling-gap, KHÔNG phải phase. (Ramp cao IRS xa/yếu → coherence CÓ THỂ
+     matter hơn — open, test sau.) → KHÔNG đáng design phase-warmup. (r5 vanilla = base TỐT NHẤT: +α beats r34.)
+   ⭐ RECIPE CASE 1 (ramp 0.2): **VANILLA (no warmup, no cf) + `--power-fairness 0.5`** → QoS ~85-90%.
+     Ramp cao: All-IRS yếu dần (72→61) → có thể nâng α nhẹ giữ 85-90%; tiêu chí lên ramp = ~85-90% (đừng
+     crank λ_D ép 100%). Case 2: P_S cố định + 2× users → target 85-90% là tham vọng-hợp-lý (③ ~76% + tune).
 
 ── R_LoS = 0.3 ──────────────────────────────────────────────────────────────
   Run: result_4 (resume result_3, λ_D=3, gae=0).
@@ -299,4 +363,88 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
                 --resume results/result_12/checkpoints/ep_00500/agents --episodes 1500 --seed 0
        (Telegram: /ramp 0.5 2.5 result_12/checkpoints/ep_00500 1500 shape lag=0.90)
        Resume KHÔNG freeze phase → KHÔNG regime-shift như result_13. λ reset lambda-min trên resume.
+
+  ⭐⭐⭐ result_18 (đĩa, ramp 0.5 FINAL + routing-shape coef0.1 + Lagrangian target0.95 ←r12/ep_00500)
+     @ep647 2026-06-11 — ROUTING-SHAPE THÀNH CÔNG, CASE 1 LOCK-READY:
+       ⭐ IRS ≥ Blk ĐẠT: IRS ~3.0 ≥ Blk ~2.6 (vs result_12 ramp0.4 IRS<Blk under-route) — routing-shape
+         fixed under-routing đúng như thiết kế. QoS HOLD 82-84% suốt ramp 0.5 (≈ r11 gold 83%), R_tot 2.3→2.6.
+       Critic khỏe explVar 0.33-0.51 stable · ent_q ~13% committed-stable · λ leo 3.14→3.23 (Lagrangian).
+       Per-ckpt QoS/IRS/Blk: ep300 80/2.9/1.9 · ep400 84/3.0/2.7 ⭐ · ep500 82/3.1/2.4 · ep600 72/3.0/2.2.
+       ⚠ QoS drift 82→76 (last 150ep, đã qua peak ep400) + best reward 577 unbeaten 634ep → ĐÃ QUA ĐỈNH.
+       ✅ LOCK CASE 1 @ ep_00400 (QoS 84% / IRS3.0≥Blk2.7 / R_tot~2.5 / ramp 0.5 final). Lấy ckpt ngay,
+         KHÔNG chạy hết 1500 (drift thêm). routing-shape = lever ĐÚNG cho Case 1 (contrast Case 2 no-op vì
+         Case 2 đã over-route). → Case 1 R2-table-ready.
+
+  ⭐ result_20 (đĩa, ramp 0.5 FINAL QoS-PUSH 84→90 + routing-shape + Lagrangian target0.90 clip[3.0,4.5]
+     ←result_18/ep_00400) @ep287/1500 2026-06-11 — FAILED, λ-RUNAWAY [K]/[L], DỪNG:
+       Target 0.90 > trần-khả-thi-với-routing-hiện-tại (~84%) → λ_D ratchet 1.5→3.0→3.31 (→clip4.5),
+       viol +0.078→+0.172 TĂNG DẦN (positive feedback). QoS GIẢM ĐƠN ĐIỆU 82→73% (dưới cả resume 84%),
+       R_tot ~2.6 flat, best reward 504@~ep90 unbeaten 274ep. CRITIC KHỎE (explVar 0.57 stable, V̄26.9≈ret26.5,
+       ‖∇‖V clipfrac0%) → KHÔNG phải critic, thuần Lagrangian target misspecification (xác nhận rule 2 / [K]/[L]).
+       Feasibility ramp0.5: Servable 100% / Direct-only 100% / All-IRS 83.9% → agent OVER-route IRS (irs~3.1 vs
+       dir~1.9, Blk~2.5) cap QoS vì direct tốt hơn ở R_LoS lớn. routing-shape (lever early-ramp blockage-cao) có
+       thể PHẢN TÁC DỤNG ở ramp 0.5. → DỪNG, GIỮ result_18/ep_00400 (84%) làm Case 1 lock (đúng handoff fallback).
+       Nếu muốn thử >84%: FRESH với target~0.85 (feasible) + BỎ --routing-shape ở ramp 0.5. KHÔNG resume target0.90.
+
+  ⭐⭐ PROBE OVER-ASSIGNMENT (analysis/probe_irs_overassign.py, ckpt result_18/ep_00400, R_LoS0.5, P_S70) 2026-06-11
+     — TRẢ LỜI "over-route IRS có làm degenerate nhóm IRS không": KHÔNG (giả thuyết bị BÁC một phần):
+     PHYSICAL (500 spawn): blocked 60% → IRS-opt>direct 100% (+38dB), MUST dùng IRS (direct chết); non-blocked
+       → IRS thắng chỉ 5% (-17.6dB) → direct tốt hơn HẲN. Optimal routing = blocked→IRS, non-blocked→direct (~3/2).
+     POLICY (6ep×200): IRS/K=2.90 ≈ blocked 3.0 (CALIBRATED, không over/under-route nặng). QoS overall 82.9%,
+       IRS-assigned 86.3% > direct 78.3% (IRS serve TỐT, không kéo xuống). Over-assignment = 11% IRS-routed là
+       non-blocked (66% QoS vs 78% nếu để direct) = cost NHỎ ~1pp.
+     n_irs binning: n_irs=3 = SWEET-SPOT (R/user 0.716, QoS 86.6%, 86% số step) KHÔNG degenerate; chỉ degrade nhẹ
+       ở n_irs=4 (R/user 0.494, QoS 80.6%, HIẾM 4%). MODEL không có phase-tradeoff (|Σφ|=N cho mọi IRS-user cùng
+       lúc, g_SR/g_RU scalar) → "1 IRS phục vụ 3 user" KHÔNG degenerate như lo ngại.
+     ⟹ routing-shape ĐANG LÀM ĐÚNG (secure blocked→IRS). KHÔNG nên DROP (risk under-route 60% blocked = chết hẳn,
+       DIR&blocked hiện chỉ n=80). Cùng lắm hạ coef 0.1→0.05 trim 11% misroute (upside ~1pp, watch DIR&blocked↑).
+     ⭐ QoS-DRAG THẬT = DIR&non-block 78.1% (2444 inst): non-block user trên direct VẪN miss D_k=0.1 → POWER
+       allocation (PowerMLP starve weak-direct user), KHÔNG phải routing. Lever >84% = power cho weak-direct user.
+
+  ⭐ result_23 (đĩa, ramp 0.5 FINAL, FIXED λ_D=4.0 non-Lagrangian + routing-shape0.05, ←result_18/ep_00400)
+     ⚠ CHẠY @ P_S=50 (KHÔNG phải 70 của ckpt) — user CHỦ Ý giữ 50. DONE ep1000/1000 2026-06-12:
+       ⭐⭐ FIXED-λ=4 ỔN ĐỊNH (KHÔNG runaway như Lagrangian r20): QoS hold 70-78% (avg ~74%, peak 78% mid),
+         R_tot leo 2.12→2.57, best reward 405.9. CRITIC TỐT NHẤT mọi run: explVar 0.80 stable, V̄23.6≈ret22.9,
+         corr0.90. KHÔNG entropy-dom (ent/pg ph0.12 pw0.25). wc=89% common-heavy (HỢP LÝ ở P_S thấp: common
+         serve mọi user → QoS-max dưới λ=4), KHÔNG phải [A] collapse. irs=[3.0]≈Blk2.7 routed tốt. λ frozen [E].
+       ⚠⚠ P_S=50 → feasibility SỤP vs P_S70: Servable 98.9% / Direct-only 42.9% (was 100%) / All-IRS 59.1%
+         (was 83.9%). QoS 74% VƯỢT All-IRS +15pt, Direct +31pt = MẠNH trong regime này, NHƯNG KHÔNG so được
+         với lock 84% (P_S70). KHÔNG phải regression 84→74.
+     ✅✅ USER CHỐT 2026-06-12: **LOCK result_23 @ ep_00400 LÀM CASE-1 FINAL** ⟹ P_S=50 CANONICAL cho Case 1
+       (khớp docs dòng14 + auto-derive K≤5 + R3 scale-K P_S=50 — toàn pipeline nhất quán).
+       Per-ckpt QoS (±25ep window): ep400 **77.8%**/R2.35 ⭐ · ep600 77.2%/2.27 · ep900 73.8%/2.53 ·
+       ep1000 70.4%/2.58 (late ckpts trade QoS→R_tot). IRS 3.0 ≥ Blk 2.6 mọi ckpt.
+       **LOCK = results/result_23/checkpoints/ep_00400** (QoS ~77.8% / R_tot 2.35 / λ_D=4 fixed / P_S=50 /
+       ramp 0.5 / vs Direct-only 42.9% +35pt, All-IRS 59.1% +19pt). → R2-table Case 1 = số này.
+       result_18/ep_00400 (84% @P_S70) HẠ CẤP thành P_S-sensitivity reference (không vào R2; có thể dùng
+       cho R4-style P_S robustness nếu cần). Chuỗi curriculum r5→r8→r12→r18 vẫn giữ làm trajectory lịch sử
+       (fig case1_lambda_yz dùng chain này — λ frozen bất biến theo P_S nên fig vẫn valid).
+
+  ⭐⭐ result_24 (đĩa results/result_28) = R5/A2 DNN BASELINE — ClassicalActor vs VQC (--actor-mode classical,
+     K5/M1/N24, R0.2, λ1.5, P_S=50, FRESH, PID1583) @ep~647/1500 2026-06-13. balanced-spawn = NO-OP (M=1).
+       HEALTHY + SẠCH: critic explVar 0.78 (best-class) stable, V̄19.7≈R̄, ‖∇‖V 1.3 clipfrac0%. KHÔNG entropy-dom
+       (ent/pg ph0.14 pw0.24). λ/AE/ξ grad = 0 (đúng: classical, no quantum/AE). Climb nhanh 59→76% rồi DRIFT
+       (QoS↓ R_tot↑ post-peak, reward μ RƠI 279→197 = KHÁC VQC reward-stable). Per-ckpt: ep400 **76.0%** ⭐peak · ep500 73.9 · ep600 66.9
+       (drift dưới All-IRS 70%). best reward 354@~ep490. wc76% common-heavy (low-P rational). irs2.8≈Blk3.
+       Feasibility @P_S50: Servable 98.2 / All-IRS 70.3 / Direct 41.0 — KHỚP r5 (98.9/72.2/42.9) → FAIR compare.
+     ⭐⭐⭐ A2/R5 RE-ANALYSIS 2026-06-13 (user insight — SỬA 2 lỗi bản sơ bộ):
+       (1) PEAK GAP ~4pt KHÔNG phải 10pt: bản cũ so VQC EVAL-QoS 86% (doc, greedy 3000-shot) vs DNN SAMPLED 76%
+         = apples-to-oranges. Cùng metric (sampled per-ckpt): VQC r5 ~80%@ep400-500 vs DNN ~76%@ep400 = ~4pt →
+         KHỚP honest-prior PQC≈DNN.
+       (2) KHÁC BIỆT THẬT = STABILITY: VQC r5 reward ỔN ĐỊNH ~290-318 cuối run, QoS settle plateau 72-76 (KHÔNG
+         sụp), R_tot leo→2.0 = equilibrium. DNN reward RƠI 279→197, QoS 76→66, R_tot chỉ nhích = over-shoot ko
+         điểm dừng. ROOT: VQC có 3 implicit-reg DNN thiếu — SPSA noise (step damping) + AE-recon (ae_weight0.5
+         giữ latent) + frozen-λ. DNN backprop sạch + no AE-recon → over-optimize sum-rate.
+     → TUNE 2026-06-13: lr_classical_actor 3e-4→1e-4 (ISO-LR VQC, params.py) — lr 3× cao = thủ phạm over-shoot.
+       Relaunch FRESH. NẾU lr=1e-4 VẪN drift: (a) comparison KHÔNG hỏng — chấm best-QoS ckpt = peak; (b) muốn
+       final-stable → lr_min_frac 0.25→0.10 rồi beta_entropy_min↑ (= DNN-analog của VQC implicit-reg); (c) drift
+       = finding hợp lệ (footnote, KHÔNG headline; KHÔNG phải quantum-advantage). PAPER CLAIM = PARAM-EFF, peak.
+     ⚠⚠ CORRECTION 2026-06-13 (đĩa result_29 = relaunch lr=1e-4): r29 BYTE-IDENTICAL r28 (ep50/100/300 reward
+       khớp tuyệt đối) → lr tune LÀ NO-OP. BUG: lr_classical_actor (constructor train.py:1068) bị vòng lr-schedule
+       GHI ĐÈ mỗi ep bằng lr_actor_qc (train.py:1472, opt_qc = MLP optimizer của ClassicalActor) → r28(3e-4) &
+       r29(1e-4) CÙNG chạy effective 1e-4. ĐÃ FIX line 1472 (classical-mode tôn trọng lr_classical_actor).
+       ⟹ DNN LUÔN ở iso-lr 1e-4 = đúng lr VQC → DRIFT là STRUCTURAL (thiếu SPSA+AE-recon+frozen-λ), KHÔNG phải
+       lr. Chẩn đoán "lr 3e-4 thủ phạm" turn trước = SAI, loại. A2 cell KHÔNG đổi: DNN peak ep_00400 76% vs VQC
+       sampled ~80% = ~4pt. Kill r29 (duplicate). Drift lever thật (nếu cần stable-final) = lr_min_frac 0.25→0.10
+       / beta_entropy_min↑ — KHÔNG phải lr_classical_actor (giờ live nhưng 1e-4 là lr công bằng, đừng đổi).
 ================================================================================

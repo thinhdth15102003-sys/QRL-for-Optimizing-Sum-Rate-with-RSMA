@@ -195,7 +195,9 @@ class ClassicalActor(QuantumActor):
                                      K_active: int = None,
                                      routing_target_b=None,
                                      shape_mask_b=None,
-                                     shape_coef: float = 0.0):
+                                     shape_coef: float = 0.0,
+                                     cf_rew_b=None,
+                                     cf_coef: float = 0.0):
         """Returns the SAME 8-tuple as QuantumActor:
         (l_q_arr, L_ae_avg, L_ent_avg, grads_ae, grads_qc, grads_xi, clip_frac_q, kl_q).
         L_ae_avg is 0 (no AE). All MLP grads go in grads_qc (with dummy lam_y/lam_z=0
@@ -240,6 +242,14 @@ class ClassicalActor(QuantumActor):
             onehot_tgt = np.zeros_like(pi_b)
             onehot_tgt[np.arange(B_s)[:, None], np.arange(K)[None, :], tgt_b] = 1.0
             dL_dlogits_3d = dL_dlogits_3d + shape_coef * msk_b[:, :, None] * (pi_b - onehot_tgt)
+        # Counterfactual-assignment auxiliary (Option 2, COMA-style) — same as QuantumActor.
+        if cf_coef > 0.0 and cf_rew_b is not None:
+            cf = np.asarray(cf_rew_b, dtype=float)
+            r_act = cf[np.arange(B_s)[:, None], np.arange(K)[None, :], phi_np]
+            base  = (pi_b * cf).sum(axis=2)
+            a_cf  = r_act - base
+            a_cf  = (a_cf - a_cf.mean()) / (a_cf.std() + 1e-8)
+            dL_dlogits_3d = dL_dlogits_3d - cf_coef * a_cf[:, :, None] * (one_hot_b - pi_b)
         dL_dlogits_b = dL_dlogits_3d.reshape(B_s, K * nc)
 
         # ── Backprop through policy MLP → encoder MLP ─────────────────────────

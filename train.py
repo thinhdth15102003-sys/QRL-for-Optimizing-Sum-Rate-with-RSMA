@@ -222,6 +222,46 @@ def _irs_favored_target(env: ISTNEnv):
     return target, mask
 
 
+def _cf_assign_rewards(env, phase_net, power_net, ck_net, phi, z_t, cfg, demand,
+                       lamD: float) -> np.ndarray:
+    """Counterfactual-assignment rewards for the q-head credit fix (COMA-style).
+    For each user k and each link choice c ∈ {0=direct, 1..M=IRS}, re-run the
+    (fixed) downstream policies (phase/power/Ck) under φ' = φ with φ_k=c and
+    recompute the SAME reward (sum_rate − λ·Σ(shortfall/D_k)²) at nominal σ².
+    Returns R_cf (K, M+1). Per-user marginal value → de-confounds assignment credit
+    + discourages crowding (adding k to a busy IRS → its shared phase serves k
+    poorly → low R_cf). Cost = K·(M+1) downstream forwards/step (flag-gated)."""
+    K, M = cfg.K, cfg.M
+    nc = M + 1
+    D_k = demand
+    eps = cfg.epsilon_qp
+    sigma2 = cfg.sigma2                       # nominal (deterministic → clean signal)
+    R_cf = np.zeros((K, nc))
+    for k in range(K):
+        for c in range(nc):
+            phi2 = phi.copy(); phi2[k] = int(c)
+            ai  = _get_active_irs(phi2)
+            aid = _get_active_irs_ids(phi2)
+            s_ph = _build_phase_state(env.channels, phi2, cfg, z_t)
+            pidx, _, _ = phase_net.forward(s_ph, ai)
+            Phi2 = env.phase_model.build_phi(env.phase_model.index_to_phase(pidx))
+            heff = env.rate_computer.effective_channels_all(phi2, Phi2, env.channels)
+            s_pw = np.concatenate([heff.real, heff.imag, z_t])
+            wcv, wp, _, _ = power_net.forward(s_pw, aid)
+            part = env.rate_computer.compute_rates_partial(
+                phi2, Phi2, env.channels, wp, wcv, active_irs_ids=aid)
+            s_ck = _build_ck_state(D_k, part['R_private'], part['R_c_group'], phi2, cfg)
+            Ck, _, _ = ck_net.forward(s_ck, phi2, part['R_c_group'])
+            res = env.rate_computer.compute_sum_rate(
+                phi2, Phi2, env.channels, wp, wcv, C_k=Ck,
+                active_irs_ids=aid, sigma2=sigma2)
+            Rt = res['R_private'] + res['C_k']
+            sf = np.maximum(0.0, D_k - Rt)
+            qp = lamD * float(np.sum((sf / (D_k + eps)) ** 2))
+            R_cf[k, c] = float(res['sum_rate']) - qp
+    return R_cf
+
+
 def _save_agents(run_dir: str, actor, phase_net, power_net, ck_net, cfg,
                  critic=None) -> str:
     """Save all four actor networks (+ critic) + topology snapshot to run_dir/agents/."""
@@ -420,8 +460,73 @@ def _warmup_critic(env, actor, critic, phase_net, power_net, ck_net,
     }
 
 
+def _oracle_assign_env(env) -> np.ndarray:
+    """Oracle assignment target (Common-Knowledge [N]): a blocked user → its building's
+    (nearest) IRS, a non-blocked user → direct (0). Closed-form, no policy."""
+    ch  = env.channels
+    blk = np.asarray(ch['su_blocked'], dtype=bool)
+    d   = np.linalg.norm(env.user_pos[:, None, :] - env.irs_pos[None, :, :], axis=2)  # (K,M)
+    nearest = d.argmin(axis=1) + 1                              # 1-based IRS id
+    return np.where(blk, nearest, 0).astype(int)
+
+
+def _warmup_assignment(env, actor, cfg, args, demand: np.ndarray,
+                       n_episodes: int, n_epochs: int) -> dict:
+    """⭐ Supervised actor (Q-head) warm-up on the ORACLE routing (improvement ①a, 2026-06-14).
+
+    probe_assignment_quality showed the agent never learns blocked→IRS at scale (live
+    18-32% correct). The oracle target is closed-form (blocked→its IRS), so warm-start the
+    VQC Q-head on it — mirrors _warmup_phase but on the actor: roll the frozen actor to
+    collect (s_t, oracle_assign), then CE-fit via the actor's own grad path with eff_adv=+1
+    (pass lp_old = current log π so ratio=1 → loss = -log π(oracle|s)). ae_weight=0 so only
+    the encoding→QC→head routing path moves, not the AE reconstruction. Run BEFORE the phase
+    warm-up so phase targets are built for GOOD routing (kills the result_32 post-warmup yank)."""
+    buf = []
+    rng = np.random.default_rng(args.seed + 71717)
+    for _ep in range(n_episodes):
+        obs = env.reset()
+        for _step in range(args.steps):
+            blocked = _compute_blocked(env)
+            s_t = actor.extract_state(obs, demand, blocked)
+            buf.append({'s_t': s_t.copy(), 'phi': _oracle_assign_env(env)})
+            env.user_pos = env._walk_users(env.user_pos)
+            env.channels = env.channel_model.update_user_channels(
+                env.user_pos, env.irs_pos, env.channels)
+            obs = env._get_obs()
+    n_buf = len(buf)
+    if n_buf == 0:
+        return {'n_samples': 0, 'match_initial': 0.0, 'match_final': 0.0}
+
+    def _match(sample=300):
+        idx = np.unique(np.linspace(0, n_buf - 1, min(sample, n_buf)).astype(int))
+        n_ok = n = 0
+        for i in idx:
+            phi_pred, _, _ = actor.forward(buf[i]['s_t'], greedy=True)
+            n_ok += int(np.sum(np.asarray(phi_pred) == buf[i]['phi']))
+            n    += len(buf[i]['phi'])
+        return 100.0 * n_ok / max(1, n)
+
+    m_init = _match()
+    bs = P.batch_size
+    idx_arr = np.arange(n_buf)
+    for _epoch in range(n_epochs):
+        rng.shuffle(idx_arr)
+        for start in range(0, n_buf, bs):
+            mb = idx_arr[start:start + bs]
+            s_list   = [buf[i]['s_t'] for i in mb]
+            phi_list = [buf[i]['phi'] for i in mb]
+            lp_old = actor.compute_logprobs_batch(s_list, phi_list)
+            adv    = np.ones(len(mb), dtype=float)
+            out = actor.compute_logprobs_grads_batch(
+                s_list, phi_list, lp_old, adv, P.ppo_epsilon, 0.0, 0.0)
+            actor.apply_grads(out[3], out[4], out[5])      # g_ae, g_qc, g_xi
+    m_final = _match()
+    return {'n_samples': n_buf, 'match_initial': float(m_init), 'match_final': float(m_final)}
+
+
 def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
-                  n_episodes: int, n_epochs: int) -> dict:
+                  n_episodes: int, n_epochs: int,
+                  use_oracle_assign: bool = False) -> dict:
     """
     EXP-3 supervised PhaseMLP pretrain on closed-form ORACLE phase targets.
 
@@ -455,14 +560,18 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
             s_t = actor.extract_state(obs, demand, blocked)
             phi, _, info = actor.forward(s_t)               # frozen-actor sample
             z_t = info['z_t']
-            active_irs = _get_active_irs(phi)
-            s_phase = _build_phase_state(env.channels, phi, cfg, z_t)
-            target_idx = oracle_phase_idx(env.channels, phi, cfg)   # (M, N) int
+            # ① dual oracle warm-up: build phase targets for the ORACLE routing (blocked→IRS)
+            #    instead of the random-actor routing → phase learns to align for the users that
+            #    SHOULD be on each IRS (removes the post-warmup KL_ph yank seen in result_32).
+            assign = _oracle_assign_env(env) if use_oracle_assign else phi
+            active_irs = _get_active_irs(assign)
+            s_phase = _build_phase_state(env.channels, assign, cfg, z_t)
+            target_idx = oracle_phase_idx(env.channels, assign, cfg)   # (M, N) int
 
             if active_irs.size > 0:
                 buf.append({
                     's_phase':   s_phase.copy(),
-                    'phi':       phi.copy(),
+                    'phi':       assign.copy(),
                     'phase_idx': target_idx.copy(),
                 })
             # Advance mobility without applying an env.step (cheap; we don't
@@ -722,6 +831,7 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
             "R_LoS_km":       cfg.R_LoS_km,
             "irs_spawn_radius_frac": getattr(cfg, 'irs_spawn_radius_frac', 1.0),
             "user_free_radius_frac": getattr(cfg, 'user_free_radius_frac', 1.0),
+            "balanced_blocked_spawn": getattr(cfg, 'balanced_blocked_spawn', False),
             "h_IRS_km":       cfg.h_IRS_km,
             "beta_IRS":       cfg.beta_IRS,
             "beta_blocking":  cfg.beta_blocking,
@@ -736,6 +846,9 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
             "lagrangian_lambda_lr":  getattr(args, 'lambda_lr', None),
             "lagrangian_lambda_clip": [getattr(args, 'lambda_min', None),
                                        getattr(args, 'lambda_max', None)],
+            "counterfactual_assign": getattr(args, 'counterfactual_assign', False),
+            "cf_coef":               getattr(args, 'cf_coef', None),
+            "cf_anneal_end":         getattr(args, 'cf_anneal_end', None),
         },
         "training": {
             "n_episodes":      args.episodes,
@@ -809,6 +922,7 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
             "P_S":    cfg.P_S,
             "hidden": P.n_hidden_power,
             "lr":     P.lr_power,
+            "power_fairness": max(0.0, min(1.0, float(getattr(args, 'power_fairness', 0.0) or 0.0))),
         },
         "ck_net": {
             "d_s":    3 * cfg.K,
@@ -1138,6 +1252,10 @@ def _build_components(args):
             if getattr(critic, 'popart', False):
                 critic.pa_initialized = False
 
+    # ③ power-fairness lever (--power-fairness α): set on power_net for BOTH the
+    # fresh and resumed paths — forward() reads it. 0.0 = off (pure learned head).
+    power_net.power_fairness = max(0.0, min(1.0, float(getattr(args, 'power_fairness', 0.0) or 0.0)))
+
     return cfg, env, actor, critic, phase_net, power_net, ck_net
 
 
@@ -1224,6 +1342,9 @@ def _train_body(args, run_dir: str, run_id: int,
     print(f"       Net    : {power_net.architecture}  softmax → ×P_S")
     print(f"       Output : w_c_vec ∈ R^{{G+1}}  (per-group common, G≤{cfg.M}),  "
           f"w_p ∈ R^{cfg.K}  (private)  [Σ=P_S]")
+    if getattr(power_net, 'power_fairness', 0.0) > 0.0:
+        print(f"       ③ POWER-FAIRNESS α={power_net.power_fairness:.2f}  "
+              f"(private power blended toward equal-split; α=1 → exact equal-split)")
     print(f"    4. CkMLP  (common-rate split)")
     _d_ck = 5 * cfg.K
     print(f"       State  : [D_k, R_p_k, R_c_g_k, shortfall_k, phi_k] ∈ R^{_d_ck}  (per user)")
@@ -1332,15 +1453,25 @@ def _train_body(args, run_dir: str, run_id: int,
     # freeze-phase takes effect during PPO (prevents PPO from eroding the warmup
     # alignment — see V3 verdict result_15 in docs/Training-Case-2.txt where PPO
     # decayed initial +0.028 reward boost back to -0.029 over 400ep).
-    if getattr(args, 'phase_warmup', False):
+    _oracle_wu = getattr(args, 'oracle_warmup', False)
+    if _oracle_wu:
+        aw_eps    = int(getattr(args, 'phase_warmup_episodes', 8))
+        aw_epochs = int(getattr(args, 'phase_warmup_epochs', 30))
+        print(f"  🎯 ① ORACLE ASSIGNMENT WARMUP: {aw_eps} rollout ep × {aw_epochs} CE epochs "
+              f"on oracle routing (blocked→its-IRS) …")
+        _aw = _warmup_assignment(env, actor, cfg, args, demand, aw_eps, aw_epochs)
+        print(f"    assignment warmup done: N={_aw['n_samples']}  "
+              f"per-user match {_aw['match_initial']:.1f}%→{_aw['match_final']:.1f}%")
+    if getattr(args, 'phase_warmup', False) or _oracle_wu:
         pw_eps    = int(getattr(args, 'phase_warmup_episodes', 8))
         pw_epochs = int(getattr(args, 'phase_warmup_epochs', 30))
         compose_note = (" + ❄ FREEZE during PPO (EXP-3c: prevent PPO erosion of warmup)"
                         if getattr(args, 'freeze_phase', False) else "")
+        _oa_note = " on ORACLE routing" if _oracle_wu else ""
         print(f"  🌡 EXP-3 PHASE WARMUP: {pw_eps} rollout ep × {pw_epochs} CE epochs "
-              f"on oracle_phase_idx targets (actors frozen){compose_note} …")
+              f"on oracle_phase_idx targets{_oa_note} (actors frozen){compose_note} …")
         _pw = _warmup_phase(env, actor, phase_net, cfg, args, demand,
-                            pw_eps, pw_epochs)
+                            pw_eps, pw_epochs, use_oracle_assign=_oracle_wu)
         if _pw['n_samples'] > 0:
             print(f"    phase warmup done: N={_pw['n_samples']}  "
                   f"CE μ={_pw['ce_initial']:.3f}→{_pw['ce_final']:.3f}  "
@@ -1425,7 +1556,12 @@ def _train_body(args, run_dir: str, run_id: int,
         beta    = _compute_beta(ep, args.episodes)
         lr_frac = _compute_lr_frac(ep, args.episodes)
         actor.opt_ae.lr      = P.lr_actor_ae * lr_frac
-        actor.opt_qc.lr      = P.lr_actor_qc * lr_frac
+        # ⚠ FIX 2026-06-13: classical-mode opt_qc IS the MLP actor optimizer; respect
+        # lr_classical_actor (was silently overwritten by lr_actor_qc → r28≡r29 bug).
+        _lr_qc_base = (getattr(P, 'lr_classical_actor', P.lr_actor_qc)
+                       if getattr(args, 'actor_mode', 'quantum') == 'classical'
+                       else P.lr_actor_qc)
+        actor.opt_qc.lr      = _lr_qc_base * lr_frac
         actor.opt_xi.lr      = P.lr_actor_xi * lr_frac
         phase_net.opt.lr     = P.lr_phase    * lr_frac
         power_net.opt.lr     = P.lr_power    * lr_frac
@@ -1472,6 +1608,12 @@ def _train_body(args, run_dir: str, run_id: int,
             s_t     = actor.extract_state(obs, demand, blocked)
             phi, _, actor_info = actor.forward(s_t)
             z_t = actor_info['z_t']                              # (n_latent,) spatial latent
+
+            # Counterfactual-assignment auxiliary (q-head credit fix): per-user R_cf
+            # over link choices, by re-running downstream under φ'. Flag-gated (cost).
+            _cf_rew = (_cf_assign_rewards(env, phase_net, power_net, ck_net, phi, z_t,
+                                          cfg, demand, float(cfg.lambda_D))
+                       if getattr(args, 'counterfactual_assign', False) else None)
 
             # 0-based active IRS indices for PhaseMLP; 1-based ids for PowerMLP/rate
             active_irs     = _get_active_irs(phi)        # (G,) 0-based
@@ -1521,6 +1663,7 @@ def _train_body(args, run_dir: str, run_id: int,
                 'q_pi':            actor_info['pi'].copy(),   # Δ7: per-user routing probs (K,M+1)
                 'route_tgt':       _route_tgt.copy(),         # Option 1: best IRS id per user (1-based)
                 'route_msk':       _route_msk.copy(),         # Option 1: 1.0 where IRS-favored
+                'cf_rew':          (_cf_rew.copy() if _cf_rew is not None else None),  # Opt2: R_cf (K,M+1)
                 's_phase':         s_phase.copy(),
                 'phase_idx':       phase_idx.copy(),
                 's_power':         s_power.copy(),
@@ -1715,6 +1858,12 @@ def _train_body(args, run_dir: str, run_id: int,
                 # ── Phase 2: fused quantum log-prob + gradient (1 QC forward) ─
                 _shape_coef = float(getattr(args, 'routing_shape_coef', 0.0)) \
                     if getattr(args, 'routing_shape', False) else 0.0
+                _cf_coef = float(getattr(args, 'cf_coef', 0.0)) \
+                    if getattr(args, 'counterfactual_assign', False) else 0.0
+                # --cf-anneal-end: linear decay → 0 at frac·episodes (divergence fix, đĩa r25)
+                _cf_frac = float(getattr(args, 'cf_anneal_end', 0.0) or 0.0)
+                if _cf_coef > 0.0 and _cf_frac > 0.0:
+                    _cf_coef *= max(0.0, 1.0 - ep / (_cf_frac * args.episodes))
                 l_q_arr, L_ae_b, L_ent_q, g_ae_acc, g_qc_acc, g_xi_acc, clip_q_b, kl_q_b = \
                     actor.compute_logprobs_grads_batch(
                         [t['s_t']      for t in mini],
@@ -1726,7 +1875,10 @@ def _train_body(args, run_dir: str, run_id: int,
                                           if _shape_coef > 0.0 else None),
                         shape_mask_b=(np.array([t['route_msk'] for t in mini])
                                       if _shape_coef > 0.0 else None),
-                        shape_coef=_shape_coef)
+                        shape_coef=_shape_coef,
+                        cf_rew_b=(np.array([t['cf_rew'] for t in mini])
+                                  if _cf_coef > 0.0 else None),
+                        cf_coef=_cf_coef)
                 L_pg_b  = float(l_q_arr.mean())
                 L_ent_b += L_ent_q
 
@@ -1838,6 +1990,14 @@ def _train_body(args, run_dir: str, run_id: int,
               _r   = _net / (_mag + 1e-12)
               _flog(f"  · λgrad: mag={_mag:.2e} net={_net:.2e} r={_r:.2f}"
                     f"  ({'consistent→should move' if _r > 0.5 else 'zero-mean noise→frozen [E]'})")
+          if getattr(args, 'counterfactual_assign', False):
+              _cfc = float(getattr(args, 'cf_coef', 0.0))
+              _cff = float(getattr(args, 'cf_anneal_end', 0.0) or 0.0)
+              if _cff > 0.0:
+                  _cfc *= max(0.0, 1.0 - ep / (_cff * args.episodes))
+              _flog(f"  · cf: coef_eff={_cfc:.3f}"
+                    + (f" (anneal→0 @ep{int(_cff * args.episodes)})" if _cff > 0.0
+                       else " (no anneal)"))
           # (2) rolling-mean trend (reward/QoS/R_tot) + episodes-since-best —
           #     reveals slow drift hidden by per-episode noise.
           _rw = hist['episode_reward']; _w = min(50, len(_rw))
@@ -2066,6 +2226,14 @@ def _parse_args() -> argparse.Namespace:
                              'assignment head trains against a STATIONARY phase. Diagnostic for '
                              'F2 non-stationarity: does IRS-share catch up to oracle when phase '
                              'stops moving? Use with --resume from a trained ckpt.')
+    parser.add_argument('--oracle-warmup', dest='oracle_warmup', action='store_true',
+                        help='⭐ DUAL oracle warm-up (2026-06-14, improvement ①): supervised warm-up '
+                             'of BOTH the VQC Q-head (assignment → oracle blocked-routing, '
+                             'Common-Knowledge [N]) AND PhaseMLP (oracle phase FOR that routing). '
+                             'Removes the post-warmup KL_ph/KL_q yank (phase/actor no longer warmed '
+                             'for random routing) and injects the routing the agent never learns at '
+                             'scale. Reuses --phase-warmup-episodes/--phase-warmup-epochs for both '
+                             'stages. Supersedes --phase-warmup (phase-only) — use this instead.')
     parser.add_argument('--phase-warmup', dest='phase_warmup', action='store_true',
                         help='EXPERIMENT-3: supervised PhaseMLP pretrain on closed-form oracle '
                              '(analysis/phase_oracle.oracle_phase_idx) BEFORE PPO begins. Closes '
@@ -2104,6 +2272,22 @@ def _parse_args() -> argparse.Namespace:
                              '"classical" = pure-MLP DNN baseline (paper A2/R5 VQC-vs-DNN, param-eff). '
                              'Sub-actors (phase/power/Ck) stay classical in both. ADDITIVE — default '
                              'quantum unchanged.')
+    parser.add_argument('--counterfactual-assign', dest='counterfactual_assign', action='store_true',
+                        help='Q-HEAD CREDIT FIX (Option 2, COMA-style): per-user counterfactual baseline '
+                             'A_cf(k)=R_cf[k,a_k]−Σ_c π_k(c)·R_cf[k,c], re-running downstream under each '
+                             'φ_k=c. De-confounds assignment credit + discourages IRS-crowding (load-'
+                             'balance). Cost: K·(M+1) downstream forwards/step. Default OFF.')
+    parser.add_argument('--cf-coef', dest='cf_coef', type=float, default=0.3,
+                        help='Strength of counterfactual-assignment aux (--counterfactual-assign). '
+                             'A_cf standardized → coef scale-free. 0.3 default; raise to push harder.')
+    parser.add_argument('--cf-anneal-end', dest='cf_anneal_end', type=float, default=0.0,
+                        help='Linearly decay cf_coef → 0 by this FRACTION of --episodes (e.g. 0.5 = '
+                             'cf off at half-run). FIX for late-run Q-head divergence (đĩa r25 @ep768 '
+                             'KL_q=1.71): the cf aux bypasses PPO clipping and A_cf is standardized '
+                             'per-minibatch, so once the policy commits the standardization re-amplifies '
+                             'noise to unit scale and keeps pushing outside the trust region. Annealing '
+                             'keeps cf during exploration (where its credit signal is real) and releases '
+                             'the policy as it commits. 0.0 = no anneal (legacy).')
     parser.add_argument('--routing-shape', dest='routing_shape', action='store_true',
                         help='Q-HEAD CREDIT FIX (Option 1): add a directed CE shaping gradient that '
                              'pulls the assignment policy toward the IRS-favored link for users where '
@@ -2112,6 +2296,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--routing-shape-coef', dest='routing_shape_coef', type=float, default=0.1,
                         help='Strength of routing shaping (--routing-shape). 0.1 = gentle nudge; raise '
                              'to push IRS-routing harder. Too high → overrides RL objective. ')
+    parser.add_argument('--power-fairness', dest='power_fairness', type=float, default=0.0,
+                        help='③ POWER-FAIRNESS α∈[0,1]: blend the applied private-power split toward '
+                             'EQUAL-SPLIT (α·uniform + (1-α)·learned). probe_power_qos proved equal-split '
+                             'recovers +28pp QoS at ~zero sum-rate cost (PowerMLP concentrates power on '
+                             'already-served users, starving unmet ~3.3×). 0 = off (learned head); 1 = exact '
+                             'equal-split; ~0.6-0.8 = sweet-spot guess. Applied to w_p only (PPO path '
+                             'unchanged). Distinct from beta_entropy_pwr_private (soft entropy, insufficient).')
     parser.add_argument('--lagrangian', dest='lagrangian', action='store_true',
                         help='CONSTRAINED-RL: treat λ_D as a Lagrange multiplier and adapt it via '
                              'dual ascent on a QoS target (maximize sum-rate s.t. QoS ≥ --qos-target) '

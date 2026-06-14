@@ -3,7 +3,8 @@
 ================================================================================
   Kiến thức CHUNG về mô hình & cách train, KHÔNG phụ thuộc (K,M) hay R_LoS.
   Hyperparameter cụ thể theo từng case → xem Training-Case-<N>.txt.
-  Cập nhật lần cuối: 2026-06-09  (+[L]Lagrangian-λ_D-lever, [M]Pareto-dominated-diagnosis, RESUME-auto-detect-infra,
+  Cập nhật lần cuối: 2026-06-12  (+Phần5#9 P_S-regime⇒QoS-không-so-chéo (result_23 P_S70→50); trước đó
+                                 2026-06-09 +[L]Lagrangian-λ_D-lever, [M]Pareto-dominated-diagnosis, RESUME-auto-detect-infra,
                                  entropy-new-arch, Δ7-counterfactual-M≥2; trước đó 2026-06-08 +[K]+[I-4]).
   (lịch sử) 2026-06-01  (Case1 r1→11; +[I-2],[J](C2 r1), [B-2](r2), [B-2b]GAE(r3), [H-2]TDR(r4),
                                  [B-2b] clipfrac-trước-lr + clip-là-triệu-chứng (C2 r6/r7), [B-2c] oracle-sweep,
@@ -374,6 +375,12 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     hấp thụ return-scale shift. Đây là cách RAMP λ AN TOÀN qua curriculum (gentle ramp → KHÔNG [K] bump).
     ⚠ lambda_lr=0.05 QUÁ CHẬM cho QoS target cao (r8: λ 1.5→1.81/700ep, ko tới result_11 λ=4.5) → dùng 0.10-0.15.
     ⚠ Watch [K] khi λ qua ~2 (Ck tot>2, ent_ck→0, explVar sụp). Validated safe ở lr≤0.05; faster cần canh.
+    ⚠⚠ qos-target PHẢI ≤ TRẦN-KHẢ-THI (xem feasibility/gold-run), KHÔNG thì λ-RUNAWAY → QoS GIẢM (chốt 2026-06-11):
+      target bất khả → viol không bao giờ về 0 → λ leo mãi tới lambda-max → penalty-dom [I-2] → reward-scale
+      dịch liên tục → critic loạn → policy degrade → QoS TỤT (ngược kỳ vọng). Bằng chứng: r19 Case2 target0.90
+      (trần ~60%) → λ 1.5→3.2 thì QoS 56→48% + critic thrash; r18 Case1 target0.95 (trần ~84%) → drift nhẹ.
+      ⟹ set target ≈ gold-peak (Case1 0.85, Case2 0.60). "Lagrangian KHÔNG ép QoS=target — chỉ ĐẨY; target
+      bất khả = λ runaway phá, KHÔNG đạt." Nếu λ↑ mà QoS↓ trên sweep → target quá cao, HẠ ngay.
     Flags: --lagrangian --qos-target(0.8) --lambda-lr(0.05) --lambda-min(1.0) --lambda-max(3.0).
 
 [M] PARETO-DOMINATED (agent kẹt TRONG frontier — kém CẢ R_tot LẪN QoS). Chẩn đoán bằng
@@ -423,6 +430,30 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     (warm-up sẽ re-fit critic theo policy direct-only → đóng đinh local optimum).
     (result_1 Case 2 @R_LoS=0.2: Blk~6/10 nhưng agent drift dir 4→8, irs→~1, phase idle.)
 
+[N] ASSIGNMENT-QUALITY LAW + per-IRS CAPACITY FORMULA (XÁC NHẬN 2026-06-14, probe_assignment_quality.py
+    + probe_crossover_blocked.py + probe_irs_group_capacity.py — oracle phase + ref power, balanced spawn).
+    ASSIGN ĐÚNG = route blocked → IRS-toà-nhà-của-nó (nó nằm trong footprint → g_RU mạnh + direct chết
+      ×β_block), non-block → direct. ⟹ #IRS-routed tối-ưu ≈ #blocked (IRS/K ≈ Blk/K). per-IRS load =
+      Blk/M = 2(K/M)/3 ≈ 3.3 — BẤT BIẾN cả 3 case (K/M=5 cố định).
+    ❌ OVER-assign (nhồi non-block lên IRS) = HẠI MẠNH: all-IRS QoS Case2 99.9→65.5%, Case3 73→0%
+      (đông group + loãng common-stream chia G+1). ❌ UNDER-assign (blocked→direct) = sàn all-direct
+      29-37% (phí link chết). ⟹ lệch khỏi [≈Blk/M] CẢ HAI chiều đều tệ hơn.
+    "Cap 3.5 user → R_tot tụt" cho blocked = ĐÃ BÁC: load (~3.5) < capacity n* mọi case → pack hết
+      blocked KHÔNG tụt R_tot (probe_crossover_blocked Case1: 0d/5i monotonic↑, QoS 99.9%). Giới hạn
+      thật KHÔNG phải đếm-user mà là R_priv,sat vs D_k.
+    ⭐ CÔNG THỨC capacity (saturated/interference-limited, khớp probe 4 chữ số):
+      b=(1-ρ)/K, a=ρ/(G+1), ρ=0.2(common-split), G=#IRS active | R_priv,sat=log2(1+b/(1-b-a)) |
+      R_c,sat=-log2(1-a) | R_tot(n)≈R_priv,sat + R_c,sat/n (common chia ÷n) |
+      n* = R_c,sat/(D_k - R_priv,sat) nếu D_k>R_priv,sat, NGƯỢC LẠI ∞ (private đủ → cap=K).
+      REGIME theo dấu(D_k - R_priv,sat): C1 R_priv0.28≫D_k→cap=K (easy) · C2 0.13≳D_k→knife-edge ·
+      C3 0.083<D_k→sharing-limited. Oracle blocked-routing ceiling: C1 100% · C2 99.9% · C3 72.8%.
+    ⭐⭐ CHỈNH LẠI #11: oracle ceiling (C2 ~100%, C3 ~73%) ≫ "structural wall ~60%" cũ → gap
+      agent→oracle = OPTIMIZATION/credit (F2 assignment+phase), CỦNG CỐ #3, KHÔNG phải capacity. "Wall
+      60%" cũ nghi do binomial-spawn-overload + agent-imperfect + coord-ascent-local-opt. CẦN re-verify
+      #11 ở P_S=50 balanced trước khi viết paper "structural".
+    PIPELINE (chạy mỗi run): analysis/probe_assignment_quality.py [--ckpt ...] → IRS-count vs Blk-count,
+      over/under-assign, load vs n*. LOG signal: behaviour `irs=[..]` TỔNG ≈ Blk (≈2K/3); IRS nào > n* = over-load.
+
 
 ================================================================================
   PHẦN 4 — BẢNG TÍN HIỆU CHẨN ĐOÁN  (đọc nhanh trong training_log.txt)
@@ -445,6 +476,7 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
   QoS/K             | tiến tới trần servable    | tụt dần → un-learn [A]/[C]
   Blk/K vs QoS      | QoS cao dù Blk cao = tốt  | (mục [G] để phân biệt)
   dir / irs=[..]    | dùng IRS khi IRS có lợi   | dir→K, irs→~0 + phase idle → [J]
+  irs TỔNG / per-IRS| Σirs ≈ Blk (≈2K/3); ≤ n* | Σirs≪Blk → under-assign · Σirs≫Blk / IRS>n* → over-assign [N]
   KL per head       | nhỏ, ổn định              | tăng vọt → update quá mạnh
 
   ⚠️ Probe baselines: "Servable %" = trần thật (best link). "Direct-only %" = direct
@@ -486,6 +518,35 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
      khó gỡ; tái áp λ_D Ở RAMP mà IRS bắt đầu CẦN THIẾT (users rớt khỏi tầm direct), đừng để policy khóa
      vào thói bỏ user. → ĐỪNG nhảy xuống sum-rate/QoS khi critic/PhaseMLP/head chưa khỏe; đo task-metric
      trên nền chưa ổn = vô nghĩa (xem [B-2b] lưu-ý QoS⊥critic).
+  9b. ⭐⭐ SPAWN BLOCKED-USERS: ĐÃ ĐỔI SANG CHIA ĐỀU 2026-06-12 (balanced_blocked_spawn=True,
+     params.py + istn/config.py + CSI/env.py; user quyết). n_blocked=round(K·2/3); counts lệch ≤1
+     (7 user/M=2 → {3,4} 100%, đã verify; M=3 → {3,3,4} 100%; legacy flag=False khôi phục Binomial).
+     LỊCH SỬ (legacy iid-uniform, MỌI run trước 06-12 + run đang chạy launched trước đổi): split
+     ~Binomial — Case2: [3,4] chỉ 54.5% · [2,5] 32% · [1,6] 11% · [0,7] 2% ⟹ 45.5% episode 1 IRS
+     gánh ≥5 blocked user DO GEOMETRY. Own-IRS thắng other-IRS 99.7% user median +13.5dB (re-route
+     trả ~13.5dB link, vẫn ≫ blocked-direct). probe: analysis/probe_blocked_spawn_balance.py.
+     ⚠ COMPARABILITY: QoS run-mới (balanced, env dễ hơn ~45% episode hết worst-case crowding) KHÔNG
+     so thẳng với run-cũ (Binomial: r11-HIST 60%, N=48-run, mọi baseline) — cộng caveat ~+1-3pt env-lift
+     khi so chéo; hyperparameters.json giờ ghi "balanced_blocked_spawn" để trace distribution mỗi run.
+  9. ⭐ P_S-REGIME ⇒ QoS KHÔNG so chéo được. Feasibility baselines (Direct-only/All-IRS) + trần QoS
+     PHỤ THUỘC P_S. Resume một ckpt ở P_S KHÁC lúc train = regime shift (vd P_S70→50: Direct-only
+     100→43%, All-IRS 84→59% — result_23). QoS tuyệt đối ở regime mới KHÔNG so được với run P_S khác
+     (74%@P_S50 ≠ regression từ 84%@P_S70). ⟹ TRƯỚC khi so QoS giữa 2 run, CHECK dòng feasibility probe
+     trong log (Servable/Direct-only/All-IRS) khớp regime kỳ vọng; --P-S override (hoặc params auto-derive
+     theo K) quyết định P_S thực tế, KHÔNG phải P_S của ckpt resume.
+  10. ⭐ DIAGNOSTIC — 2 run BYTE-IDENTICAL dù ĐÃ đổi 1 hyper (cùng seed) ⇒ hyper KHÔNG có hiệu lực
+     (chưa wired / bị override), KHÔNG phải "đổi nhưng vô hại". Check ngay: (a) hyper có được đọc ở
+     constructor không, (b) ⚠ vòng lr-schedule per-ep (train.py ~1471-1477) GHI ĐÈ lr constructor mỗi
+     episode — knob lr per-component phải wire CẢ HAI chỗ. Vd result_28(lr_classical3e-4)≡result_29(1e-4):
+     opt_qc.lr bị ghi đè = lr_actor_qc mỗi ep → lr_classical_actor chết (fixed train.py:1472, 2026-06-13).
+     So-sánh ablation: nếu trajectory trùng khít → nghi wiring TRƯỚC khi kết luận "lever vô hại".
+  11. ⭐⭐ explVar KHÔNG đáng tin khi RETURN-VARIANCE THẤP (refine [B-2b]). explVar = 1 − Var(resid)/Var(ret);
+     khi returns chụm (σV nhỏ, vd <1 sau khi QoS ổn định cao) → mẫu số bé → explVar dao động mạnh 0.0-0.6 DÙ
+     residual tuyệt đối bé. ⟹ explVar wobble + ‖∇‖V TÍ XÍU (μ~1, clipfrac0%) + V̄≈return-scale + policy LEO
+     ĐƠN ĐIỆU = critic FUNCTIONAL (KHÔNG phá pipeline), KHÁC HẲN [B-2b] thật (explVar wobble + ‖∇‖V 700-1000
+     CLIPPED). Phân biệt: [B-2b]-thật grad-V lớn-clipped; artifact-low-variance grad-V bé + policy vẫn leo.
+     ⟹ ĐỪNG tune critic theo explVar đơn lẻ — đọc CÙNG ‖∇‖V (clipped?) + V̄-scale + policy có cải thiện không.
+     (chốt r26 combo 2026-06-13: explVar 0.0-0.6 wobble mean0.35 NHƯNG ‖∇‖V μ1.3 + QoS leo 65→74% = healthy.)
 
 
 ================================================================================

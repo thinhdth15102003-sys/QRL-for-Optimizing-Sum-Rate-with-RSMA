@@ -111,8 +111,19 @@ class ISTNEnv:
         self._confined_users[:] = False
         self._user_building[:]  = -1
 
-        blocked_bld = (self.rng.integers(0, self.cfg.M, size=n_blocked)
-                       if n_blocked > 0 else np.empty(0, dtype=int))
+        if n_blocked > 0:
+            if getattr(self.cfg, 'balanced_blocked_spawn', False):
+                # Even split: counts differ ≤1 across buildings (7/M=2 → {3,4}).
+                # Permuting the building order first randomises WHICH building
+                # takes the +1; the final shuffle randomises which users land where.
+                M_ = self.cfg.M
+                reps = -(-n_blocked // M_)          # ceil(n_blocked / M)
+                blocked_bld = np.tile(self.rng.permutation(M_), reps)[:n_blocked]
+                self.rng.shuffle(blocked_bld)
+            else:                                    # legacy: iid uniform (Binomial split)
+                blocked_bld = self.rng.integers(0, self.cfg.M, size=n_blocked)
+        else:
+            blocked_bld = np.empty(0, dtype=int)
         self._confined_users[:n_blocked] = True
         self._user_building[:n_blocked]  = blocked_bld
 

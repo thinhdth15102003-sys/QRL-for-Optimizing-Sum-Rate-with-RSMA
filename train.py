@@ -363,6 +363,10 @@ def _clip_grad_norm(g: dict, max_norm: float) -> float:
     if not g:
         return 0.0
     norm = np.sqrt(sum(float(np.sum(v ** 2)) for v in g.values()))
+    if not np.isfinite(norm):          # NaN/Inf grad → drop the update (don't poison weights)
+        for k in g:
+            g[k] = np.zeros_like(g[k])
+        return norm
     if norm > max_norm:
         scale = max_norm / (norm + 1e-8)
         for k in g:
@@ -405,15 +409,17 @@ def _warmup_critic(env, actor, critic, phase_net, power_net, ck_net,
             s_t     = actor.extract_state(obs, demand, blocked)
             phi, _, actor_info = actor.forward(s_t)
             z_t = actor_info['z_t']
+            # [--no-ae] feed sub-actors the quantum readout o_hat instead of the AE latent
+            rep = actor_info['o_hat'] if getattr(args, 'no_ae', False) else z_t
             active_irs     = _get_active_irs(phi)
             active_irs_ids = _get_active_irs_ids(phi)
-            s_phase  = _build_phase_state(env.channels, phi, cfg, z_t)
+            s_phase  = _build_phase_state(env.channels, phi, cfg, rep)
             phase_idx, _, _ = phase_net.forward(s_phase, active_irs)
             phases_rad   = env.phase_model.index_to_phase(phase_idx)
             proposed_Phi = env.phase_model.build_phi(phases_rad)
             h_eff   = env.rate_computer.effective_channels_all(
                           phi, proposed_Phi, env.channels)
-            s_power = np.concatenate([h_eff.real, h_eff.imag, z_t])
+            s_power = np.concatenate([h_eff.real, h_eff.imag, rep])
             w_c_vec, w_p, _, _ = power_net.forward(s_power, active_irs_ids)
             partial = env.rate_computer.compute_rates_partial(
                 phi, proposed_Phi, env.channels, w_p, w_c_vec,
@@ -509,6 +515,12 @@ def _warmup_assignment(env, actor, cfg, args, demand: np.ndarray,
     m_init = _match()
     bs = P.batch_size
     idx_arr = np.arange(n_buf)
+    # Per-epoch match curve + early-stop at plateau (only ever stops EARLY → caps
+    # wasted epochs; see 2026-06-15 warmup-epoch study). Patience = 3 checks, δ=0.5pp.
+    log_every = max(1, min(n_epochs // 10, 10))   # cap @10: check/early-stop mỗi ≤10 ep
+                                                  # (saturated assign-warmup dừng nhanh; phase dừng khi plateau)
+    best_m, no_imp, patience = m_init, 0, 3
+    m_final = m_init
     for _epoch in range(n_epochs):
         rng.shuffle(idx_arr)
         for start in range(0, n_buf, bs):
@@ -520,7 +532,17 @@ def _warmup_assignment(env, actor, cfg, args, demand: np.ndarray,
             out = actor.compute_logprobs_grads_batch(
                 s_list, phi_list, lp_old, adv, P.ppo_epsilon, 0.0, 0.0)
             actor.apply_grads(out[3], out[4], out[5])      # g_ae, g_qc, g_xi
-    m_final = _match()
+        if (_epoch + 1) % log_every == 0 or _epoch == n_epochs - 1:
+            m_final = _match()
+            print(f"      ① assign-warmup ep {_epoch+1:>4}/{n_epochs}: match {m_final:5.1f}%")
+            if m_final > best_m + 0.5:
+                best_m, no_imp = m_final, 0
+            else:
+                no_imp += 1
+            if no_imp >= patience:
+                print(f"      ① assign-warmup EARLY-STOP @ep {_epoch+1} "
+                      f"(match plateaued ~{m_final:.1f}% for {patience} checks)")
+                break
     return {'n_samples': n_buf, 'match_initial': float(m_init), 'match_final': float(m_final)}
 
 
@@ -560,12 +582,13 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
             s_t = actor.extract_state(obs, demand, blocked)
             phi, _, info = actor.forward(s_t)               # frozen-actor sample
             z_t = info['z_t']
+            rep = info['o_hat'] if getattr(args, 'no_ae', False) else z_t   # [--no-ae]
             # ① dual oracle warm-up: build phase targets for the ORACLE routing (blocked→IRS)
             #    instead of the random-actor routing → phase learns to align for the users that
             #    SHOULD be on each IRS (removes the post-warmup KL_ph yank seen in result_32).
             assign = _oracle_assign_env(env) if use_oracle_assign else phi
             active_irs = _get_active_irs(assign)
-            s_phase = _build_phase_state(env.channels, assign, cfg, z_t)
+            s_phase = _build_phase_state(env.channels, assign, cfg, rep)
             target_idx = oracle_phase_idx(env.channels, assign, cfg)   # (M, N) int
 
             if active_irs.size > 0:
@@ -606,6 +629,23 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
     bs = P.batch_size
     idx_arr = np.arange(n_buf)
     eff_one = np.ones(bs, dtype=float)
+    # Per-epoch CE/match curve + early-stop at plateau (caps wasted epochs; only
+    # ever stops EARLY). Sampled subset for the periodic check, full buf at the end.
+    sub = buf[:300]
+    log_every = max(1, min(n_epochs // 10, 10))   # cap @10: check/early-stop mỗi ≤10 ep
+                                                  # (saturated assign-warmup dừng nhanh; phase dừng khi plateau)
+    # Early-stop must tell a genuine HIGH-match plateau (converged) apart from the
+    # SLOW-START plateau at the random floor (100/L %). r54 stopped @ep40 with match
+    # 27.3% ≈ random (L=4 → 25%): the noisy near-floor match looked "flat" for 3
+    # checks, but phase hadn't started learning (CE 1.387→1.384, still creeping). So
+    # gate the plateau-stop behind ESCAPING the floor; n_epochs is the backstop if
+    # phase genuinely can't escape (e.g. lossy-z_t VQC ceiling). This decouples the
+    # stop criterion from the check cadence: log_every=10 no longer stops too early
+    # (r54), and we never need the coarse log_every=60 that ran too long (r51).
+    floor_m  = 100.0 / phase_net.n_levels      # random per-IRS match baseline (≈25% @ L=4)
+    esc_thr  = floor_m + 12.0                  # must climb >12pp (~6σ) above random to "count"
+    best_m, no_imp, patience = match_init, 0, 3
+    ce_final, match_final = ce_init, match_init
     for _epoch in range(n_epochs):
         rng.shuffle(idx_arr)
         for start in range(0, n_buf, bs):
@@ -615,6 +655,29 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
             _, _, grads = phase_net.compute_grads_batch(batch, eff_b, beta_entropy=0.0)
             if grads:
                 phase_net.apply_grads(grads)
+        if (_epoch + 1) % log_every == 0 or _epoch == n_epochs - 1:
+            ce_chk, match_chk = _eval_match(sub)
+            tag = "" if match_chk >= esc_thr else "  (pre-escape: no early-stop)"
+            print(f"      🌡 phase-warmup ep {_epoch+1:>4}/{n_epochs}: "
+                  f"CE {ce_chk:.3f}  match {match_chk:5.1f}%{tag}")
+            if match_chk > best_m + 0.5:
+                best_m, no_imp = match_chk, 0
+            else:
+                no_imp += 1
+            # Stop policy: (a) target → stop only when match ≥ target (else run to cap);
+            # (b) --full-phase-warmup → never early-stop; (c) default → escaped-floor + plateau.
+            _target = getattr(args, 'phase_warmup_target', None)
+            if _target is not None:
+                if match_chk >= _target:
+                    print(f"      🌡 phase-warmup TARGET-HIT @ep {_epoch+1} "
+                          f"(match {match_chk:.1f}% ≥ target {_target:.0f}%)")
+                    break
+                # chasing a target → no plateau early-stop (run to cap if unreached)
+            elif (not getattr(args, 'full_phase_warmup', False)
+                    and match_chk >= esc_thr and no_imp >= patience):
+                print(f"      🌡 phase-warmup EARLY-STOP @ep {_epoch+1} "
+                      f"(match plateaued ~{match_chk:.1f}% for {patience} checks)")
+                break
 
     ce_final, match_final = _eval_match(buf)
     return {
@@ -878,6 +941,7 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
         },
         "actor": {
             "actor_mode":    getattr(args, 'actor_mode', 'quantum'),
+            "no_ae":         bool(getattr(args, 'no_ae', False)),
             "d_s":           actor.d_s,
             "n_latent":      actor.N_LATENT,
             "n_qubits":      actor.N_QUBITS,
@@ -1084,6 +1148,10 @@ def _build_components(args):
         cfg_overrides['lambda_D'] = float(args.lambda_D_fixed)
     if getattr(args, 'P_S_dBm', None) is not None:
         cfg_overrides['P_S_dBm'] = float(args.P_S_dBm)   # R3 scale-K: fix P_S across K sweep
+    if getattr(args, 'irs_spawn_frac', None) is not None:
+        cfg_overrides['irs_spawn_radius_frac'] = float(args.irs_spawn_frac)
+    if getattr(args, 'user_free_frac', None) is not None:
+        cfg_overrides['user_free_radius_frac'] = float(args.user_free_frac)
     # ── RESUME run-dir → AUTO-PICK BEST ckpt (chọn agents tốt nhất) ───────────
     # Nếu --resume trỏ vào RUN-DIR (results/result_N, có checkpoints/ nhưng không phải
     # agents/ckpt) → tự chọn sweet-spot ckpt qua pick_resume_ckpt. Fallback: ep mới nhất.
@@ -1128,6 +1196,14 @@ def _build_components(args):
     env = ISTNEnv(cfg=cfg, seed=args.seed, n_steps_ep=args.steps,
                   reward_noise_avg=getattr(P, 'reward_noise_avg', 1))
 
+    # [--no-ae] ablation: kill the AE reconstruction objective + pretrain so the encoder/λ
+    # are driven ONLY by the task through the quantum path (the bypass is dropped in the head).
+    if getattr(args, 'no_ae', False):
+        P.ae_weight = 0.0
+        args.no_pretrain = True
+        print("  🔬 --no-ae: z_t bypass DROPPED (head+sub-actors use o_hat); "
+              "ae_weight→0, pretrain OFF. Encoder/λ forced through quantum path.")
+
     if getattr(args, 'actor_mode', 'quantum') == 'classical':
         # DNN baseline (paper A2 / R5): pure-MLP actor replacing AE+VQC+head.
         actor = ClassicalActor(
@@ -1162,6 +1238,7 @@ def _build_components(args):
             readout_mode     = getattr(P, 'vqc_readout_mode', 'generic'),
             softmax_head     = getattr(P, 'vqc_softmax_head', False),
             softmax_beta_init= getattr(P, 'vqc_softmax_beta_init', 1.0),
+            no_ae            = getattr(args, 'no_ae', False),
             seed             = args.seed,
         )
     # State-value critic V(s) — action-independent baseline (d_action=0).
@@ -1178,8 +1255,11 @@ def _build_components(args):
         popart_beta  = getattr(P, 'popart_beta', 0.1),
         popart_sigma_floor = getattr(P, 'popart_sigma_floor', 1e-2),
     )
+    # [--no-ae] sub-actors consume o_hat (N_QUANTUM) instead of the AE latent z_t (n_latent)
+    _rep_dim = (actor.N_QUANTUM if getattr(args, 'no_ae', False)
+                else P.n_latent)              # "system spatial latent" fed to Phase/Power
     phase_net = PhaseMLP(
-        d_s      = 3 * cfg.K + P.n_latent,   # c^SRU (2K) + z_t (n_latent) + phi_mask (K)
+        d_s      = 3 * cfg.K + _rep_dim,      # c^SRU (2K) + rep (z_t|o_hat) + phi_mask (K)
         M        = cfg.M,
         N        = cfg.N,
         n_levels = env.n_phase_levels,
@@ -1188,7 +1268,7 @@ def _build_components(args):
         seed     = args.seed,
     )
     power_net = PowerMLP(
-        d_s    = 2 * cfg.K + P.n_latent,     # h_eff Re+Im (2K) + z_t (n_latent)
+        d_s    = 2 * cfg.K + _rep_dim,       # h_eff Re+Im (2K) + rep (z_t|o_hat)
         K      = cfg.K,
         M      = cfg.M,
         P_S    = cfg.P_S,
@@ -1608,10 +1688,12 @@ def _train_body(args, run_dir: str, run_id: int,
             s_t     = actor.extract_state(obs, demand, blocked)
             phi, _, actor_info = actor.forward(s_t)
             z_t = actor_info['z_t']                              # (n_latent,) spatial latent
+            # [--no-ae] sub-actors consume o_hat (quantum readout) instead of AE latent z_t
+            rep = actor_info['o_hat'] if getattr(args, 'no_ae', False) else z_t
 
             # Counterfactual-assignment auxiliary (q-head credit fix): per-user R_cf
             # over link choices, by re-running downstream under φ'. Flag-gated (cost).
-            _cf_rew = (_cf_assign_rewards(env, phase_net, power_net, ck_net, phi, z_t,
+            _cf_rew = (_cf_assign_rewards(env, phase_net, power_net, ck_net, phi, rep,
                                           cfg, demand, float(cfg.lambda_D))
                        if getattr(args, 'counterfactual_assign', False) else None)
 
@@ -1619,14 +1701,14 @@ def _train_body(args, run_dir: str, run_id: int,
             active_irs     = _get_active_irs(phi)        # (G,) 0-based
             active_irs_ids = _get_active_irs_ids(phi)    # [gid, …] 1-based
 
-            s_phase  = _build_phase_state(env.channels, phi, cfg, z_t)  # (M, 3K+n_latent)
+            s_phase  = _build_phase_state(env.channels, phi, cfg, rep)  # (M, 3K+rep_dim)
             phase_idx, lp_old_ph, _ = phase_net.forward(s_phase, active_irs)
             phases_rad   = env.phase_model.index_to_phase(phase_idx)
             proposed_Phi = env.phase_model.build_phi(phases_rad)
 
             h_eff   = env.rate_computer.effective_channels_all(
                           phi, proposed_Phi, env.channels)
-            s_power = np.concatenate([h_eff.real, h_eff.imag, z_t])   # (2K + n_latent,)
+            s_power = np.concatenate([h_eff.real, h_eff.imag, rep])   # (2K + rep_dim,)
             w_c_vec, w_p, _, power_action = power_net.forward(s_power, active_irs_ids)
 
             partial = env.rate_computer.compute_rates_partial(
@@ -2215,6 +2297,21 @@ def _parse_args() -> argparse.Namespace:
                         help='Skip matplotlib plot generation')
     parser.add_argument('--no-pretrain', action='store_true',
                         help='Skip AE hot-start pre-training (fast pipeline inspection)')
+    parser.add_argument('--full-phase-warmup', dest='full_phase_warmup', action='store_true',
+                        help='Disable phase-warmup early-stop → run ALL --phase-warmup-epochs '
+                             '(test whether more CE epochs unlock a higher phase-match ceiling).')
+    parser.add_argument('--phase-warmup-target', dest='phase_warmup_target', type=float, default=None,
+                        help='Train phase-warmup until per-IRS match ≥ TARGET%% (else run the full '
+                             '--phase-warmup-epochs cap). Disables plateau early-stop. Use a HIGH '
+                             'epoch cap (phase-warmup is classical/cheap) to give the actor max '
+                             'chance to reach DNN-level phase: hits target → speed-limited (capable); '
+                             'caps below → ceiling-limited representation. e.g. --phase-warmup-target 95')
+    parser.add_argument('--no-ae', dest='no_ae', action='store_true',
+                        help='ABLATION: drop the z_t classical bypass [B]. The assignment head '
+                             'and sub-actors (Phase/Power) consume o_hat (quantum readout) instead '
+                             'of the AE latent z_t. Auto-sets ae_weight=0 + --no-pretrain so the '
+                             'encoder/λ receive gradient ONLY through the quantum path. Tests '
+                             'whether λ un-freezes once the AE no longer represents for it.')
     parser.add_argument('--resume', type=str, default=None,
                         help='Path to an agents/ dir to load the 4 actors from and continue '
                              'training (curriculum transfer; critic warm-start). E.g. '
@@ -2265,6 +2362,12 @@ def _parse_args() -> argparse.Namespace:
                         help='Override FIXED λ_D (QoS penalty weight). Default = params.py value. '
                              '⚠ λ_D bump on --resume (e.g. 1.5→3) = [K] LAMBDA-BUMP-COLLAPSE trigger; '
                              'watch Ck-tot/ent_ck/explVar early. Mutually exclusive với --lagrangian.')
+    parser.add_argument('--irs-spawn-frac', dest='irs_spawn_frac', type=float, default=None,
+                        help='Override irs_spawn_radius_frac (IRS spawn region as fraction of R_LoS). '
+                             '=1.0 → IRS can spawn anywhere in the LoS disk (unlock full problem).')
+    parser.add_argument('--user-free-frac', dest='user_free_frac', type=float, default=None,
+                        help='Override user_free_radius_frac (free-user spawn region as fraction of '
+                             'R_LoS). =1.0 → free users spread to the LoS edge (unlock full problem).')
     # ── Lagrangian / constrained-RL: adapt λ_D as a dual variable on a QoS target ──
     parser.add_argument('--actor-mode', dest='actor_mode', choices=['quantum', 'classical'],
                         default='quantum',

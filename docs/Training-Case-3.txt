@@ -3,7 +3,8 @@
 ================================================================================
   Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
   Per-case Case 1 → Training-Case-1.txt · Case 2 → Training-Case-2.txt.
-  Cập nhật lần cuối: 2026-06-13 (TẠO MỚI — first Case-3 run ever, đĩa result_30).
+  Cập nhật lần cuối: 2026-06-21 (result_55 DNN α0.6 P_S50: gap 39pp = OPTIMIZATION (routing 37% wrong-IRS
+    + phase + power), KHÔNG P_S-starved — trần thật @P50=62.7%; β-optimal≈0.5 KHÔNG equal. trước: 2026-06-13 TẠO MỚI result_30).
 
 # ── CẤU HÌNH CASE 3 (params.py ACTIVE CASE = K15/M3) ────────────────────────────
 K=15, M=3, N=24, nq=12 (UNIFIED), n_latent=24.  P_S_dBm=100 (auto tier K>10, D1 chốt).
@@ -21,6 +22,27 @@ Max-entropy baselines: q=K·ln(M+1)=15·ln4≈20.8 · phase=M·N·ln4=3·24·ln4
 ⚠ balanced_blocked_spawn=True bắt buộc (M=3 binomial = IRS-load lệch = non-stationary cho pipeline shaky).
 
 # ── BẢNG TÓM TẮT RUN ─────────────────────────────────────────────────────────────
+  ⚠⚠ result_55 (đĩa result_55) R0.2 λ1.5 FRESH DNN(classical) full-③ α0.6 oracle-warmup
+     **P_S=50 dBm (USER-OVERRIDE)** — 2026-06-20, 2000ep DONE:
+    LEVER MỚI vs r26: actor=DNN, α0.6, P_S=50 dBm.
+    RESULT: QoS PLATEAU ~24% (best reward −22.0 @ep75 rồi flat 1925ep) · R_tot 1.23.
+    ⚠ TRAP TRÁNH: in-log feasibility "Servable 0% · Direct-only 0% · All-IRS 0%" = **UNDER-COUNT**
+      (random-phase baseline, IRS-mandatory regime — y như CAVEAT result_35 Common-Knowledge Part4).
+      KHÔNG dùng làm trần. PHẢI chạy probe ceiling.
+    PROBE-VERDICT (đã chạy, 2026-06-21):
+      • probe_realistic_ceiling K15M3 R0.2 R-avg16: **trần thật avg-R @P_S50 = 62.7%** (@P_S100 = 71.7%)
+        ⟹ **P_S=50 KHẢ THI, KHÔNG starved.** Raising P_S→100 chỉ +9pp trần (KHÔNG phải bottleneck).
+      • probe_assignment_quality ep_02000: agent 23% vs oracle 62.2% = **GAP 39pp = optimization/credit [N]**.
+        Routing: blocked→ĐÚNG IRS chỉ **62%** (36.8% → SAI IRS! M=3 khó), over-assign 13.7%. Count OK (10.5≈9.96).
+      • probe_pareto_agent ep_02000: agent **DOMINATED** (dưới frontier riêng) — β=0.5 (concentration NHẸ)
+        cho QoS 34.5% + R_tot↑ (cả hai ↑). NHƯNG best-β chỉ tới 34.5% ⟹ ~28pp còn lại = **PHASE+ROUTING kém**.
+        ⚠⚠ **equal-power β=0 → QoS 18.5% < agent 25%** ⟹ công thức Case-2 "α→0.95 (equal)" **LÀM HẠI** ở Case-3;
+        QoS-optimal = concentration NHẸ β≈0.5 (α THẤP/moderate, KHÔNG 0.95).
+    DECOMP gap 39pp: ROUTING mis-assign 37% (M=3) + PHASE under-oracle (~28pp routing+phase) + POWER ~9pp.
+    → FIX (priority): KHÔNG đụng P_S. (1) ROUTING — oracle-warmup mạnh hơn / assignment-credit (37% wrong-IRS).
+      (2) PHASE — M=3 coordination (#8b hardest, watch PhaseMLP). (3) POWER — α retune THẤP (β≈0.5), KHÔNG 0.95.
+      Critic borderline explVar0.39 (gate — ổn định trước). [DON'T-REPEAT: ĐỪNG raise P_S; ĐỪNG α-high Case-2-style.]
+
   result_26-doc (đĩa result_30) R0.2 λ1.5 FRESH BINOMIAL — FIRST CASE-3 TEST 2026-06-13:
     SMOKE PASS: chạy K15/M3 OK, dimensions sạch (d_s81, phi(15), s_phase(3,69)), CRITIC KHỎE
     explVar 0.73 stable @ep266 (tốt bất ngờ cho case mới). NHƯNG ep~266/4000 EARLY + binomial.
@@ -33,5 +55,7 @@ Max-entropy baselines: q=K·ln(M+1)=15·ln4≈20.8 · phase=M·N·ln4=3·24·ln4
 # ── HYPER THEO RAMP (điền dần khi chạy) ──────────────────────────────────────────
 ── R_LoS = 0.2 ── (fresh start; Direct-only=100% nên QoS slack, lo critic+PhaseMLP+sum-rate trước)
    λ_D=1.5 (sweet-spot start, theo Case 1/2). Command: train.py --R-LoS 0.2 --lambda-D 1.5 --episodes 4000.
-   (chưa có run balanced hoàn chỉnh — result_30 binomial = smoke).
+   ⚠ P_S=50 dBm KHẢ THI cho Case-3 (trần oracle thật 62.7%, probe_realistic_ceiling) — in-log
+     "Direct-only/Servable 0%" là UNDER-COUNT random-phase, ĐỪNG tin. P_S=100 chỉ +9pp trần (71.7%).
+   (chưa có run balanced hoàn chỉnh — result_30 binomial = smoke; r55 = DNN α0.6 P_S50, gap 39pp optimization).
 ================================================================================

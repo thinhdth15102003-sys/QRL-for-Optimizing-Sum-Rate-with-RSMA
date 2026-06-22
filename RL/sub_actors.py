@@ -635,9 +635,12 @@ class PowerMLP:
         self.K   = K
         self.M   = M
         self.P_S = P_S
-        # ③ power-fairness α∈[0,1]: blend applied private power toward equal-split
-        # (set per-run via --power-fairness; consumed in forward()). 0 = learned head.
-        self.power_fairness = float(max(0.0, min(1.0, power_fairness)))
+        # ③ power-fairness α∈[0,1]: blend the EXECUTED power toward the QoS-optimal
+        # allocation (split + common-dist + private-dist) in forward(). 0 = learned head.
+        # (set per-run via --power-fairness.) power_priv_frac = target private split f
+        # (probe_oracle_alloc: ~0.8 is QoS-optimal at P50; sweep R3≈R2 around it).
+        self.power_fairness  = float(max(0.0, min(1.0, power_fairness)))
+        self.power_priv_frac = 0.8
         self._n_split   = 2
         self._n_common  = M + 1
         self._n_private = K
@@ -734,19 +737,29 @@ class PowerMLP:
         mask = self._common_mask(active_irs_ids)
         p_s, p_c, p_p = self._probs_from_logits(logits, mask)
 
-        w_c_total = float(p_s[0]) * self.P_S
-        w_p_total = float(p_s[1]) * self.P_S
-        w_c_full  = p_c * w_c_total                                # (M+1,)
-        # ③ power-fairness: blend the private distribution toward uniform BEFORE
-        # allocating w_p. probe_power_qos proved equal-split (uniform p_p) recovers
-        # +28pp QoS at ~zero sum-rate cost — the learned head concentrates power on
-        # already-served users and starves the unmet ones (~3.3×). α=0 → learned head,
-        # α=1 → exact equal-split. Applied to w_p ONLY; the categorical action
-        # (a_private / probs / PPO log-prob below) stays the true softmax, so the
-        # policy-gradient path is unchanged. (Future refinement: QoS-aware reallocation.)
-        a_fair  = float(getattr(self, 'power_fairness', 0.0))
-        p_p_eff = ((1.0 - a_fair) * p_p + a_fair / self._n_private
-                   if a_fair > 0.0 else p_p)
+        # ③ power-fairness α∈[0,1]: blend the EXECUTED power toward the QoS-optimal
+        # allocation across ALL THREE axes — split, common-dist, private-dist.
+        # probe_oracle_alloc (result_47/ep_00100, R_LoS0.2 P50) showed the agent's QoS
+        # gap 56→96% is the FULL power allocation, NOT just the private distribution:
+        # blending p_p alone (the original ③) left R0=56% even at α=0.8 because the
+        # SPLIT (agent ~49% private vs QoS-optimal ~80%) and the COMMON distribution
+        # were never touched. Equalising all three → 95-96% (and dissolves the CkMLP
+        # shortfall that drove ck-collapse [K]: users then clear D_k on private rate, so
+        # common-rate demand → ~0). Targets: split→[1−f, f] (f=power_priv_frac≈0.8),
+        # common→uniform over active groups, private→uniform. The categorical ACTION /
+        # probs / PPO log-prob below stay the TRUE softmax → policy-gradient unchanged.
+        a_fair = float(getattr(self, 'power_fairness', 0.0))
+        if a_fair > 0.0:
+            f       = float(getattr(self, 'power_priv_frac', 0.8))
+            p_s_eff = (1.0 - a_fair) * p_s + a_fair * np.array([1.0 - f, f])
+            unif_c  = mask.astype(float) / max(int(mask.sum()), 1)
+            p_c_eff = (1.0 - a_fair) * p_c + a_fair * unif_c
+            p_p_eff = (1.0 - a_fair) * p_p + a_fair / self._n_private
+        else:
+            p_s_eff, p_c_eff, p_p_eff = p_s, p_c, p_p
+        w_c_total = float(p_s_eff[0]) * self.P_S
+        w_p_total = float(p_s_eff[1]) * self.P_S
+        w_c_full  = p_c_eff * w_c_total                            # (M+1,)
         w_p       = p_p_eff * w_p_total                            # (K,)
         w_c_vec   = self._extract_wc(w_c_full, active_irs_ids)     # (G+1,)
 
@@ -1001,6 +1014,23 @@ class PowerMLP:
 
 # ── Common-rate split MLP ──────────────────────────────────────────────────────
 
+# ⭐ ck-stability (2026-06-18): floor the within-group logit SPREAD so the C_k
+# group-softmax cannot saturate to a one-hot. Without this, once β_entropy anneals
+# to its floor the C_k softmax collapses to a degenerate one-hot (ent_ck→-0.000,
+# ‖∇ck‖ explodes 7→1e5, clip-contained but broken → common-rate dumped on 1 user →
+# QoS crash). Seen in result_40 (fresh+③) and result_44 (③ α=0.8). Flooring the
+# spread at -CK_LOGIT_SPREAD keeps every member's fraction ≥ ~e^{-spread} → entropy
+# bounded away from 0 and the softmax Jacobian (hence grad) stays bounded.
+CK_LOGIT_SPREAD = 8.0
+
+def _ck_group_softmax(logits_g: np.ndarray) -> np.ndarray:
+    """Numerically-stable within-group softmax with a clamped logit spread."""
+    z = logits_g - logits_g.max()
+    np.maximum(z, -CK_LOGIT_SPREAD, out=z)
+    e = np.exp(z)
+    return e / e.sum()
+
+
 class CkMLP:
     """
     Common-rate allocation policy with per-group budget constraint.
@@ -1082,8 +1112,7 @@ class CkMLP:
                 group_sel[gid]   = 0
                 continue
             logits_g = logits[members]
-            e        = np.exp(logits_g - logits_g.max())
-            alpha_g  = e / e.sum()
+            alpha_g  = _ck_group_softmax(logits_g)
             alpha_k[members] = alpha_g
             C_k[members]     = alpha_g * R_c_g
             # Sample representative member for policy gradient / PPO
@@ -1120,8 +1149,7 @@ class CkMLP:
                 continue
 
             logits_g = logits[members]
-            e        = np.exp(logits_g - logits_g.max())
-            alpha_g  = e / e.sum()   # current-policy fractions
+            alpha_g  = _ck_group_softmax(logits_g)   # current-policy fractions
 
             # Use stored action or resample from current policy
             if group_sel is not None and gid in group_sel:
@@ -1157,8 +1185,7 @@ class CkMLP:
         log_prob = 0.0
         for gid, members in groups.items():
             logits_g = logits[members]
-            e        = np.exp(logits_g - logits_g.max())
-            alpha_g  = e / e.sum()
+            alpha_g  = _ck_group_softmax(logits_g)
             idx_sel  = int(group_sel.get(gid, 0))
             log_prob += float(np.log(alpha_g[idx_sel] + 1e-10))
         return log_prob
@@ -1184,8 +1211,7 @@ class CkMLP:
             groups = self._build_groups(trans['phi'][:K])
             for gid, members in groups.items():
                 logits_g = logits[b, members]
-                e        = np.exp(logits_g - logits_g.max())
-                alpha_g  = e / e.sum()
+                alpha_g  = _ck_group_softmax(logits_g)
                 idx_sel  = int(trans['ck_group_sel'].get(gid, 0))
                 lp_b[b] += float(np.log(alpha_g[idx_sel] + 1e-10))
         return lp_b
@@ -1215,8 +1241,7 @@ class CkMLP:
             groups = self._build_groups(trans['phi'][:K])
             for gid, members in groups.items():
                 logits_g = logits[b, members]
-                e        = np.exp(logits_g - logits_g.max())
-                alpha_g  = e / e.sum()
+                alpha_g  = _ck_group_softmax(logits_g)
                 idx_sel  = int(trans['ck_group_sel'].get(gid, 0))
 
                 L_pg += float(-eff_adv_b[b] * np.log(alpha_g[idx_sel] + 1e-10))

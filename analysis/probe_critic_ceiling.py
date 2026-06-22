@@ -108,15 +108,28 @@ def make_checkpoint_policy(ckpt_dir: str, cfg) -> Callable:
        not os.path.isfile(os.path.join(ckpt_dir, 'actor_config.json')):
         ckpt_dir = os.path.join(ckpt_dir, 'agents')
 
-    from RL import QuantumActor, PhaseMLP, PowerMLP, CkMLP
+    from RL import QuantumActor, ClassicalActor, PhaseMLP, PowerMLP, CkMLP
     from train import (_build_phase_state, _build_ck_state,
                        _get_active_irs)
 
-    actor     = QuantumActor.from_dir(ckpt_dir, seed=0)
+    # Auto-detect actor type from actor_config.json 'mode' (classical runs write
+    # mode='classical'; quantum omits it) — mirror train.py resume path so the
+    # DNN baseline (A1/A2) loads correctly instead of crashing in QuantumActor.from_dir.
+    _mode = 'quantum'
+    _acfg = os.path.join(ckpt_dir, 'actor_config.json')
+    if os.path.isfile(_acfg):
+        try:
+            _mode = json.load(open(_acfg)).get('mode', 'quantum')
+        except Exception:
+            _mode = 'quantum'
+    if _mode == 'classical':
+        actor = ClassicalActor.from_dir(ckpt_dir, seed=0)
+    else:
+        actor = QuantumActor.from_dir(ckpt_dir, seed=0)
+        actor.n_shots = P.n_shots_train
     phase_net = PhaseMLP.from_dir(ckpt_dir, seed=0)
     power_net = PowerMLP.from_dir(ckpt_dir, seed=0)
     ck_net    = CkMLP.from_dir(ckpt_dir, seed=0)
-    actor.n_shots = P.n_shots_train
 
     def policy(env) -> dict:
         K = cfg.K

@@ -3,7 +3,12 @@
 ================================================================================
   Kiến thức CHUNG về mô hình & cách train, KHÔNG phụ thuộc (K,M) hay R_LoS.
   Hyperparameter cụ thể theo từng case → xem Training-Case-<N>.txt.
-  Cập nhật lần cuối: 2026-06-12  (+Phần5#9 P_S-regime⇒QoS-không-so-chéo (result_23 P_S70→50); trước đó
+  Cập nhật lần cuối: 2026-06-21  (⚠⚠ β/α-optimal REGIME-DEPENDENT, result_55 K15M3: equal-power/α-HIGH là Case-2-specific; Case-3 phase-bound → mild-conc β≈0.5 optimal, α-0.95 HẠI; PHASE > POWER khi phase under-oracle; in-log Servable=0% under-count, trần thật @P50=62.7%; trước đó
+                                 2026-06-18b: ⭐⭐ probe_oracle_alloc: ck-collapse ROOT = POWER-concentration (split lệch common) KHÔNG chỉ λ_D — equal-power(full 3-trục) hoá giải ck → 95%; ③ MỞ RỘNG full-power [K]; multi-user-phase mua 0pp; trước đó
+                                 2026-06-18: ✅ HEAD-grad-explosion[ck collapse] FIX VALIDATED result_47: logit-spread-clamp `_ck_group_softmax` → ck sống @α=0.8 (đã giết r44), ‖∇ck‖ chặn 6-10 — xem Part4 ‖∇‖per-head; trước đó
+                                 2026-06-17b: phase-grad-spike = PPO LEO phase 42→91% (BASIN-select, productive, LÀNH TÍNH) — phase-warmup CASE-DEPENDENT (Case1 drop / Case2-P50 KEEP, no-warmup kẹt 36%); divergence-flag=assign-peak-yank-settles[short-warmup fix]; HEAD-grad-explosion[ck collapse r40]; trước đó
+                                 2026-06-15 +Servable-CAVEAT in-log-under-counts-khi-phase-binding (result_35 P_S=50: 59%vs99.9% oracle) + VARIANCE-ATTRIBUTION agent-std-vs-oracle-std; trước đó
+                                 2026-06-12 +Phần5#9 P_S-regime⇒QoS-không-so-chéo (result_23 P_S70→50); trước đó
                                  2026-06-09 +[L]Lagrangian-λ_D-lever, [M]Pareto-dominated-diagnosis, RESUME-auto-detect-infra,
                                  entropy-new-arch, Δ7-counterfactual-M≥2; trước đó 2026-06-08 +[K]+[I-4]).
   (lịch sử) 2026-06-01  (Case1 r1→11; +[I-2],[J](C2 r1), [B-2](r2), [B-2b]GAE(r3), [H-2]TDR(r4),
@@ -344,6 +349,22 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
     Why CkMLP specifically (not q/pw/ph):
       Ck within-group softmax has SMALLEST action space (group size ≤ K) → softmax landscape flat →
       easiest to push to deterministic under advantage explosion.
+    ⭐ ROOT THỨ HAI (POWER-CONCENTRATION, probe_oracle_alloc 2026-06-18) — ck-collapse cũng do POWER, KHÔNG chỉ λ_D bump:
+      power dồn (đặc biệt SPLIT lệch về common, vd wc=58% thay vì ~20%) → private-rate thấp → user phụ thuộc COMMON →
+      common-demand (shortfall D_k−R_priv) LỚN → CkMLP bị đẩy về góc degenerate (như r40/r44 ③-live). ⟹ ck-collapse là
+      HỆ QUẢ downstream của power-allocation, KHÔNG phải lever độc lập của trần QoS. EQUAL-POWER HOÁ GIẢI: equal split
+      80/20 + uniform → user đạt D_k bằng PRIVATE rate → common-demand→0 → ck thừa (đo: equal-pw+AGENT-ck=95%, ck chỉ +1-2pp).
+      ⟹ fix đúng = POWER (full-allocation: split+common-dist+private-dist), ck-fix chỉ là structural guard. PHÂN BIỆT power-
+      fairness lever: phải blend CẢ 3 trục (p_s split + p_c common + p_p private), KHÔNG chỉ p_p (blend p_p một mình để
+      priv-frac kẹt 49% → vẫn 56%). [chi tiết Case2 probe_oracle_alloc + RL/sub_actors.py PowerMLP.forward ③]
+    ⚠⚠ REGIME-DEPENDENT (2026-06-21, result_55 K15M3 probe_pareto_agent): "EQUAL-POWER HOÁ GIẢI / α HIGH (~0.95)" là
+      Case-2-SPECIFIC, KHÔNG general. β-optimal (private-power concentration) PHỤ THUỘC regime:
+        · regime PHASE-good + budget-adequate (Case-2): equal-power β=0 = QoS-optimal → α HIGH (0.95). [finding #11]
+        · regime PHASE-bound / hard (Case-3 M=3): equal-power β=0 → QoS TỤT (18.5% < agent 25%); QoS-optimal =
+          concentration NHẸ β≈0.5 → α THẤP/moderate. α=0.95 sẽ LÀM HẠI.
+      ⟹ TRƯỚC khi chọn α: chạy probe_pareto_agent (hold agent routing+phase, sweep β) tìm QoS-optimal β CHO REGIME ĐÓ,
+      ĐỪNG copy α của case khác. Khi PHASE còn under-oracle (gap routing+phase lớn), power chỉ là lever PHỤ (~9pp);
+      lo PHASE/ROUTING trước (priority #2 > power) — power-redistribution KHÔNG bù được phase kém.
     KHẮC PHỤC: KHÔNG bump λ_D on resume. Always fresh restart cho λ_D changes.
       Acceptable: graceful gradient λ_D over 200ep linear interp (untested, theoretical).
       Acceptable: ramp R_LoS on resume (different mechanism, OK per r14 evidence).
@@ -478,9 +499,39 @@ CHỌN MODEL TỐT NHẤT: theo QoS từ checkpoints/, KHÔNG dùng thư mục b
   dir / irs=[..]    | dùng IRS khi IRS có lợi   | dir→K, irs→~0 + phase idle → [J]
   irs TỔNG / per-IRS| Σirs ≈ Blk (≈2K/3); ≤ n* | Σirs≪Blk → under-assign · Σirs≫Blk / IRS>n* → over-assign [N]
   KL per head       | nhỏ, ổn định              | tăng vọt → update quá mạnh
+  ‖∇‖ per-head      | cùng cỡ các head (≤~vài chục) | 1 head ≫ hẳn (vd ck=1e5 khi head khác ~10) + ent_head→-0.000 = HEAD ĐÓ COLLAPSE degenerate (one-hot), clip giữ-khỏi-NaN NHƯNG để head HỎNG. Tìm onset (‖∇‖ nổ dần 12→1e5). VD result_40: CkMLP collapse @ep900 (nghi ③ equal-power@P50 → shortfall lớn đẩy ck-softmax về góc) → common-rate dồn 1 user → QoS tụt. ⟹ KILL + isolate lever vừa thêm. (khác [A] common-sink wc24%/Ck0.46 — đây là HEAD-grad-explosion.) ✅ FIX VALIDATED (result_47, 2026-06-18): clamp within-group logit-SPREAD ở floor (vd −8) trước softmax (RL/sub_actors.py `_ck_group_softmax`) → mỗi member fraction ≥ ~e^{−spread} → softmax KHÔNG về one-hot → ent/grad BOUNDED. Sống được @α=0.8 (đúng setting đã giết result_44): ent_ck giữ ~1.9-2.4, ‖∇ck‖ chặn 6-10 (thay vì nổ 1e5). General fix cho mọi grouped-softmax head bị degenerate dưới state-shift (+ ↓lr_head).
+  L_ae (AE pretrain) | scale phụ thuộc CASE (state-dim) — ⚠ ĐỪNG so chéo case | Case1 (d_aff=17) floor ~0.01 · Case2 (d_aff=44) floor ~6.6 (BÌNH THƯỜNG, ko phải hỏng). Đã misdiagnose 2 lần (r40-handoff + 2026-06-19): L_ae=6.6 Case-2 ≠ AE-fail (result_48 climb tốt với chính 6.6). Chỉ lo khi L_ae CỦA CÙNG CASE cao bất thường vs run trước cùng case.
 
-  ⚠️ Probe baselines: "Servable %" = trần thật (best link). "Direct-only %" = direct
+  ⚠️⚠️ WARMUP→PPO MECHANISM (2026-06-17, r11/r32/r35/r43): cả "divergence-flag" lẫn "phase-grad-spike" CÙNG
+    GỐC = warmup CE-fit 1 head vào TARGET rồi PPO phải ĐÁNH LẠI nếu target ≠ reward-optimal. NHƯNG khác nhau:
+    • DIVERGENCE-FLAG (KL_q>0.5): assign-warmup PEAK q-head (ent_q→0.09, match99.9%) → categorical nhọn → nudge
+      logit nhỏ = KL lớn → flag ở update đầu. Target blocked→IRS reward-GOOD → q SETTLE (r43 KL_q→0.01). Warmup
+      DÀI→nhọn hơn→nhiều flag (r35 300ep=23, r40 40ep=2). ⟹ assign-warmup NGẮN = fix.
+    • PHASE-GRAD-SPIKE (‖∇ph‖): ⚠️ REVISED 2026-06-17 (probe_phase_quality lật kết luận cũ "drop"). Spike =
+      PPO LEO phase TỪ seed-warmup (42% match) LÊN 91% alignment — KHÔNG phải "đánh away khỏi optimal". Đo:
+      no-warmup r11 phase STUCK **36.5%** (grad mượt ~17 = KẸT, KHÔNG leo) vs warmup r35 **91%** vs warm+③ r43 **90.8%**
+      (IRS beats direct 99.7%). ⟹ WARMUP = BASIN-SELECTION: seed (dù 42%) đặt phase vào basin ĐÚNG, PPO leo tới 91%;
+      no-warmup kẹt basin xấu 36%. Spike = giá-phải-trả để đạt 91% (clip cap magnitude, hướng đúng) = LÀNH TÍNH/PRODUCTIVE.
+      grad∝match% = seed mạnh hơn → leo hăng hơn (KHÔNG phải fight nhiều hơn). ⟹ **PHASE-WARMUP CASE-DEPENDENT**:
+      Case 1 (phase NON-binding, 48% đủ, power-ceiling) → DROP (warmup spike 0-gain). Case 2/P50 (phase BINDING,
+      no-warmup kẹt 36%) → **KEEP** (cần để đạt 91%). RECIPE Case2: routing+phase warmup + ③ trên warm-base (r43).
+
+  ⚠️ Probe baselines: "Servable %" = best-of-{direct, all-IRS}. "Direct-only %" = direct
   thật. "All-IRS %" = IRS với PHA NGẪU NHIÊN (lower-bound, KHÔNG phải tiềm năng IRS) → [J].
+  ⚠️⚠️ CAVEAT (2026-06-15, result_35 P_S=50): in-log "Servable" (train.py _env_feasibility_report)
+    = max(R_direct, R_allIRS) NHƯNG R_allIRS dùng PHA HIỆN-TẠI (mặc-định/ngẫu-nhiên) + ALL-IRS
+    over-assign → KHÔNG phải trần thật khi PHASE BINDING. Ở regime IRS-mandatory / P_S thấp,
+    in-log Servable UNDER-COUNT mạnh: result_35 P_S=50 in-log Servable=59.4% NHƯNG oracle thật
+    (probe_assignment_quality --P, oracle-φ+routing+power) = 99.9%. ⟹ ĐỪNG dùng in-log "Servable"
+    làm trần khi IRS bắt buộc; chạy probe_assignment_quality lấy oracle-phase ceiling. (Ở Case-1/
+    P_S cao, direct mạnh → best-of-both ≈ direct ≈ trần thật, claim cũ vẫn đúng.)
+
+  ⚠️ VARIANCE-ATTRIBUTION (2026-06-15, probe_overassign_cf): reward chênh-lệch lớn giữa ep →
+    so std(agent QoS per-ep) vs std(ORACLE QoS per-ep cùng spawn). agent-std ≫ oracle-std ⟹
+    dao động là BRITTLENESS của policy (phase/power không robust với spawn) = TRAINABLE; agent-std
+    ≈ oracle-std ⟹ env-bound (task-difficulty churn, irreducible). result_35: agent 51±6.9pp
+    (39-68) vs oracle 99.9±0.3pp ⟹ brittleness. Noise σ²~N(−30,10) chỉ ±0.177/step sau
+    reward_noise_avg=16 + trung-bình-200-step → KHÔNG phải nguồn chính ở mức episode.
 
 
 ================================================================================

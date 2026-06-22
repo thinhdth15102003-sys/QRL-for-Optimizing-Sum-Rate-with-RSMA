@@ -142,6 +142,7 @@ class QuantumActor:
                  readout_mode:     str   = 'generic',  # Δ2: 'generic' | 'r1'
                  softmax_head:     bool  = False,       # Δ4: SoftmaxPQC linear+β head
                  softmax_beta_init: float = 1.0,        # Δ4: initial inverse-temperature β
+                 no_ae:            bool  = False,       # ablation: drop z_t classical bypass [B]
                  seed:             int   = None):
 
         assert n_latent == 2 * n_qubits, (
@@ -166,6 +167,13 @@ class QuantumActor:
         # baseline    : N_QUANTUM = 2*nq-1
         self.READOUT_MODE = str(readout_mode)
         self.SOFTMAX_HEAD = bool(softmax_head)
+        # Ablation [--no-ae]: zero the z_t classical-bypass [B] into the assignment head,
+        # so logits depend ONLY on o_hat (the quantum readout). The z_t-block of the head
+        # then sees zero input (→ zero weight-grad, stays at init) and we suppress its
+        # spurious input-grad in backward, so the encoder/λ receive gradient ONLY through
+        # the quantum path (o_hat). Combined with ae_weight=0 (caller), this forces the
+        # representation through the quantum encoding — tests the frozen-λ cause.
+        self.NO_AE = bool(no_ae)
         if self.READOUT_MODE == 'r1':
             _nu = n_qubits - cfg.M
             self.N_QUANTUM = _nu * (cfg.M + 2) + cfg.M
@@ -422,6 +430,8 @@ class QuantumActor:
     def _head_forward(self, z_t: np.ndarray, o_hat: np.ndarray):
         """Single-sample head. Returns (logits_flat (K*nc,), cache).
         h_t = [z_t ‖ o_hat] (z_t = classical bypass [B], Δ5)."""
+        if self.NO_AE:
+            z_t = np.zeros_like(z_t)            # drop bypass → logits from o_hat only
         h_t = np.concatenate([z_t, o_hat])
         if self.SOFTMAX_HEAD:
             pre    = h_t @ self.W_sm + self.b_sm        # (K*nc,)
@@ -459,10 +469,13 @@ class QuantumActor:
             for i in range(len(self.W_post)):
                 grads[f'W_post_{i}'] = dW[i];  grads[f'b_post_{i}'] = db[i]
             dL_dh = dx
-        return grads, dL_dh[:self.N_LATENT], dL_dh[self.N_LATENT:]
+        dL_dz = np.zeros(self.N_LATENT) if self.NO_AE else dL_dh[:self.N_LATENT]
+        return grads, dL_dz, dL_dh[self.N_LATENT:]
 
     def _head_forward_batch(self, z_t_b: np.ndarray, o_hat_b: np.ndarray):
         """Batch head. Returns (logits_b (B_s, K*nc), cache)."""
+        if self.NO_AE:
+            z_t_b = np.zeros_like(z_t_b)         # drop bypass → logits from o_hat only
         h_t_b = np.concatenate([z_t_b, o_hat_b], axis=1)
         if self.SOFTMAX_HEAD:
             pre_b    = h_t_b @ self.W_sm + self.b_sm
@@ -500,7 +513,9 @@ class QuantumActor:
             for i in range(len(self.W_post)):
                 grads[f'W_post_{i}'] = dW[i];  grads[f'b_post_{i}'] = db[i]
             dL_dh_b = dx
-        return grads, dL_dh_b[:, :self.N_LATENT], dL_dh_b[:, self.N_LATENT:]
+        dL_dz_b = (np.zeros((B_s, self.N_LATENT)) if self.NO_AE
+                   else dL_dh_b[:, :self.N_LATENT])
+        return grads, dL_dz_b, dL_dh_b[:, self.N_LATENT:]
 
     # ── B2 dual-branch encoder helpers ────────────────────────────────────────
 
@@ -1472,6 +1487,7 @@ class QuantumActor:
             'readout_mode':     self.READOUT_MODE,
             'softmax_head':     self.SOFTMAX_HEAD,
             'softmax_beta_init': self.SOFTMAX_BETA_INIT,
+            'no_ae':            self.NO_AE,
         }
         with open(os.path.join(path, 'actor_config.json'), 'w') as f:
             json.dump(cfg_dict, f, indent=2)
@@ -1516,6 +1532,7 @@ class QuantumActor:
             readout_mode=c.get('readout_mode', 'generic'),
             softmax_head=c.get('softmax_head', False),
             softmax_beta_init=c.get('softmax_beta_init', 1.0),
+            no_ae=c.get('no_ae', False),
             seed=seed,
         )
         actor.set_params(dict(np.load(os.path.join(path, 'actor_params.npz'))))

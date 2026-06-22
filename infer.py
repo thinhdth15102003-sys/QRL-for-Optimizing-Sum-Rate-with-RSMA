@@ -35,16 +35,21 @@ from RL         import QuantumActor, PhaseMLP, PowerMLP, CkMLP
 # Pipeline helpers  (mirror of train.py — kept local to avoid circular imports)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_phase_state(channels: dict, phi: np.ndarray, cfg) -> np.ndarray:
-    """Build (M, 2K) per-IRS cascade channel state for PhaseMLP."""
-    M, K = cfg.M, cfg.K
-    s = np.zeros((M, 2 * K))
+def _build_phase_state(channels: dict, phi: np.ndarray, cfg,
+                       z_t: np.ndarray) -> np.ndarray:
+    """Build (M, 2K + n_latent + K) per-IRS state for PhaseMLP (mirror of train.py).
+    row m = [Re(c^SRU_m)(K), Im(c^SRU_m)(K), z_t(n_latent), phi_mask_m(K)]."""
+    M, K     = cfg.M, cfg.K
+    n_latent = len(z_t)
+    s        = np.zeros((M, 2 * K + n_latent + K))
     for k in range(K):
         m = int(phi[k]) - 1
         if m >= 0:
             c_mk = channels['g_SR_hat'][m].conj() * channels['g_RU_hat'][m, k]
-            s[m, k]     += c_mk.real
-            s[m, K + k] += c_mk.imag
+            s[m, k]                    += c_mk.real
+            s[m, K + k]                += c_mk.imag
+            s[m, 2 * K + n_latent + k]  = 1.0   # phi_mask: user k belongs to IRS m
+    s[:, 2 * K : 2 * K + n_latent] = z_t[None, :]   # broadcast z_t to all IRS rows
     return s
 
 
@@ -63,12 +68,14 @@ def _get_active_irs_ids(phi: np.ndarray) -> list:
 
 def _build_ck_state(demand: np.ndarray, R_private: np.ndarray,
                     R_c_group: dict, phi: np.ndarray, cfg) -> np.ndarray:
-    """Build (3·K,) [D_k, R_p_k, R_c_g_k] state for CkMLP."""
+    """Build (5·K,) [D_k, R_p_k, R_c_g_k, shortfall_k, phi_float_k] for CkMLP (mirror of train.py)."""
     K     = cfg.K
     R_c_g = np.zeros(K)
     for k in range(K):
         R_c_g[k] = float(R_c_group.get(int(phi[k]), 0.0))
-    return np.concatenate([demand, R_private, R_c_g])
+    shortfall = np.maximum(0.0, demand - R_private)
+    phi_float = phi[:K].astype(float)
+    return np.concatenate([demand, R_private, R_c_g, shortfall, phi_float])
 
 
 def _compute_blocked(env: ISTNEnv) -> np.ndarray:
@@ -139,6 +146,23 @@ def load_agents(run_dir: str, seed: int = None):
     phase_net = PhaseMLP.from_dir(agents_dir, seed=seed)
     power_net = PowerMLP.from_dir(agents_dir, seed=seed)
     ck_net    = CkMLP.from_dir(agents_dir, seed=seed)
+    # power_fairness α is part of the trained policy's action mapping (blends
+    # applied w_p toward equal-split) but is NOT saved in power_config.json.
+    # Restore it from the run's hyperparameters.json (walk up from agents/);
+    # without it the agent reverts to α=0 (concentrated power) → wrong QoS.
+    _af, _d = 0.0, os.path.abspath(agents_dir)
+    for _ in range(5):
+        _d = os.path.dirname(_d)
+        _hp = os.path.join(_d, 'hyperparameters.json')
+        if os.path.isfile(_hp):
+            try:
+                _af = float(json.load(open(_hp)).get('power_net', {}).get('power_fairness', 0.0))
+            except Exception:
+                _af = 0.0
+            break
+    power_net.power_fairness = _af
+    if _af > 0:
+        print(f"  ⚙ power_fairness α={_af:.2f} restored from hyperparameters.json")
     return actor, phase_net, power_net, ck_net
 
 
@@ -163,18 +187,19 @@ def run_hqchac_episode(env: ISTNEnv,
     for _ in range(n_steps):
         blocked = _compute_blocked(env)
         s_t     = actor.extract_state(obs, demand, blocked)
-        phi, _, _ = actor.forward(s_t, greedy=greedy)
+        phi, _, actor_info = actor.forward(s_t, greedy=greedy)
+        z_t = actor_info['z_t']                       # arch-2 spatial latent (shared by phase/power)
 
         active_irs     = _get_active_irs(phi)
         active_irs_ids = _get_active_irs_ids(phi)
 
-        s_phase   = _build_phase_state(env.channels, phi, cfg)
+        s_phase   = _build_phase_state(env.channels, phi, cfg, z_t)
         phase_idx, _, _ = phase_net.forward(s_phase, active_irs, greedy=greedy)
         phases_rad   = env.phase_model.index_to_phase(phase_idx)
         proposed_Phi = env.phase_model.build_phi(phases_rad)
 
         h_eff   = env.rate_computer.effective_channels_all(phi, proposed_Phi, env.channels)
-        s_power = np.concatenate([h_eff.real, h_eff.imag])
+        s_power = np.concatenate([h_eff.real, h_eff.imag, z_t])
         w_c_vec, w_p, _, _ = power_net.forward(s_power, active_irs_ids)
 
         partial = env.rate_computer.compute_rates_partial(

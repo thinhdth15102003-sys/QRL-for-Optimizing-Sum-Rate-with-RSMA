@@ -38,8 +38,8 @@ from istn.config import SystemConfig
 # ══════════════════════════════════════════════════════════════════════════════
 # ACTIVE CASE  ←  change ONLY K and M; per-case hypers auto-derive
 # ══════════════════════════════════════════════════════════════════════════════
-K        = 10    # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
-M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+K        = 5    # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 3
 
 # ── UNIFIED VQC register (DO NOT change per case) ──────────────────────────────
 n_qubits = 12    # ⭐ G4 UNIFIED: fixed 12 qubits across all cases (NISQ-feasible)
@@ -61,7 +61,7 @@ def _per_case_hyper(K_val: int) -> dict:
     elif K_val <= 10: # Case 2 MEDIUM: identity map (baseline)
         return dict(P_S_dBm=50.0,  n_var_layers=3, n_hidden_ae=[128, 64])
     else:             # Case 3 LARGE: soft-cluster compression, more depth
-        return dict(P_S_dBm=60.0,  n_var_layers=5, n_hidden_ae=[256, 128, 64])
+        return dict(P_S_dBm=50.0,  n_var_layers=5, n_hidden_ae=[256, 128, 64])
 
 _hyp     = _per_case_hyper(K)
 P_S_dBm  = _hyp['P_S_dBm']
@@ -267,7 +267,7 @@ beta_entropy_pwr_private = 0.003 # added on top of global β_entropy for π_priv
 
 # ── Common-rate split MLP  (C_k fractions, normalised within groups) ────────────
 n_hidden_ck    = [128, 128, 64, 32]     # Case 2: nới lớp đầu (input 5K=50)
-lr_ck          = 1e-4  # Adam lr
+lr_ck          = 5e-5  # Adam lr (↓ from 1e-4 2026-06-18: slower Ck = stable; pairs với _ck_group_softmax spread-clamp chống degenerate collapse [result_40/44])
 
 # ── Critic architecture ───────────────────────────────────────────────────────────
 critic_hidden = [512, 256, 128, 64]   # hidden layer sizes (arbitrary depth)

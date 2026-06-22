@@ -67,6 +67,138 @@
   r12 EXP-1| 1.5 | =            | 16    | PopArt       | 16   | factored bias+0.3 | =                                          | result_12 STOPPED ep~315 2026-06-04 (SIGINT, switched priority to D_k hypothesis test). PROBE ep_00300: gap closure 34% (sampled→oracle: 0.36→0.236), IRS-gap 17pt→5pt, policy R_tot 1.356→1.381 (+1.8%). VERDICT: F2∩F4 MIX (25-50% closure zone) — phase non-stationarity contributed SOME (34%) but ALSO oracle ceiling dropped (1.663→1.621 from frozen phase). Honest reading: F2 partial, F4 also present. | EXP-1 paused — D_k hypothesis test prioritized. EXP-1 verdict KEEP for paper: "freeze-phase partial closure shows F2+F4 mix, not pure F2".
   result_13 D_k=0.15 (R_LoS=0.2)  | 1.5 | = | 16 | PopArt | 16 | = | = | STOPPED ep_00600 2026-06-04 (auto-stop). D_k binary sweet-spot test ABANDONED: QoS=41% < 80% threshold; corr(IRS,blocked)=−0.353 NEGATIVE (wrong routing); R_tot=1.636 beats Direct (1.450) & All-IRS (1.375) but routing không học được. | Hypothesis rejected → quay về D_k=0.10. Probe: results/Training-Case 2/result_13/d_k_probe_ep00600.txt.
   result_14 RAMP-2 (R_LoS=0.3)    | 1.5 | = | 16 | PopArt | 16 | = | = | RUNNING ep~706/1500 (2026-06-05, launched 2026-06-04 13:21). Resume result_11/ep_01400. ⭐ R_tot quietly RISING 1.74→1.80-1.84 (≥ r8 gold 1.75) despite harder ramp; QoS drops to 54-57% (vs result_11 60% at R_LoS=0.2 = expected curriculum cost). Critic wobble explVar 0.04↔0.54 nhưng corr(V,ret) +0.5-0.7 still has structure. Best reward 176.4 @ep52 chưa bị vượt 650ep (= λ_D-weighted reward dropped với QoS, không phải plateau policy: L_pg -0.01 still). Phase ent monotonic ↓ 34.4→32.1 (48% of max, learning slow). λ frozen như expected (y=0.51 z=0.47). | KEEP TRAINING tới ep~1000-1200; watch QoS hồi ≥58%; nếu sustained <55% → λ_D↑ theo [I-3] cho ramp này. Probe phase_quality @ep_00700 to confirm alignment ≥38% (resume baseline).
+  result_35 (đĩa results/result_35) RunA WARMUP+ROUTING (R_LoS=0.2, ⭐P_S=50) | 1.5 | = | 16 | PopArt | 16 | = | = + ① oracle-assign-warmup(50ep×300CE) + EXP-3 phase-warmup(50ep×300CE), ⚠NO ③ | RUNNING ep~70/2000 (2026-06-15). ⭐⭐ P_S GIẢM 50 (unified) → KHÁC HẲN r11 P_S=70. assign-warmup match 34→99.9%; phase-warmup match 24.6→41.9% (yếu). QoS thực ~52%. ⭐ PROBE probe_overassign_cf ep_00000: dưới oracle-φ+ref-pw, ASSIGNMENT của policy đạt **98.2%** ≈ oracle 99.9% → ROUTING gần-oracle (warmup làm tốt), TOÀN BỘ gap 52→98% = **PHASE+POWER** không phải assignment. Over-assign 0.30 free/step (21% steps); free-on-IRS met 80.7%→**100% nếu về direct** nhưng NET chỉ +0.6pp/+0.10 reward (regime loss-free n*=∞: collateral lên blocked +0.5pp; 58% step over-assign cf THUA reward vì IRS cho free thêm sum-rate) → over-assign **lành tính, QoS↔sumrate tradeoff, KHÔNG phải bottleneck**. NON-STATIONARITY: agent QoS 51±6.9pp (39-68) vs oracle 99.9±0.3pp ⟹ dao động ep-to-ep là **BRITTLENESS của agent (phase/power) không phải env**; oracle reward 1.28-1.56 = spawn churn; noise σ²~N(−30,10) ±0.177/step (đã bị reward_noise_avg=16 + 200-step dập, minor); balanced_blocked_spawn=True đã bật. | ⭐ phase [F] thrashing (ent 79% max, KL_ph 0.002) + THIẾU ③ → QoS bị khóa ~52% (dự đoán plateau 55-65% như r11). 300CE warmup OVER-BUDGET (thủ phạm 8.7h). phase-warmup discredited (41.9% match, yếu). Lever: ③ power-fairness + fix phase, KHÔNG phải routing/over-assign. Probe: analysis/probe_overassign_cf.py.
+  ⭐ CEILING-RECONCILE P_S=50 (probe_assignment_quality --P 50): oracle {blocked→IRS+oracle-φ+power} = **99.9%** (n*=∞ loss-free, blocked 71%, all-direct 28.9%, all-IRS 65.5%). In-log "Servable best-link 59.4%" = BI QUAN (tính ở phase mặc-định) → KHÔNG dùng làm trần ở regime IRS-mandatory. ⟹ phase coherence BINDING mạnh ở P_S=50 (chênh 40pp giữa phase-default vs oracle-phase) — KHÁC Case-1 ramp-0.2 (phase 48% đủ). Trả lời OPEN-Q handoff "phase-as-lever ở regime khó" = CÓ.
+  ⭐ UPDATE ep~971/2000 [2026-06-16]: QoS leo chậm 50→**61% PLATEAU** (hold 60-62% từ ep~550), R_tot 1.46→1.58,
+    best reward 193@ep960. = ĐÚNG dự đoán no-③ ceiling ~60-65% (gap 39pp tới oracle 99.9% = phase+power, no ③).
+    Agent 61% > in-log servable 59.4% (xác nhận servable under-count). ⚠ GRAD-EXPLOSION TÁI DIỄN (KHÔNG one-off):
+    2 spike lớn (ep336 ae=14200, ep948 ae=2606/qc=3537), ‖∇ph‖ spike ~960, 23 divergence-flag, 42× KL_q>0.5 —
+    ĐỀU contained bởi grad-clip (QoS vẫn leo, không corrupt). Gốc = warmup-yank DAI DẲNG: q over-peaked (ent 1.3%
+    do 300CE warmup) → KL_q 0.4-0.82 tới tận ep948 (600+ep sau warmup). Routing drift OVER nhẹ (irs≈7.8 vs Blk≈6).
+    Critic borderline (explVar 0.47-0.59 wobble quanh 0.5). → KHUYẾN NGHỊ: STOP (đã ra finding); launch Case-2 recipe
+    = short-warmup (early-stop đã code) + ③ power-fairness. Finish tới 2000 = low info-gain. 300CE-warmup no-③ = config RETIRE.
+  ⭐⭐ PHASE-WARMUP CẦN cho Case 2 [2026-06-17, probe_phase_quality — LẬT kết luận "drop"]: no-warmup r11(P70) phase KẸT
+    **36.5%** alignment (IRS beats direct chỉ 65%) vs warmup r35(P50) **91%** + r43(warm+③) **90.8%** (beats direct 99.7%).
+    ⟹ WARMUP = basin-selection: no-warmup phase kẹt ~36%; warmup leo tới 91%. Grad-spike phase = PPO LEO 42→91% (productive,
+    benign) KHÔNG phải fight-away. ⟹ Case 2 GIỮ cả routing+phase warmup. (Case 1 phase non-binding 48%-đủ → drop; khác Case 2.)
+    HỆ QUẢ: r35/r43 trần 61% KHÔNG phải phase-limit (phase 91% rồi!) mà POWER-limit (no-③/③-đang-kick-in) → ③ là lever đúng.
+    WATCH r43: QoS còn ~62%@ep113 (③ chưa lift); kỳ vọng leo 75-85% vài trăm ep tới; nếu kẹt 62% → power-limit P50 sâu hơn ③.
+  ⭐⭐ CEILING THỰC TẾ = 99.8% (KHÔNG bị noise hạ) [2026-06-17, probe_realistic_ceiling]: oracle {blocked→IRS+oracle-φ+
+    equal-power} QoS @P50 = 99.8% ở CẢ nominal-σ² LẪN 1-draw LẪN 16-avg noise (P70=100%). ⟹ noise σ²~N(-30,10dB)
+    KHÔNG hạ QoS-ceiling (oracle đẩy mọi user XA D_k → log2(1+SINR) phẳng ở SINR cao → noise không đẩy xuống dưới D_k);
+    noise chỉ tạo SUM-RATE/reward VARIANCE (reward outliers >400), KHÁC QoS. ⟹ BÁC giả thuyết "P50 ceiling ~70%": 61%
+    KHÔNG near-optimal, gap ~38pp là OPTIMIZATION thật (recoverable) không phải noise/capacity-limit. NHƯNG target khả-thi
+    với ③ ≈ 76-85% (probe_power_qos: agent-routing+phase+equal-split=76%, KHÔNG 99.8%); last-mile tới 99.8% cần phase→100%
+    (agent 91%) + live-routing/phase fidelity. ⟹ đẩy α↑ (gần equal) kỳ vọng mid-70s-80s, last-mile = phase.
+  ⭐⭐ PARETO FRONTIER (QoS,R_tot) @P50 [2026-06-17, probe_pareto_frontier, oracle routing+phase, sweep β=pwr-conc]:
+    β=0 EQUAL → (QoS 99.9%, R_tot 1.55, reward +1.55 = MAX) · β=0.5 → (61%,1.62) · β=1 → (47%,1.71,rew−0.97) ·
+    β=16 concentrate → (QoS 12.7%, R_tot 2.84 = max-R_tot corner). ⟹ TRADEOFF CÓ THẬT & DỐC (concentrate gần
+    2× R_tot nhưng QoS sụp 99.9→13%) NHƯNG **@λ_D=1.5 reward-optimal = β=0 (EQUAL, max-QoS corner)** — mọi bước
+    sang R_tot (β>0) đều REWARD-ÂM (penalty squared-shortfall × λ1.5 ≫ R_tot gain nhỏ). ⟹ "drop weak users / chừa
+    room tradeoff / chỉ-cung-đủ-rồi-dồn-strong" = REWARD-NEGATIVE ở λ1.5 (chỉ optimal nếu λ_D THẤP = ưu-tiên-R_tot,
+    TRÁI QoS-first). KHÔNG có over-investment để reclaim (β=0→0.5 QoS sụp ngay → equal đã là "just-enough"). Agent
+    r35 (61%@R_tot1.58) BỊ DOMINATED (frontier @R_tot1.55 cho 99.9% QoS) → headroom lớn, path = equal-power(α→1)+
+    routing/phase-fidelity (61→76→99.9%). ⟹ NHẮM max-QoS corner, KHÔNG nhắm tradeoff point.
+  ⛔⛔ result_44 (đĩa results/result_44) ③ α=0.8 BUMP (resume r43/ep200) — FAILED [2026-06-18]: đẩy α 0.5→0.8 (theo
+    frontier "equal=max-QoS") PHẢN TÁC DỤNG. QoS GIẢM 64→47% (tệ hơn r43 62%); CkMLP COLLAPSE LẠI (ck grad khỏe ~7
+    tới ep150 rồi leo 16→25→34→58→116 = r40 pattern) + ent/pg ck dominated. WARM-BASE cứu ck @α=0.5 NHƯNG KHÔNG @α=0.8.
+    ⭐⭐ BÀI HỌC: **CkMLP-instability = BINDING CONSTRAINT thật của Case-2 ③** (KHÔNG phải α/phase/routing). Cơ chế:
+    equal-power@high-α → private-rate thấp → shortfall_k=(D_k−R_p) NỔ → ck-state blow → ck-softmax về góc degenerate →
+    common-stream misalloc → QoS sụp. Frontier "equal-power→99.8%" CÓ THẬT nhưng BỊ CHẶN bởi ck. α=0.5 ck-OK-stuck-62%;
+    α=0.8 ck-collapse-QoS-47%. FIX: revert α=0.5 (62% ổn) HOẶC sửa ck TRƯỚC (clamp/normalize shortfall_k _build_ck_state
+    + ↓lr_ck + ck-entropy-floor) RỒI raise α. (α-bump-theo-oracle-frontier KHÔNG account ck instability = recommendation SAI.)
+  ✅✅ result_47 (đĩa results/result_47) CK-FIX VALIDATE @α=0.8 (resume r43/ep_00100, R_LoS0.2 P50, λ1.5) [2026-06-18, RUNNING ~ep180/1500]:
+    CK-FIX = `_ck_group_softmax()` clamp within-group logit SPREAD @-8 (floor → softmax ko one-hot → ent/grad bounded),
+    thay 5 softmax sites trong CkMLP + lr_ck 1e-4→5e-5. ⭐⭐ **PASS**: chạy ĐÚNG α=0.8 đã GIẾT r44 (ck-collapse→47%),
+    giờ **ent_ck ỔN ĐỊNH 1.87-2.35** (KHÔNG về 0 như r40/r44 one-hot), **‖∇ck‖ CHẶN 6.0-9.6** (r40/r44: nổ 7→16→…→1e5),
+    KL_ck 0.008. ⟹ failure-mode ck-collapse ĐÃ KHỬ; α=0.8 giờ SỐNG ĐƯỢC. Critic khỏe (explVar 0.47-0.82 >0.5, ‖∇‖V 2-6).
+    ⚠ NHƯNG QoS mới GIỮ **62%** (= r43 α0.5, KHÔNG sụp 47% = thành công của fix) NHƯNG CHƯA leo vượt 62% → còn quá sớm
+    (ep180/1500; r11 baseline flat ~400ep mới leo). ⟹ α=0.8 có unlock frontier 76-85% hay không = CHƯA kết luận, KEEP chạy
+    tới ≥ep500-600. Nếu vẫn kẹt 62% → power/last-mile-phase sâu hơn ③ (không phải ck nữa). | ck-instability LIMITATION đã ADDRESS;
+    QoS-lift TBD. ⚠ r47 chạy chậm (~7min/ep lúc r45 diag) do chia GPU với result_45 — KHÔNG hang.
+  🔬 result_50 (đĩa results/result_50) DNN BASELINE A1/A2 [2026-06-20, RUNNING ~ep350] — VQC-vs-DNN, PRELIMINARY:
+    Cmd = r49 + `--actor-mode classical` (encoder-MLP(128)+policy-MLP(256,128) thay AE+VQC; ISO-LR lr_classical=1e-4=lr_qc;
+    MỌI technique GIỮ NGUYÊN: oracle-warmup 250CE + full-③ α0.6 + ck-fix + critic-warmup+PopArt). Fairness = so PIPELINE đầy đủ.
+    ⭐ @ep350: QoS ~61-64%, best 291, ck khoẻ (ent2.61), full-③ active (wp69%), λ/AE-diag=0.00 (đúng, ko quantum). assign-wu 100%.
+    ⭐⭐ 2 FINDING (preliminary, cần matched-ep với r49@ep960 trước khi chốt): (1) **DNN ≈ VQC** (cả hai ~60-64% band) = đúng
+    honest-prior PQC≈DNN (Jerbi); DNN nhỉnh nhẹ (best 291 vs r49 267). ⟹ VQC ~2K param sánh ngang DNN ~50K = param-eff C2/C3,
+    KHÔNG quantum-advantage. (2) ⭐ **DNN phase-warmup 65% >> VQC 42.5%** (CE 0.92 vs 1.27): z_t của DNN HỮU ÍCH HƠN cho phase-target
+    → AE-VQC encoding KHÔNG biểu đạt tốt hơn MLP cho sub-actor = bằng chứng no-quantum-representational-advantage (paper).
+    ⭐⭐⭐ MATCHED-EP @ep~1050 + probe_assignment_quality (ep_01000) — A1/A2 CHỐT SẠCH [2026-06-20]:
+    · Training matched-ep: DNN QoS 64-66% > VQC 57-58% (best 291 vs 267, phase-ent 31 vs 44) — DNN dẫn ~7pp.
+    · NHƯNG probe_assignment_quality (tách phase): **ROUTING VQC≈DNN** — blocked→correct-IRS 90.2%(VQC) vs 94.0%(DNN),
+      QoS-greedy 42.5 vs 44.9, cùng over ~9-10%, cùng #IRS≈7.0, cùng +55-57pp gap-to-oracle-99.9% [N]. DNN nhỉnh nhẹ.
+    ⟹ **KẾT LUẬN: VQC-actor SÁNH NGANG DNN-actor ở GÁN (param-eff CLEAN: ~2K vs ~50K param, đúng honest-prior PQC≈DNN).**
+    Gap QoS training (DNN>VQC 7pp) = PHASE-BASIN (DNN warmup 65% vs VQC 42.5%), KHÔNG phải actor-capacity. ⟹ paper dùng
+    assignment-quality + param-count cho param-eff (KHÔNG dùng QoS thô = phase-confounded). +55pp gap = structural [N] giống cả 2 actor.
+    ⚠ INFRA FIX: make_checkpoint_policy (probe_critic_ceiling.py) giờ auto-detect classical → mọi probe chạy được trên ckpt DNN (trước crash).
+  ⭐⭐⭐ result_52 (đĩa results/result_52) DNN phase-warmup 600 [2026-06-20] — PHASE-WARMUP BÃO HOÀ, plateau ≠ phase-limited:
+    = r50(DNN) nhưng --phase-warmup-epochs 250→600. assign-warmup early-stop @ep240 (100%, ko phí — confirm shared-flag OK).
+    ⭐ phase-warmup **65%→91.7%** (CE 1.646→0.339) = DNN phase-warmup SPEED-limited (thêm epoch → match vọt). NHƯNG QoS chỉ
+    62-66%→**66-68%** (+3-4pp) + best 291→302 + R_tot 1.42→1.50. ⟹ **+26pp phase-warmup = +3-4pp QoS = DIMINISHING RETURNS.**
+    ⭐⭐ KẾT LUẬN ĐẢO: plateau ~66% Case-2 **KHÔNG phải phase-limited** (phase coi như giải, 91.7% basin) — nút thắt còn lại =
+    barrier SÂU HƠN (F2 credit-gap decomposition tuần tự / live-execution fidelity / noise). Phase-warmup có ĐƯỜNG CONG BÃO HOÀ:
+    thoát-random (23→65%) đáng giá NHIỀU, trên ~65% thì QoS phẳng. ⟹ trần ~66% = plateau THẬT Case-2 (ko phải actor/phase/power).
+    Hệ quả VQC: VQC-600 dù chạm basin tốt cũng cap ~66%; câu hỏi VQC thu còn: **chạm ~91% phase-warmup (speed=DNN) hay cap thấp (z_t-ceiling)?** → check r51.
+  ⭐⭐⭐⭐ result_53 (đĩa results/result_53) α=0.95 RESUME of r52 — BREAKTHROUGH, Case-2 SOLVED [2026-06-20]:
+    resume r52/ep_01600 (DNN) + `--power-fairness 0.6→0.95`. ⭐ QoS **66→97%** + R_tot 1.51→1.49 (≈ZERO cost) + reward 215→270.
+    ⟹ **ĐẢO KÈO "barrier sâu": plateau ~62-66% Case-2 KHÔNG phải barrier/phase-limit — chỉ là α-QUÁ-THẤP** (power kẹt β~0.7 thay vì
+    equal β=0). **POWER là lever** (re-confirm); α=0.6 ko đủ tới equal, **α=0.95→β≈0→97%**. Validate (a) probe_pareto_agent (dự đoán
+    β=0→94%, live 97%): agent ngồi SAI ĐIỂM trên frontier (over-invest R_tot), KHÔNG dominated nhưng reward-suboptimal; (b) quyết định
+    **α-KHÔNG-λ_D** (probe: @λ1.5 reward-optimal đã là β=0 → λ_D đủ cao rồi; gap là agent-ko-tới-được = optimization, α ép thẳng, ko [K]).
+    ⟹ RECIPE CASE-2 SOLVED: full-③ **α0.95** + oracle-warmup + ck-fix → **97%**. phase-warmup quality gần như VÔ CAN với trần (α lo QoS).
+    ⚠ HỆ QUẢ: mọi plateau-62% trước (r35/43/47/49/r52) = α-too-low artifact, KHÔNG phải capacity. VQC cũng cần α0.95 (chưa test).
+  ⚠⚠ result_48 (đĩa results/result_48) FRESH + FULL-③ + oracle-warmup [2026-06-19, KILLED ep~1300, dominated by r49] — PHASE-LIMITED:
+    Cmd: FRESH (no resume) + `--oracle-warmup` + `--power-fairness 0.6` (FULL-③ mới: blend split+common+private), λ1.5 gae0.9 K10M2 P50.
+    ⭐ FULL-③ VALIDATED ACTIVE: behaviour wp=61%/wc=39% (= đúng full-③ α0.6, KHÁC old-③ wc-heavy). assign-warmup 97.8%
+    (routing tốt, IRS≈7≈Blk [N]). Critic KHOẺ (explVar 0.76, corr0.88). QoS leo CHẬM 39→45-51% (fresh early-learn như r11),
+    R_tot 0.88→1.32, reward −626→−39 (leo mạnh = genuine). best 90.9.
+    ⚠⚠ NÚT THẮT = PHASE [F]: ent ph 65→62 /66.5 ≈ **93% max** (bò cực chậm), **phase-warmup CHỈ 23%** (≈random; CE ko giảm
+    1.449→1.400/30ep trong khi assign-warmup CE chạy ngon 38→97.8%). ⟹ phase basin KHÔNG chọn được, PPO ko leo nổi từ
+    random → QoS cap ~50%. SHORT phase-warmup (30CE) = config ĐÃ BIẾT yếu (r40 ~25% vô dụng; r35 warmup-dài→42%→PPO leo 91%).
+    ⚠ CK CHRONIC-COLLAPSE DÙ ck-fix: ent_ck 2.9→**0.021** (floored ko đúng 0 = clamp engaged), ‖∇ck‖ 5→**11337** (nổ đều).
+    ⟹ **ck-fix chặn ENTROPY-floor NHƯNG KHÔNG chặn GRAD-explosion**. NGHỊCH LÝ: full-③ equal-power → common-rate THỪA →
+    ck mất gradient-pressure → trôi degenerate (khác r47 old-③ giữ ck khỏe vì common-rate còn matter). Benign cho QoS (ck
+    redundant per probe_oracle_alloc) nhưng grad 11337 ugly. FIX tương lai: lr_ck↓ thêm / FREEZE ck dưới full-③ / clamp logit-MAGNITUDE.
+    → ACTION [REVISED 2026-06-19 ep~1150]: ⚠ "plateau/relaunch" CŨ = PREMATURE. result_48 LATE-CLIMB thật (như result_11
+    phẳng~400ep, fresh nên phẳng lâu hơn ~1000ep): ep1080→1150 QoS 45→48%, reward −39→+7.5 (VƯỢT 0), best 90.9→118.1,
+    **phase ent giảm tăng tốc** 61.7→60.4 (60ep ≈ nhanh 6× = PPO BẮT ĐẦU kéo phase, kiểu r35 42→91% nhưng chậm+muộn vì
+    basin warmup yếu 23%). ⟹ **KEEP running, ĐỪNG kill**. ⭐ XÁC NHẬN: QoS leo DÙ ck=16944 collapse → ck benign dưới full-③
+    (probe_oracle_alloc đúng: equal-power→ck redundant). Watch tới ~ep1500-1600: nếu chững <60% + phase-ent ngừng giảm →
+    LÚC ĐÓ mới phase-warmup mạnh hơn cho run sau. Phase-warmup-23%-yếu có thể làm plateau THẤP hơn r35 (TBD).
+  ✅✅✅ result_49 (đĩa results/result_49) FRESH + FULL-③ + STRONG-WARMUP [2026-06-19, RUNNING] — RECIPE VALIDATED, BREAKTHROUGH:
+    = r48 NHƯNG `--phase-warmup-epochs 30→250` (+ --phase-warmup-episodes 16). ⭐ PHASE-WARMUP **23%→42.5%** (= basin r35
+    đã chứng minh leo 91%). ⭐⭐ KẾT QUẢ SỐC @ep14 (1 diag): QoS **63%**, best reward **246.9**, phase ent rớt 65→56 TRONG 14ep
+    (r48 mất >1000ep mới 65→62), ck KHOẺ (ent 2.9, ‖∇ck‖ 5.5), full-③ active (wp65/wc35), IRS≈Blk. ⟹ điểm XUẤT PHÁT của r49
+    (63%) ĐÃ CAO HƠN trần 1300-ep của r48 (53%, best 200.6). **PHASE-WARMUP QUALITY = LEVER quyết định** (r48 thiếu đúng mảnh này).
+    Recipe Case-2 ĐẦY ĐỦ validated: full-③(power) + strong-phase-warmup-250CE(phase) + ck-fix(guard) + oracle-assign-warmup(routing).
+    AE L_ae=6.6 = bình thường (đã bác giả thuyết AE-fail). → KILL r48 (dominated), để r49 leo.
+    ⚠ UPDATE @ep971 [honest]: r49 **PLATEAU ~60-62%** (ep100-960 phẳng), best 267.1 kẹt từ ep280. = ĐÚNG plateau tái diễn Case-2
+    (r35 61% · r43 62% · r47 62% · r49 62%). ⟹ 250CE-warmup fix được **TỐC ĐỘ + ck-health + đường sạch** (chạm 62% trong ~100ep
+    vs r48 bò 1300ep; ck khoẻ ent1.95 KHÔNG collapse) NHƯNG **CHƯA NÂNG CEILING** — cú "63%@ep14" là điểm xuất phát từ basin tốt rồi
+    settle về plateau chung. KHÔNG phải hard-ceiling (probe: oracle-phase→95%, ③-target 76-85%): kẹt 62% vì **phase live chưa đủ tốt**
+    (ent 44≈66% max, chưa tới r35 91%-align) = phase-optimization-limited + F2 credit-gap. ⭐ phase ent VẪN đang rớt chậm 56→44 +
+    R_tot leo 1.27→1.41 → CHƯA chết hẳn. WATCH vài trăm ep: phase ent giảm tiếp (44→30 như r35) → QoS có thể phá 62% muộn; nếu chững
+    quanh 44 + QoS kẹt 60 → plateau cứng, nút thắt = phase-convergence-chậm (cần phase-warmup mạnh hơn NỮA / lr_phase / fix F2).
+  ⭐⭐⭐ PROBE probe_oracle_alloc (r47/ep_00100, R_LoS0.2 P50, 12ep×15×8noise) [2026-06-18] — POWER-ALLOCATION = LEVER THẬT, ck downstream:
+    Ma trận QoS dưới AGENT routing+phase (chỉ swap power/ck recipe):
+      R0  agent pw + agent ck      = 56.5%   (đang đạt)
+      R0b agent pw + ORACLE ck     = 81.1%   (sửa ck-only +24.6)
+      R0c EQUAL pw + agent ck      = 95.4%   (sửa power-only +38.9) ★ power là gốc
+      R0d agent-SPLIT + uniform    = 93.5%   (split agent 49% priv + uniform within → đã 93.5)
+      R1  equal pw + equal ck      = 95.9% · R2 +oracle-ck = 97.2% (ck chỉ +1.3 trên nền equal-pw)
+      C1/C2 oracle-route(dom/multiuser-phase) = 100%/100% (routing+phase gap chỉ 2.6pp; MULTI-USER phase = DOMINANT)
+    ⟹ 3 KẾT LUẬN: (1) toàn bộ gap 56→96% là POWER allocation, KHÔNG routing/phase. (2) **ck là HỆ QUẢ của power-concentrate**:
+    equal-power đẩy user đạt D_k bằng PRIVATE rate → common-demand→0 → ck thừa (R0c agent-ck=95.4); ck-fix chỉ cần structural guard.
+    (3) **Proposal-2 (pretrained-IRS/multi-user-phase) MUA ~0pp** (phase non-binding 91%, multi-user=dominant) → BỎ.
+    ⭐ ROOT CỦA R0=56% DÙ α=0.8: ③ CŨ **chỉ blend p_p (private-dist)**, KHÔNG đụng SPLIT (agent ~49% private vs optimal 80%)
+    lẫn COMMON-dist → priv-frac kẹt 49%. Behaviour r47 wc=58%/wp=42% xác nhận. ⟹ FIX CODE 2026-06-18: ③ MỞ RỘNG full-power
+    (`RL/sub_actors.py` PowerMLP.forward): α blend CẢ p_s→[1−f,f] (f=power_priv_frac 0.8) + p_c→uniform-active + p_p→uniform.
+    Test: α=1→priv-frac 0.80 exact + wp/wc uniform (=target R1 95.9%); α=0.8→priv-frac 0.73. Categorical action=true-softmax (PG path
+    KHÔNG đổi). Backward-compat (α=0 y nguyên). NEXT: fresh-run short-warmup(assign+phase-dominant)+full-③ α0.8-1.0+ck-fix-guard,
+    live-③ giờ GIẢM ck-stress (equal-power→ít common-demand) thay vì hammer. KHÔNG cần oracle-ck-target / multi-user-phase.
+    Probe+lib: analysis/probe_oracle_alloc.py + analysis/oracle_alloc.py (oracle-ck greedy-fill, multiuser-phase exact, greedy-power).
+  result_40 (đĩa results/result_40) SHORT-WARMUP+③ (R_LoS=0.2, P_S=50, FRESH) | 1.5 | = | 16 | PopArt | 16 | = | = + ① oracle-assign-warmup(30ep×40CE early-stop) + phase-warmup(early-stop@16) + ③ α=0.5 | ⛔ FAILED ep~1487/2000 [2026-06-17]. ⭐ SHORT-WARMUP FIX VALIDATED: assign-warmup 34→99.8% trong 40ep (early-stop@40, hit 99%@~ep24); phase-warmup early-stop@16 (~25%=random, đúng dự đoán vô dụng); KL_q 0.002 + CHỈ 2 divergence-flag (vs r35 23) → YANK ĐÃ KHỬ. NHƯNG QoS peak 48%@ep800 rồi TỤT 42% (< r35 61%), best reward 50.1 unbeaten từ ep44. ❌ ROOT = **CkMLP COLLAPSE @ep~900**: ‖∇ck‖ nổ 12→163→978→…→**150000** (chronic, clipped 0.5 nhưng degenerate), **ent_ck→-0.000** (one-hot) → common-rate dồn ~1 user → starve → QoS decline. ✅[SỬA 2026-06-19] AE L_ae=6.6 **KHÔNG phải hỏng** = FLOOR BÌNH THƯỜNG của Case-2 (state lớn d_aff=44; so chéo r39-Case1-0.0098 là SAI metric/case). result_48 & result_49 cùng L_ae=6.6 mà r48 climb tốt → BÁC giả thuyết AE. Phase ent 93% KHÔNG do AE mà do **short-warmup-yếu (23%) + ck-collapse**. Critic OK (explVar 0.62-0.82), routing held. | NGHI ③ là culprit (r35 cùng regime KHÔNG-③ → CkMLP khỏe + 61%; r40 CÓ-③ → ck collapse). Giả thuyết: equal-power@P50 → shortfall lớn → CkMLP bị đẩy về góc degenerate ~ep900. → KILL. ISOLATE: rerun short-warmup KHÔNG-③ trước (kỳ vọng ~61% ck khỏe = xác nhận ③), (L_ae=6.6 = NORMAL Case-2 floor, KHÔNG cần reseed — đã bác 2026-06-19). ⚠ ent_ck=-0.000 = numerical bug cần guard. ⚠ r40 (failed) tranh GPU với r42.
   result_16/17 GHOST | — | — | — | — | — | — | — | DELETED 2026-06-05 (0 ckpts, 35ep each, post-reset ghost runs). KHÔNG có data analyzable.
   result_16 (new) WRONG-LAUNCH | 1.5 | = | 16 | PopArt | 16 | = | = (NO warmup, NO freeze) | ⚠ ABORT recommendation @ep~107: resume từ r15/ep_00400 (BROKEN anchor) + vanilla PPO → PhaseMLP UNLEARNING (ph entropy 59.6→62.7, 90%→94% of max, RISING toward random), reward μ -209→-275, QoS 53→50% drift. Critic borderline wobble explVar mean ~0.30, structural functional. ⛔ NOT the EXP-3c design (--phase-warmup --freeze-phase missing). | KILL + relaunch correct EXP-3c từ r11/ep_01000 with both flags. r16 ckpt ep_00100 = no analytic value (vanilla continuation of broken state).
   result_18 EXP-3c WARMUP+FREEZE (R_LoS=0.2) | 1.5 | = | 16 | PopArt | 16 | = | = + --phase-warmup + --freeze-phase | RUNNING ep ~195/600 (launched 2026-06-05 ~15:10). Resume r11/ep_01000 (same anchor as r12, r15 = fair compare across EXP chain). ep_00000 auto-dumped post-warmup (pre-PPO clean attribution). | ⭐⭐ EARLY VERDICT @ep_00100/00200: ASSIGNMENT-QUALITY PRESERVATION CONFIRMED. live(R(q_pol,ORACLE_φ)) 1.447→1.447→1.447→1.465 (STABLE then +0.018, EXCEEDS r11 baseline 1.447 @ep200). Ceiling 1.765→1.645→1.676→1.700 (warmup dip +0.055 recovering through PPO). Compare r15 (warmup only): live 1.475→1.418 DECAY. r18 (+freeze): live 1.447→1.465 IMPROVE. Freeze BLOCKS PPO erosion mechanism. Caveats: live improvement modest (+0.018/200ep), reward μ in log declining (-135→-167) = power/Ck still struggling with frozen phase. Probes: decomp_ep00000.txt + decomp_freeze_trend.txt.

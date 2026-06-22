@@ -4,7 +4,8 @@
   Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
   File này: hyper ĐÃ DÙNG cho Case 1 theo từng ramp 0.2→0.5, + bài học thực tế
   (result_1→11) và "set thế này → ra sao".
-  Cập nhật lần cuối: 2026-06-08 (G4 nq=12 UNIFIED: Case 1 now nq=12 D_enc=2 W_proj 10→22 EXPANSION).
+  Cập nhật lần cuối: 2026-06-16 (⭐ result_39 = RECIPE FRESH + α=0.5 → QoS 95% CONVERGED (3pp dưới trần) CANONICAL; result_38 resume α=0.4 → 90%).
+                  2026-06-08 (G4 nq=12 UNIFIED: Case 1 now nq=12 D_enc=2 W_proj 10→22 EXPANSION).
                   Pre-2026-06-08: Case 1 had nq=8 (historical), see params_pre_unify_backup.py.
                   result_12 (đĩa: results/result_17) (arch-2 Case 1 nq=8 retry @λ=2, ep_00935 oracle) — historical reference.
                   Future Case 1 runs: K=5, M=1, nq=12, n_var_layers=2, n_hidden_ae=[32].
@@ -115,6 +116,51 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
      Ramp cao: All-IRS yếu dần (72→61) → có thể nâng α nhẹ giữ 85-90%; tiêu chí lên ramp = ~85-90% (đừng
      crank λ_D ép 100%). Case 2: P_S cố định + 2× users → target 85-90% là tham vọng-hợp-lý (③ ~76% + tune).
 
+  ── ⭐⭐⭐ result_39 (đĩa results/result_39) — RECIPE FRESH-FROM-SCRATCH (no resume) [2026-06-16, ep~1390/1500 CONVERGED] ──
+   Cmd: **FRESH** (AE-pretrain, KHÔNG resume) + `--power-fairness 0.5`, vanilla (no warmup/cf), 1500 ep, K5M1 P50, λ_D1.5 gae0.9.
+   ⭐⭐⭐ KẾT QUẢ ĐẸP NHẤT: QoS leo từ scratch 59→91(ep500)→ dip 90-91(ep900-1100)→ leo lại → **95% holding**
+     (ep1250-1390), R_tot 0.81→1.88→1.84 leo CÙNG QoS (genuine learning). 95% = +25pp > All-IRS 70.3%, −3pp < trần
+     98.2%. VƯỢT target. Cleaner & cao hơn result_38 (resume α=0.4 → 90%). Dip-recovery ep900-1100 = explore lành
+     mạnh KHÔNG drift (tương phản result_5 vanilla peak 82%→drift 72-78%). ③ giữ ổn định ở đỉnh.
+   ⭐ ABLATION ③ (vs BASELINE result_5, CÙNG fresh config chỉ khác α): result_5 α=0 → peak 82% rồi WOBBLE 72-78%,
+     wp-top2 61-73% (power tập trung 2/5 user → starve 3 user). result_39 α=0.5 → 95% stable, wp-top2 ~58% (balanced).
+     Matched-ep~500: r5 QoS70%/Rtot1.01 vs r39 QoS91%/Rtot1.7 (r39 trội CẢ HAI trục). = 1-knob ③ ablation cho paper.
+   Critic KHỎE (explVar 0.51-0.71 stable, V̄+33=ret-scale, ‖∇‖V 0.7-1.3 tí). Routing học-từ-scratch converged
+     (ent q 6% max, irs≈2.8≈Blk matched [N]). Power α=0.5 balanced NHƯNG learnable (wp-top2 53-57%, KHÔNG saturate 40%).
+   ⭐ ZERO divergence flag, KL_q 0.001-0.003 (no warmup → no peaked-policy yank → KHÔNG grad-explosion) —
+     tương phản TRỰC TIẾP result_35 (warmup → KL_q 0.3-0.75 + raw ‖∇‖ spike 20k). = bằng chứng warmup là TRIGGER.
+   → KEEP tới 1500 (clean final) hoặc stop — đã hội tụ 92-93%. Best ckpt = ep_00500+ (đang leo). DATA cho paper:
+     main Case-1 figure (full 59→93% curve) + α-ablation (trained α=0.5 fresh = 93% vs static-blend predict 89%).
+     ⭐ FRESH α=0.5 = recipe demonstration CANONICAL (lock-quality, no confound).
+
+  ── ⭐⭐⭐ result_45 (đĩa results/result_45) — RAMP-0.5 FINAL, λ_D BUMP CHỐNG DRIFT [2026-06-18→19, DONE 1000/1000] ──
+   Cmd: resume **result_42/ep_00300** (peak-QoS ckpt, KHÔNG drifted-final) + `--power-fairness 0.6`, λ_D **1.5→2.0**,
+     gae0.9, K5M1 P50. Lineage curriculum: r39(ramp0.2,95%)→r41(0.3)→r42(0.4,peak96%@ep300)→**r45(0.5)**.
+   ⭐⭐⭐ KẾT QUẢ CUỐI: QoS 95%(ep100-350) → dip 87-90%(ep400-800) → **HỒI & GIỮ 90-91%(ep850-1000)** = CONVERGED.
+     final QoS 91% / R_tot 2.02 (cuối R_tot↑ CÙNG QoS = genuine, ko trade). 91% TRÊN target 85-90%. best reward 528.7 @ep~298.
+   ⭐⭐ λ_D=2 CHẶN DRIFT THÀNH CÔNG (đảo lo ban đầu): r42 ramp-0.4 @λ1.5 drift→82%; r45 ramp-0.5 @λ2.0 GIỮ 91%
+     (dip giữa-run rồi HỒI, KHÔNG drift-monotonic). ⟹ luật [I-3] λ_D↑-theo-ramp xác nhận: λ=2 đúng cho ramp 0.5.
+   Critic KHỎE: explVar 0.5-0.77 (median 0.62, dip 0.41/0.49 hồi nhanh), corr(V,ret)0.72, V̄+37=ret-scale.
+     ⚠ 1 spike ‖∇‖V cuối (crit-diag999 μ1206/clipfrac45%) = momentary (return σ0.80 cực-tụ → outlier), KHÔNG [B]; run xong.
+   PhaseMLP non-binding (đúng Case-1): ent ph 17.3→16.4 /33.3≈50% (giảm nhẹ), KL_ph0.03 — ko limiter. λ frozen [E] harmless.
+   Power α=0.6 (OLD ③ p_p-only): pw split oscillate wc 42↔58%, wp-top2 59% structured. ck top69% structured. IRS=2.6≈Blk=2.5 matched [N].
+   → ✅ CASE-1 CURRICULUM 0.2→0.5 HOÀN TẤT. Đây là **Case-1 ramp-0.5 LOCK** (thay r42). Best ckpt:
+     canonical/balanced = **ep_01000** (91%/R_tot2.02 converged) · max-QoS = ep_00100/00200 (95%/R_tot1.86, mới-resume chưa khai thác R_tot).
+
+  ── ⭐⭐ result_38 (đĩa results/result_38) — RECIPE END-TO-END VALIDATION [2026-06-15, DONE 300/300] ──
+   Cmd: resume **VANILLA result_5/ep_01000** + `--power-fairness 0.4`, 300 ep, K5M1 P50, λ_D=1.5 gae=0.9.
+   = ĐÚNG RECIPE (vanilla base = best, no warmup/no cf) chạy trên TRUE vanilla base (KHÁC r37 resume r34-warmup).
+   ⭐⭐ KẾT QUẢ: QoS rolling 86→85→90→90% (leo vào ep_300, best **90%**), R_tot 1.91→2.02 PHẲNG (sum-rate
+     free, đúng α-curve). 90% = +20pp > All-IRS 70.3%, −8pp < trần 98.2%. **TRÚNG target 85-90% recipe.**
+   Critic KHỎE: explVar 0.47→0.68 (stable >0.5, climbing), V̄≈+39=ret-scale, corr(V,ret) 0.71→0.83,
+     ‖∇‖V μ4-9 clip0%. Assignment converged (ent q ~3% max, irs=[2.7-3.0]≈Blk/K 2.5 → matched [N]).
+   ⭐ POWER head CÒN learnable (KHÁC α=1): wp-top2 ~58-61% (giữa α=0.3=59 & α=0.5=53 trên α-curve), wc 59-62%
+     → α=0.4 shape vừa đủ, KHÔNG saturate về equal-split 40% như α=1 (r37). = sweet-spot behaviour dự đoán.
+   PhaseMLP [F] borderline-benign: ent ph ~52% max phẳng, ‖∇ph‖ 11-14, KL_ph 0.01 — KHÔNG limiter (Case 1
+     @0.2 = POWER-limited, 48% coherence đủ). q ⚠"ENTROPY-DOMINATED" = ARTIFACT (q converged → L_pg≈0). λ frozen [E] harmless.
+   → ✅ RECIPE Case-1 ramp-0.2 PROVEN end-to-end trên vanilla base. Best ckpt = ep_00300 (QoS-late 90%).
+     Next: lock, hoặc advance ramp 0.3 (stable, critic khỏe, no entropy-dom → curriculum-ready; nâng α nhẹ khi All-IRS yếu dần 72→64).
+
 ── R_LoS = 0.3 ──────────────────────────────────────────────────────────────
   Run: result_4 (resume result_3, λ_D=3, gae=0).
   Kết quả: QoS ~81% — tốt.
@@ -187,6 +233,10 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
   result_11 R_LoS0.5  λ_D4.5 gae0.9 β0.001 ←r9/ep400 → ep254 QoS83% rồi GPU-hang; có ep_200
   result_15 R_LoS0.3 LAGRANGIAN(lr0.05) gae0.9 ←r5/ep_00900 (đĩa r8) → QoS78→70% drift; PARETO-DOMINATED; ckpt ep_00600
   result_16 R_LoS0.3 λ_D2.5 gae0.9 ←r5/ep_00900 (đĩa r8) → ep~1271 P1(0-910)improve-both 77→87%/2.15→2.65, P2(910-1150)Pareto-improve 84%/3.05, P3(1150-)PARETO-DEGRADE+reward DROP 76%/3.18 514→496. ⚠ overshoot R_tot. PICK ep_01000 (sweet-spot, ent_ph 46% adapt-ready). NOT-AT-CEILING: sensitivity ep_01000 oracle 2.18/72% vs live 1.08/59% IRS28→59 = F1 BASIN HARD-CONFIRMED.
+  ── CURRICULUM 0.2→0.5 (2026-06-16/18, recipe fresh-α + ramp resume, P50) ──
+  result_39 R_LoS0.2 λ_D1.5 gae0.9 α0.5 FRESH       → QoS 59→95% CONVERGED (CANONICAL, −3pp trần)
+  result_42 R_LoS0.4 λ_D1.5 gae0.9 α0.6 ←r41(ramp0.3) → QoS peak96%@ep300 → drift82% (best ckpt ep_00300)
+  result_45 R_LoS0.5 λ_D2.0 gae0.9 α0.6 ←r42/ep_00300 → DONE 1000ep: QoS 95→dip→HỒI 91% CONVERGED, R_tot2.02; λ=2 CHẶN-DRIFT (vs r42-drift82%); CASE-1 LOCK ramp-0.5 = ep_01000(91%) hoặc ep_00100(95%)
   ── ARCH-2 RETRY (2026-06-05/06, fresh K=5 M=1 nq=8) ──
   result_12 R_LoS0.2 λ_D=2 gae0.9 β0.001 + PopArt + R1readout + SoftmaxPQC + Δ1 fresh  (thư mục đĩa: results/result_17)
             → ep~935 reached oracle RỒI STOPPED 2026-06-08 (drift −419% từ peak = λ=2 instability; xem r13/r14).

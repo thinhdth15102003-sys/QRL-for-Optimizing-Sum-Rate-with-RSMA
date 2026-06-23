@@ -28,7 +28,7 @@ import params as P
 from params     import make_config
 from CSI.env    import ISTNEnv
 from CSI.baselines import RandomPolicy, GreedyPolicy, DirectOnlyPolicy, AllIRSPolicy
-from RL         import QuantumActor, PhaseMLP, PowerMLP, CkMLP
+from RL         import QuantumActor, ClassicalActor, PhaseMLP, PowerMLP, CkMLP
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -142,7 +142,20 @@ def load_agents(run_dir: str, seed: int = None):
         raise FileNotFoundError(
             f"No agents/ directory found in {run_dir}. "
             f"Run training first with train.py.")
-    actor     = QuantumActor.from_dir(agents_dir, seed=seed)
+    # Detect actor type from saved config: the classical baseline
+    # (--actor-mode classical) saves {"mode": "classical"} and must load via
+    # ClassicalActor — QuantumActor.from_dir would KeyError on 'n_qubits'.
+    _ac_path = os.path.join(agents_dir, 'actor_config.json')
+    _amode = 'quantum'
+    if os.path.isfile(_ac_path):
+        try:
+            _amode = json.load(open(_ac_path)).get('mode', 'quantum')
+        except Exception:
+            _amode = 'quantum'
+    if _amode == 'classical':
+        actor = ClassicalActor.from_dir(agents_dir, seed=seed)
+    else:
+        actor = QuantumActor.from_dir(agents_dir, seed=seed)
     phase_net = PhaseMLP.from_dir(agents_dir, seed=seed)
     power_net = PowerMLP.from_dir(agents_dir, seed=seed)
     ck_net    = CkMLP.from_dir(agents_dir, seed=seed)
@@ -189,17 +202,20 @@ def run_hqchac_episode(env: ISTNEnv,
         s_t     = actor.extract_state(obs, demand, blocked)
         phi, _, actor_info = actor.forward(s_t, greedy=greedy)
         z_t = actor_info['z_t']                       # arch-2 spatial latent (shared by phase/power)
+        # [--no-ae] sub-actors consume the quantum readout o_hat instead of the AE
+        # latent z_t (mirror of train.py); classical/AE actors keep z_t.
+        rep = actor_info.get('o_hat', z_t) if getattr(actor, 'NO_AE', False) else z_t
 
         active_irs     = _get_active_irs(phi)
         active_irs_ids = _get_active_irs_ids(phi)
 
-        s_phase   = _build_phase_state(env.channels, phi, cfg, z_t)
+        s_phase   = _build_phase_state(env.channels, phi, cfg, rep)
         phase_idx, _, _ = phase_net.forward(s_phase, active_irs, greedy=greedy)
         phases_rad   = env.phase_model.index_to_phase(phase_idx)
         proposed_Phi = env.phase_model.build_phi(phases_rad)
 
         h_eff   = env.rate_computer.effective_channels_all(phi, proposed_Phi, env.channels)
-        s_power = np.concatenate([h_eff.real, h_eff.imag, z_t])
+        s_power = np.concatenate([h_eff.real, h_eff.imag, rep])
         w_c_vec, w_p, _, _ = power_net.forward(s_power, active_irs_ids)
 
         partial = env.rate_computer.compute_rates_partial(

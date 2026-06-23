@@ -148,6 +148,15 @@
     **α-KHÔNG-λ_D** (probe: @λ1.5 reward-optimal đã là β=0 → λ_D đủ cao rồi; gap là agent-ko-tới-được = optimization, α ép thẳng, ko [K]).
     ⟹ RECIPE CASE-2 SOLVED: full-③ **α0.95** + oracle-warmup + ck-fix → **97%**. phase-warmup quality gần như VÔ CAN với trần (α lo QoS).
     ⚠ HỆ QUẢ: mọi plateau-62% trước (r35/43/47/49/r52) = α-too-low artifact, KHÔNG phải capacity. VQC cũng cần α0.95 (chưa test).
+  ⚠ result_70 (đĩa results/result_70) VQC NO-AE + α=0.50 (resume r61/ep_00000 no-ae chain), R_LoS0.2 P50 λ1.5 gae0.9 [2026-06-23, RUNNING ~ep301/4000]:
+    Cmd = no-ae + phase-warmup(early-stop@ep10, match 92.2%) + ③ α=**0.50** (KHÔNG phải 0.95). ⚠⚠ ĐÚNG α-too-low artifact:
+    QoS μ 62→56% (drift xuống nửa sau), best reward 287.7@ep111 unbeaten 189ep, L_pg≈0 = PLATEAU [D] ~60%. KHÔNG phải ceiling
+    (in-log servable 59.4% = pessimistic-default-phase under-count; oracle@P50=99.9%, α0.95-validated=97% r53). Critic KHOẺ
+    (explVar 0.44-0.79 mostly>0.5, ‖∇‖V 2-15 clipfrac0%, V̄≈ret). Phase warmed 92% + held (KL_ph yank 1.6→0.01-0.06, non-binding).
+    ck KHOẺ (ent 2.6-2.9 ck-fix giữ, KHÔNG collapse). λ frozen z=0.54 (benign PPO/Prop-2). IRS Σ≈7≈Blk6 (slight over [N], routing OK).
+    ⭐ ROOT = POWER α-too-low: wc40/wp60 (KHÔNG equal), ent_pw RỘNG dần 8→19 (spread, ko concentrate). | LIMITATION = α=0.5 (gap power).
+    → ACTION: resume `--power-fairness 0.95 --no-ae` (= VQC test ĐẦU TIÊN của α0.95 solver, "chưa test"; α≠λ_D resume-safe, post-ck-fix
+    high-α validated r47/r53). Kỳ vọng QoS leo 76-97%. Watch ent_ck dưới high-α. (no-ae chain r56-r66 vẫn CHƯA persist — xem handoff TO PERSIST.)
   ⚠⚠ result_48 (đĩa results/result_48) FRESH + FULL-③ + oracle-warmup [2026-06-19, KILLED ep~1300, dominated by r49] — PHASE-LIMITED:
     Cmd: FRESH (no resume) + `--oracle-warmup` + `--power-fairness 0.6` (FULL-③ mới: blend split+common+private), λ1.5 gae0.9 K10M2 P50.
     ⭐ FULL-③ VALIDATED ACTIVE: behaviour wp=61%/wc=39% (= đúng full-③ α0.6, KHÁC old-③ wc-heavy). assign-warmup 97.8%

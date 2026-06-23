@@ -1,0 +1,79 @@
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Quantum AC Training  ·  IRS-assisted RSMA Satellite Comm.  ·  QC backend: GPU (CuPy)
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+SystemConfig
+  Topology  : K=10 users (fixed), M=2 IRS, N=24 elements/IRS
+  Power     : P_S=70.0 dBm (10000.00 W)
+  Frequency : 1.58 GHz,  satellite alt=800.0 km
+  Noise     : N(-30.0,10.0) dBW per-step  →  nominal σ²=1.00e-03 W
+  Phase     : 2-bit → levels=[0.     1.5708 3.1416 4.7124] rad
+  CSI error : multiplicative κ=0.05  (Δg = κ|g|ε, ε~CN(0,1))
+  QoS/Demand: D_k=0.1 bps/Hz (R_tot ≥ D_k), λ_D=1.5, ε=0.001
+  Geometry  : LoS radius=0.2 km, h_IRS=20 m (IRS on building rooftop)
+  Mobility  : speed=1.5 m/s, dt=1.0 s (1.5 m/step)
+  Blocking  : β_block=0.1, β_IRS=1.0, r_block=20 m
+  Path loss : IRS→user exponent=3.5, d0=10 m
+
+  Actor Pipeline  (4 stages per step)
+  ────────────────────────────────────────────────────────────────
+    1. Quantum IRS selection
+       State  : a_t ∈ R^44  =  10×(2+2)+2×2  (affinity ‖ D_k ‖ |g_SU|)
+       Encoder: 44 → B2-DualAE → 24  (z_t)  [IRS:4D + User:2×10D→P]
+       Decoder: 24 → 128 → 44  (AE regulariser)
+       QC     : 24-dim → 0 qubits (H+U_enc+U_var×0) → 0-dim  (o_hat)
+       Post-NN: 24 → 256 → 128 → 10×3 logits
+       Output : φ ∈ {0,…,2}^10  (3^10 combinations)
+    2. PhaseMLP  (IRS phase shifts — active IRS only)
+       State  : c^SRU_m ∈ R^54 per active IRS  ([Re+Im c^SRU(20) ‖ z_t(24) ‖ phi_mask(10)])
+       Net    : 54 → 64 → 128 → 256 → 128 → 96  (shared weights, N=24 elements/IRS, categorical)
+       Output : phase_idx ∈ {0..3}^{G×24}  (G ≤ 2 active IRS, expanded to 2×24)
+    3. PowerMLP  (power allocation)
+       State  : h_eff+z_t ∈ R^44  ([Re+Im h_eff(20) ‖ z_t(24)])
+       Net    : 44 → 128 → 128 → 64 → 15  softmax → ×P_S
+       Output : w_c_vec ∈ R^{G+1}  (per-group common, G≤2),  w_p ∈ R^10  (private)  [Σ=P_S]
+    4. CkMLP  (common-rate split)
+       State  : [D_k, R_p_k, R_c_g_k, shortfall_k, phi_k] ∈ R^50  (per user)
+       Net    : 50 → 128 → 128 → 64 → 32 → 10  within-group softmax → C_k
+       Output : C_k ∈ R^10  (Σ_{k∈g} C_k = R_c_g per group)
+
+  Critic  (State-Value MLP  V(s))
+    Input        : s_t (44)  =  44 total
+    Architecture : 44 → 512 → 256 → 128 → 64 → 1  (V)
+
+  Training plan
+    Episodes       : 13
+    Steps/episode  : 40
+    PPO epochs     : 6  (ε=0.2,  batch=64)
+    Total steps    : 520
+    γ (discount)   : 0.95
+    AE loss weight : 0.5
+    β entropy      : 0.001 → 0.0003  (anneal to 10% of training)
+    LR schedule    : warm-up 20% eps, then linear decay to ×0.25
+    GAE lambda (λ) : 0.9
+    AE pretrain    : 5000 steps @ lr=0.001
+    Data reupload  : True
+    lr  ω/λθ/ξ/ψ  : 0.0001/0.0001/0.0003/0.0003
+    Shots (train)  : 1500
+    Seed           : 0
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  QC gradient : SPSA  n_reps=16  eps=0.1  (2048 circuits/update,  0x vs param-shift)
+  Rollout buf : 12 ep x 40 steps = 480 transitions/PPO call
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  Environment feasibility probe  (R_LoS=0.2 km, D_k=0.1, λ_D=1.5)
+  ────────────────────────────────────────────────────────────────
+    Servable users (best link ≥ D_k) : 100.0%   ← QoS ceiling for ANY policy
+    QoS under Direct-only            : 100.0%   (Σ R_tot 1.72)
+    QoS under All-IRS                :  76.8%   (Σ R_tot 1.17)
+    Direct link blocked              :  70.6% of users
+    ✓ 100% servable → if agent QoS is below this, raising λ_D is safe & should help.
+  Warming up critic V(s) [fresh (random)  policy]: 24 rollout ep × 50 fit epochs (actors frozen) …
+    critic warm-up done: N=960  return μ=-33.05 σ=17.98  V̄=-32.15  explVar=+0.36
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Ep     Reward  BestReward      L_pg       L_ae    L_phs     L_pw     L_ck        TD     R_tot   R/user    QoS/K    IRS/K    Blk/K    s/ep
+  ─────  ─────────  ──────────  ────────  ─────────  ───────  ───────  ───────  ────────  ────────  ───────  ───────  ───────  ───────  ──────

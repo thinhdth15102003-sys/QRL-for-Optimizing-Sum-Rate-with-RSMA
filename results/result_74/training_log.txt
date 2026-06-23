@@ -1,0 +1,141 @@
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Quantum AC Training  ·  IRS-assisted RSMA Satellite Comm.  ·  QC backend: GPU (CuPy)
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+SystemConfig
+  Topology  : K=5 users (fixed), M=1 IRS, N=24 elements/IRS
+  Power     : P_S=50.0 dBm (100.00 W)
+  Frequency : 1.58 GHz,  satellite alt=800.0 km
+  Noise     : N(-30.0,10.0) dBW per-step  →  nominal σ²=1.00e-03 W
+  Phase     : 2-bit → levels=[0.     1.5708 3.1416 4.7124] rad
+  CSI error : multiplicative κ=0.05  (Δg = κ|g|ε, ε~CN(0,1))
+  QoS/Demand: D_k=0.1 bps/Hz (R_tot ≥ D_k), λ_D=1.5, ε=0.001
+  Geometry  : LoS radius=0.2 km, h_IRS=20 m (IRS on building rooftop)
+  Mobility  : speed=1.5 m/s, dt=1.0 s (1.5 m/step)
+  Blocking  : β_block=0.1, β_IRS=1.0, r_block=20 m
+  Path loss : IRS→user exponent=3.5, d0=10 m
+
+  Actor Pipeline  (4 stages per step)
+  ────────────────────────────────────────────────────────────────
+    1. Quantum IRS selection
+       State  : a_t ∈ R^17  =  5×(1+2)+2×1  (affinity ‖ D_k ‖ |g_SU|)
+       Encoder: 17 → B2-DualAE → 24  (z_t)  [IRS:2D + User:2×5D→P]
+       Decoder: 24 → 32 → 17  (AE regulariser)
+       QC     : 24-dim → 12 qubits (H+U_enc+U_var×2+1×CZ-bridge) → 34-dim+1×ZZ-cross(B4)  (o_hat)
+       Post-NN: 58 → 256 → 128 → 5×2 logits
+       Output : φ ∈ {0,…,1}^5  (2^5 combinations)
+    2. PhaseMLP  (IRS phase shifts — active IRS only)
+       State  : c^SRU_m ∈ R^39 per active IRS  ([Re+Im c^SRU(10) ‖ z_t(24) ‖ phi_mask(5)])
+       Net    : 49 → 64 → 128 → 256 → 128 → 96  (shared weights, N=24 elements/IRS, categorical)
+       Output : phase_idx ∈ {0..3}^{G×24}  (G ≤ 1 active IRS, expanded to 1×24)
+    3. PowerMLP  (power allocation)
+       State  : h_eff+z_t ∈ R^34  ([Re+Im h_eff(10) ‖ z_t(24)])
+       Net    : 44 → 128 → 128 → 64 → 9  softmax → ×P_S
+       Output : w_c_vec ∈ R^{G+1}  (per-group common, G≤1),  w_p ∈ R^5  (private)  [Σ=P_S]
+       ③ POWER-FAIRNESS α=0.50  (private power blended toward equal-split; α=1 → exact equal-split)
+    4. CkMLP  (common-rate split)
+       State  : [D_k, R_p_k, R_c_g_k, shortfall_k, phi_k] ∈ R^25  (per user)
+       Net    : 25 → 128 → 128 → 64 → 32 → 5  within-group softmax → C_k
+       Output : C_k ∈ R^5  (Σ_{k∈g} C_k = R_c_g per group)
+
+  Critic  (State-Value MLP  V(s))
+    Input        : s_t (17)  =  17 total
+    Architecture : 17 → 512 → 256 → 128 → 64 → 1  (V)
+
+  Training plan
+    Episodes       : 1500
+    Steps/episode  : 200
+    PPO epochs     : 6  (ε=0.2,  batch=64)
+    Total steps    : 300,000
+    γ (discount)   : 0.95
+    AE loss weight : 0.0
+    β entropy      : 0.001 → 0.0003  (anneal to 10% of training)
+    LR schedule    : warm-up 20% eps, then linear decay to ×0.25
+    GAE lambda (λ) : 0.9
+    AE pretrain    : 5000 steps @ lr=0.001
+    Data reupload  : True
+    lr  ω/λθ/ξ/ψ  : 0.0001/0.0001/0.0003/0.0003
+    Shots (train)  : 1500
+    Seed           : 0
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  QC gradient : SPSA  n_reps=16  eps=0.1  (2048 circuits/update,  4x vs param-shift)
+  Rollout buf : 12 ep x 200 steps = 2400 transitions/PPO call
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  Environment feasibility probe  (R_LoS=0.2 km, D_k=0.1, λ_D=1.5)
+  ────────────────────────────────────────────────────────────────
+    Servable users (best link ≥ D_k) :  98.2%   ← QoS ceiling for ANY policy
+    QoS under Direct-only            :  41.0%   (Σ R_tot 0.72)
+    QoS under All-IRS                :  70.3%   (Σ R_tot 0.93)
+    Direct link blocked              :  59.0% of users
+    ✓ 98% servable → if agent QoS is below this, raising λ_D is safe & should help.
+  🎯 ① ORACLE ASSIGNMENT WARMUP: 8 rollout ep × 30 CE epochs on oracle routing (blocked→its-IRS) …
+      ① assign-warmup ep    3/30: match  78.2%
+      ① assign-warmup ep    6/30: match  96.1%
+      ① assign-warmup ep    9/30: match  99.7%
+      ① assign-warmup ep   12/30: match 100.0%
+      ① assign-warmup ep   15/30: match 100.0%
+      ① assign-warmup ep   18/30: match 100.0%
+      ① assign-warmup EARLY-STOP @ep 18 (match plateaued ~100.0% for 3 checks)
+    assignment warmup done: N=1600  per-user match 57.0%→100.0%
+  🌡 EXP-3 PHASE WARMUP: 8 rollout ep × 30 CE epochs on oracle_phase_idx targets on ORACLE routing (actors frozen) …
+      🌡 phase-warmup ep    3/30: CE 1.385  match  28.7%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep    6/30: CE 1.382  match  23.7%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep    9/30: CE 1.381  match  23.7%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep   12/30: CE 1.382  match  26.7%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep   15/30: CE 1.380  match  28.0%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep   18/30: CE 1.380  match  26.0%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep   21/30: CE 1.378  match  26.7%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep   24/30: CE 1.379  match  29.3%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep   27/30: CE 1.380  match  28.7%  (pre-escape: no early-stop)
+      🌡 phase-warmup ep   30/30: CE 1.381  match  24.7%  (pre-escape: no early-stop)
+    phase warmup done: N=1600  CE μ=2.498→1.378  per-IRS match 25.6%→27.2%
+    ⭐ post-warmup ckpt dumped → results/result_74/checkpoints/ep_00000 (probe with probe_assignment_decomp.py)
+  Warming up critic V(s) [fresh (random)  policy]: 24 rollout ep × 50 fit epochs (actors frozen) …
+    critic warm-up done: N=4800  return μ=+19.08 σ=7.76  V̄=+19.76  explVar=+0.63
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Ep     Reward  BestReward      L_pg       L_ae    L_phs     L_pw     L_ck        TD     R_tot   R/user    QoS/K    IRS/K    Blk/K    s/ep
+  ─────  ─────────  ──────────  ────────  ─────────  ───────  ───────  ───────  ────────  ────────  ───────  ───────  ───────  ───────  ──────
+*     1    227.880     227.880         —          —        —        —        —         —     1.444    0.289    4.5/5    2.9/5    2.7/5   23.4s
+*     2    249.717     249.717         —          —        —        —        —         —     1.505    0.301    4.7/5    2.9/5    2.9/5   26.1s
+      3    234.318     249.717         —          —        —        —        —         —     1.466    0.293    4.5/5    2.9/5    2.6/5   25.4s
+      4    202.072     249.717         —          —        —        —        —         —     1.425    0.285    4.4/5    2.9/5    2.8/5   22.6s
+      5    225.155     249.717         —          —        —        —        —         —     1.439    0.288    4.5/5    2.9/5    2.5/5   22.1s
+      6    218.075     249.717         —          —        —        —        —         —     1.411    0.282    4.4/5    2.8/5    2.6/5   22.1s
+*     7    252.205     252.205         —          —        —        —        —         —     1.469    0.294    4.6/5    2.9/5    2.7/5   26.6s
+      8    207.985     252.205         —          —        —        —        —         —     1.467    0.293    4.5/5    2.9/5    2.4/5   23.3s
+      9    200.632     252.205         —          —        —        —        —         —     1.412    0.282    4.3/5    2.9/5    2.5/5   24.7s
+     10     65.032     252.205         —          —        —        —        —         —     1.093    0.219    3.6/5    2.9/5    3.3/5   25.3s
+     11    174.659     252.205         —          —        —        —        —         —     1.352    0.270    4.3/5    2.8/5    2.7/5   24.6s
+  ┄ diag[12]  ‖∇‖ ae=2.46 qc=1.71 xi=0.95 ph=13.32 pw=6.68 ck=3.88 V=2.65
+            KL q=0.003 ph=0.010 pw=0.007 ck=0.008  │ ent q=0.948 ph=32.877 pw=6.719 ck=1.576
+            V̄=+19.73 σV=5.30 explVar=+0.76  │ λ|max| y=0.49 z=0.50  │ R̄=1.477 − qp 0.333
+  · ent/pg (β·H/|L_pg|): q=0.08 ph=1.62 pw=0.89 ck=0.11  ⚠ ENTROPY-DOMINATED (↓β)  │ adv-clip 0.0%
+  · pw axis (H/Hmax): split=99% common=54% private=83%  │ π_split(common)=57%
+  · λgrad: mag=8.89e-02 net=1.98e-02 r=0.22  (zero-mean noise→frozen [E])
+  · rolling-11: reward μ=   205.2  QoS μ=  88%  Rtot μ=1.41  │ best=252.2 (5 ep ago)
+  · behaviour: grp dir=2.1 irs=[2.9]  │ pwr wc=39% wp=61% (wp-top2=55%)  │ Ck tot=0.49 top=47% on 4.9/5
+  ┄ crit-diag[11]  preclip‖∇‖V μ=0.7 max=2.6 p75=0.8  clipfrac=0.0%  thresh=1000.0
+            grad/epoch: [   1.2    0.6    0.5    0.6    0.6    0.7]  e6/e1=0.57
+            corr(V,ret)=+0.881  bias=-0.109  resid_σ=2.567  explVar=+0.759
+            return: μ=+19.84  σ=5.23  p25=+17.81  p75=+23.61  skew=-1.44  kurt=+1.58
+            ‖ψ‖=44.30  W0=32.1  W1=23.3  W2=16.2  W3=11.3  W4=1.3
+            PopArt: μ=+19.15 σ=7.55  track(Δμ=0.69 Δσ=2.33)  POP|ΔV|max=3.6e-15 [OK]
+            acts: layer0(w=512: σ=0.73 dead=43%)  layer1(w=256: σ=0.37 dead=68%)  layer2(w=128: σ=0.31 dead=66%)  layer3(w=64: σ=0.28 dead=59%)
+            state σ: med_nonconst=2.33e-03  CoV=0.87  const=5/17(by-design) collapsed=1 [16]
+            bootstrap V-MC: μ=+0.969  σ=4.853  n_ep=12 n_tr=2400
+            EV by Blk: blk_0:-2.15(n=9) blk_1_3:+0.62(n=2256) blk_4_6:+0.67(n=135)
+            EV by σ²: s2_q1:+0.72(n=600) s2_q2:+0.75(n=600) s2_q3:+0.75(n=600) s2_q4:+0.80(n=600)
+            CSI gap (mean |g-ĝ|/|g|): SR=0.035  SU=0.040  RU=0.057
+     12    228.862     252.205    -0.011   8.17e+00   -0.019   -0.007   -0.013    0.0472     1.477    0.295    4.6/5    2.9/5    2.4/5  335.6s
+     13    241.674     252.205         —          —        —        —        —         —     1.448    0.290    4.6/5    2.9/5    2.5/5   25.6s
+     14    215.317     252.205         —          —        —        —        —         —     1.434    0.287    4.5/5    2.9/5    2.4/5   27.5s
+*    15    256.092     256.092         —          —        —        —        —         —     1.507    0.301    4.7/5    2.9/5    2.9/5   23.4s
+     16    234.798     256.092         —          —        —        —        —         —     1.447    0.289    4.5/5    2.9/5    2.6/5   26.0s
+     17    218.553     256.092         —          —        —        —        —         —     1.461    0.292    4.5/5    3.0/5    2.8/5   23.9s
+     18    -27.780     256.092         —          —        —        —        —         —     1.054    0.211    3.4/5    2.5/5    3.3/5   21.1s
+     19    210.612     256.092         —          —        —        —        —         —     1.397    0.279    4.4/5    2.8/5    2.2/5   21.1s

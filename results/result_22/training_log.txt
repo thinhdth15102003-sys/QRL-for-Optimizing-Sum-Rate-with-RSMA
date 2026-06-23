@@ -1,0 +1,171 @@
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Quantum AC Training  ·  IRS-assisted RSMA Satellite Comm.  ·  QC backend: GPU (CuPy)
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+SystemConfig
+  Topology  : K=10 users (fixed), M=2 IRS, N=24 elements/IRS
+  Power     : P_S=70.0 dBm (10000.00 W)
+  Frequency : 1.58 GHz,  satellite alt=800.0 km
+  Noise     : N(-30.0,10.0) dBW per-step  →  nominal σ²=1.00e-03 W
+  Phase     : 2-bit → levels=[0.     1.5708 3.1416 4.7124] rad
+  CSI error : multiplicative κ=0.05  (Δg = κ|g|ε, ε~CN(0,1))
+  QoS/Demand: D_k=0.1 bps/Hz (R_tot ≥ D_k), λ_D=1.5, ε=0.001
+  Geometry  : LoS radius=0.2 km, h_IRS=20 m (IRS on building rooftop)
+  Mobility  : speed=1.5 m/s, dt=1.0 s (1.5 m/step)
+  Blocking  : β_block=0.1, β_IRS=1.0, r_block=20 m
+  Path loss : IRS→user exponent=3.5, d0=10 m
+
+  Actor Pipeline  (4 stages per step)
+  ────────────────────────────────────────────────────────────────
+    1. Quantum IRS selection
+       State  : a_t ∈ R^44  =  10×(2+2)+2×2  (affinity ‖ D_k ‖ |g_SU|)
+       Encoder: 44 → B2-DualAE → 24  (z_t)  [IRS:4D + User:2×10D→P]
+       Decoder: 24 → 128 → 44  (AE regulariser)
+       QC     : 24-dim → 0 qubits (H+U_enc+U_var×0) → 0-dim  (o_hat)
+       Post-NN: 24 → 256 → 128 → 10×3 logits
+       Output : φ ∈ {0,…,2}^10  (3^10 combinations)
+    2. PhaseMLP  (IRS phase shifts — active IRS only)
+       State  : c^SRU_m ∈ R^54 per active IRS  ([Re+Im c^SRU(20) ‖ z_t(24) ‖ phi_mask(10)])
+       Net    : 54 → 64 → 128 → 256 → 128 → 96  (shared weights, N=24 elements/IRS, categorical)
+       Output : phase_idx ∈ {0..3}^{G×24}  (G ≤ 2 active IRS, expanded to 2×24)
+    3. PowerMLP  (power allocation)
+       State  : h_eff+z_t ∈ R^44  ([Re+Im h_eff(20) ‖ z_t(24)])
+       Net    : 44 → 128 → 128 → 64 → 15  softmax → ×P_S
+       Output : w_c_vec ∈ R^{G+1}  (per-group common, G≤2),  w_p ∈ R^10  (private)  [Σ=P_S]
+    4. CkMLP  (common-rate split)
+       State  : [D_k, R_p_k, R_c_g_k, shortfall_k, phi_k] ∈ R^50  (per user)
+       Net    : 50 → 128 → 128 → 64 → 32 → 10  within-group softmax → C_k
+       Output : C_k ∈ R^10  (Σ_{k∈g} C_k = R_c_g per group)
+
+  Critic  (State-Value MLP  V(s))
+    Input        : s_t (44)  =  44 total
+    Architecture : 44 → 512 → 256 → 128 → 64 → 1  (V)
+
+  Training plan
+    Episodes       : 13
+    Steps/episode  : 30
+    PPO epochs     : 6  (ε=0.2,  batch=64)
+    Total steps    : 390
+    γ (discount)   : 0.95
+    AE loss weight : 0.5
+    β entropy      : 0.001 → 0.0003  (anneal to 10% of training)
+    LR schedule    : warm-up 20% eps, then linear decay to ×0.25
+    GAE lambda (λ) : 0.9
+    AE pretrain    : 5000 steps @ lr=0.001
+    Data reupload  : True
+    lr  ω/λθ/ξ/ψ  : 0.0001/0.0001/0.0003/0.0003
+    Shots (train)  : 1500
+    Seed           : 0
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  QC gradient : SPSA  n_reps=16  eps=0.1  (2048 circuits/update,  0x vs param-shift)
+  Rollout buf : 12 ep x 30 steps = 360 transitions/PPO call
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  Environment feasibility probe  (R_LoS=0.2 km, D_k=0.1, λ_D=1.5)
+  ────────────────────────────────────────────────────────────────
+    Servable users (best link ≥ D_k) : 100.0%   ← QoS ceiling for ANY policy
+    QoS under Direct-only            : 100.0%   (Σ R_tot 1.72)
+    QoS under All-IRS                :  76.8%   (Σ R_tot 1.17)
+    Direct link blocked              :  70.6% of users
+    ✓ 100% servable → if agent QoS is below this, raising λ_D is safe & should help.
+  Warming up critic V(s) [fresh (random)  policy]: 24 rollout ep × 50 fit epochs (actors frozen) …
+    critic warm-up done: N=720  return μ=-28.23 σ=15.86  V̄=-32.38  explVar=+0.28
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Ep     Reward  BestReward      L_pg       L_ae    L_phs     L_pw     L_ck        TD     R_tot   R/user    QoS/K    IRS/K    Blk/K    s/ep
+  ─────  ─────────  ──────────  ────────  ─────────  ───────  ───────  ───────  ────────  ────────  ───────  ───────  ───────  ───────  ──────
+*     1    -67.324     -67.324         —          —        —        —        —         —     1.157    0.116   3.9/10   7.8/10   6.8/10    1.6s
+      2   -102.354     -67.324         —          —        —        —        —         —     1.465    0.146   3.8/10   7.5/10   6.4/10    1.8s
+      3    -87.829     -67.324         —          —        —        —        —         —     1.434    0.143   3.9/10   7.2/10   6.5/10    1.7s
+      4    -96.648     -67.324         —          —        —        —        —         —     1.358    0.136   3.6/10   7.4/10   6.3/10    1.8s
+      5    -75.222     -67.324         —          —        —        —        —         —     1.684    0.168   3.9/10   7.4/10   7.0/10    2.0s
+*     6    -43.211     -43.211         —          —        —        —        —         —     1.498    0.150   4.8/10   7.3/10   6.7/10    2.1s
+      7    -69.809     -43.211         —          —        —        —        —         —     1.536    0.154   4.3/10   7.4/10   6.0/10    1.8s
+      8    -64.999     -43.211         —          —        —        —        —         —     1.668    0.167   4.1/10   7.2/10   6.7/10    2.0s
+      9    -60.786     -43.211         —          —        —        —        —         —     1.397    0.140   4.6/10   7.2/10   6.6/10    2.0s
+     10    -52.885     -43.211         —          —        —        —        —         —     1.438    0.144   4.3/10   7.6/10   6.3/10    2.1s
+     11    -86.640     -43.211         —          —        —        —        —         —     1.457    0.146   3.8/10   7.2/10   6.5/10    2.0s
+  ┄ diag[12]  ‖∇‖ ae=0.00 qc=10.80 xi=0.00 ph=18.99 pw=4.21 ck=3.74 V=6.68
+            KL q=0.012 ph=0.023 pw=0.004 ck=0.003  │ ent q=6.506 ph=49.119 pw=16.996 ck=2.557
+            V̄=-34.08 σV=4.97 explVar=+0.17  │ λ|max| y=0.00 z=0.00  │ R̄=1.796 − qp 3.854
+  · ent/pg (β·H/|L_pg|): q=0.04 ph=0.16 pw=0.27 ck=0.04  │ adv-clip 0.0%
+  · pw axis (H/Hmax): split=98% common=60% private=62%  │ π_split(common)=57%
+  · λgrad: mag=0.00e+00 net=0.00e+00 r=0.00  (zero-mean noise→frozen [E])
+  · rolling-11: reward μ=   -73.4  QoS μ=  41%  Rtot μ=1.46  │ best=-43.2 (6 ep ago)
+  · behaviour: grp dir=2.6 irs=[3.3 4.1]  │ pwr wc=57% wp=43% (wp-top2=84%)  │ Ck tot=0.83 top=41% on 10.0/10
+  ┄ crit-diag[11]  preclip‖∇‖V μ=2.1 max=6.7 p75=2.9  clipfrac=0.0%  thresh=1000.0
+            grad/epoch: [   3.7    2.6    2.0    1.6    1.8    0.8]  e6/e1=0.21
+            corr(V,ret)=+0.517  bias=+2.769  resid_σ=5.482  explVar=+0.172
+            return: μ=-36.85  σ=6.02  p25=-40.92  p75=-32.90  skew=+0.08  kurt=+0.19
+            ‖ψ‖=43.99  W0=31.9  W1=22.9  W2=16.1  W3=11.3  W4=1.6
+            PopArt: μ=-29.09 σ=15.38  track(Δμ=7.75 Δσ=9.36)  POP|ΔV|max=7.1e-15 [OK]
+            acts: layer0(w=512: σ=0.78 dead=47%)  layer1(w=256: σ=0.64 dead=57%)  layer2(w=128: σ=0.60 dead=69%)  layer3(w=64: σ=0.62 dead=61%)
+            state σ: med_nonconst=2.10e-03  CoV=0.99  const=10/44(by-design) collapsed=2 [42, 43]
+            bootstrap V-MC: μ=-9.548  σ=12.018  n_ep=12 n_tr=360
+            EV by Blk: blk_4_6:-0.05(n=127) blk_7p:+0.12(n=233)
+            EV by σ²: s2_q1:+0.13(n=90) s2_q2:+0.20(n=90) s2_q3:+0.11(n=90) s2_q4:+0.24(n=90)
+            CSI gap (mean |g-ĝ|/|g|): SR=0.051  SU=0.040  RU=0.043
+     12    -61.723     -43.211    -0.046   0.00e+00   -0.094   -0.019   -0.020    0.0638     1.796    0.180   4.4/10   7.4/10   7.1/10   10.3s
+  ┄ diag[13]  ‖∇‖ ae=0.00 qc=11.94 xi=0.00 ph=19.16 pw=2.97 ck=5.71 V=19.04
+            KL q=0.000 ph=0.003 pw=0.000 ck=0.000  │ ent q=6.424 ph=49.820 pw=9.835 ck=2.663
+            V̄=-39.42 σV=4.84 explVar=-0.00  │ λ|max| y=0.00 z=0.00  │ R̄=1.323 − qp 5.698
+  · ent/pg (β·H/|L_pg|): q=0.10 ph=0.31 pw=0.67 ck=0.12  │ adv-clip 0.0%
+  · pw axis (H/Hmax): split=98% common=46% private=34%  │ π_split(common)=57%
+  · λgrad: mag=0.00e+00 net=0.00e+00 r=0.00  (zero-mean noise→frozen [E])
+  · rolling-12: reward μ=   -72.5  QoS μ=  41%  Rtot μ=1.49  │ best=-43.2 (7 ep ago)
+  · behaviour: grp dir=2.8 irs=[2.9 4.3]  │ pwr wc=57% wp=43% (wp-top2=88%)  │ Ck tot=0.54 top=42% on 9.9/10
+  ┄ crit-diag[12]  preclip‖∇‖V μ=10.0 max=19.0 p75=15.6  clipfrac=0.0%  thresh=1000.0
+            grad/epoch: [  19.0   16.6   12.5    7.5    3.4    0.6]  e6/e1=0.03
+            corr(V,ret)=+0.416  bias=+13.074  resid_σ=5.801  explVar=-0.003
+            return: μ=-52.49  σ=5.79  p25=-57.16  p75=-47.24  skew=+0.55  kurt=-1.22
+            ‖ψ‖=43.98  W0=31.9  W1=22.9  W2=16.1  W3=11.3  W4=1.5
+            PopArt: μ=-31.43 σ=16.30  track(Δμ=21.06 Δσ=10.50)  POP|ΔV|max=7.1e-15 [OK]
+            acts: layer0(w=512: σ=0.78 dead=47%)  layer1(w=256: σ=0.66 dead=58%)  layer2(w=128: σ=0.65 dead=70%)  layer3(w=64: σ=0.68 dead=64%)
+            state σ: med_nonconst=3.95e-04  CoV=0.44  const=12/44(by-design) collapsed=0 []
+            bootstrap V-MC: μ=+2.667  σ=18.365  n_ep=1 n_tr=30
+            EV by Blk: blk_4_6:-1.13(n=6) blk_7p:-0.11(n=24)
+            EV by σ²: s2_q1:-0.03(n=8) s2_q2:-1.09(n=7) s2_q3:+0.04(n=7) s2_q4:+0.32(n=8)
+            CSI gap (mean |g-ĝ|/|g|): SR=0.030  SU=0.059  RU=0.039
+     13   -131.242     -43.211    -0.019   0.00e+00   -0.048   -0.004   -0.007    0.1921     1.323    0.132   3.1/10   7.2/10   6.8/10    3.1s
+
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Training complete in 0.6 min  (2.6 s/ep)
+  Final 10-ep avg reward   : -74.3164
+  Final feasibility rate   : 0.0%
+  Final avg Σ R_tot        : 1.5156 bps/Hz  (0.1516 bps/Hz/user)
+  Final avg QoS fraction   : 40.9%
+
+  ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  ANALYSIS SUMMARY  (tail window = last 10 ep)
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    reward  tail=   -74.3   best=   -43.2 @ep 6   ⚠ PLATEAUED (no new best in last 20%)
+    rates   ΣR_tot= 1.516   QoS=40.9%   qp_penalty= 0.955
+    health  explVar=+0.02   clip_q=0.02   divergence-signals=0
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Recommendations for next run:
+    • explVar low (+0.02) → critic struggling: ↑lr_critic or ↓reward variance (↑reward_noise_avg)
+    • plateaued → raise difficulty (R_LoS) via --resume, or stop
+  ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Results  →  /mnt/c/Project/IRS-assisted RSMA Quantum-RL/results/result_22
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  hyperparameters.json   — all params for this run
+  metrics.npz            — raw episode arrays (reload with np.load)
+  training_log.txt       — full CLI output from this run
+  agents/                — final actor weights (load with infer.py)
+  best/                  — best-reward snapshot (overwrites on improvement)
+  checkpoints/ep_XXXXX/  — periodic snapshots every 100 ep (0 total)
+  reward_curve.png           — performance plot
+  losses.png                 — performance plot
+  feasibility.png            — performance plot
+  quantum_stats.png          — performance plot
+  sub_actor_losses.png       — performance plot
+  rates.png                  — performance plot
+  summary.png                — performance plot
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+

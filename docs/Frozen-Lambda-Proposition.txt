@@ -776,3 +776,5 @@
     4. Anchor ckpt = ep_01400 for now; re-anchor when full-curriculum ckpt available.
     5. Optional later: re-run T4 on full-curriculum ckpt to refresh numbers.
 ================================================================================
+
+phân tích 1 về IRS-capacity, ở đây mình đã có 2 hướng là B_rate và B_QoS với 2 điều kiện khác nhau như bạn đã làm, công thức N*_min cũng đã được rút nhưng đây là chỉ là 1 hyper, mình muốn xem mối quan hệ giữa B* và các hyper các, nếu kết quả ví dụ như là level P_S cao tức là hyper này có thể extend IRS-group-capa hoặc rút theo C_k thì sẽ là policy này là cách tốt nhất (mình thấy C_k sẽ quan trọng vì nó là var cuối cùng được quyết định và vì cơ cấu RSMA nên group càng lớn thì càng extreme), nhưng quan trọng nhất vẫn là 1 bức tranh tổng thể, thêm 1 điều nữa là mình cần công thức theo 2 dạng là QoS serve all và drop-percent. Tóm lại mình cần 2 công thức B_rate và B_QoS theo các biến, ở đây quan trọng nhất là P_S và C_k và N. Ban làm 

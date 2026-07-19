@@ -4,7 +4,22 @@
   Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
   Bài học gốc kế thừa từ Case 1 → Training-Case-1.txt.
   File này: setup Case 2 + BẢNG TÓM TẮT RUN (dưới) + nhật ký chi tiết (L1-L14 cuối file).
-  Trạng thái: R_LoS=0.2 arch-2 stable, ramp 2/3/EXP/D_k đã chạy + xong. Cập nhật: 2026-06-06
+  Trạng thái: R_LoS=0.2 arch-2 stable, ramp 2/3/EXP/D_k đã chạy + xong.
+  Cập nhật: 2026-06-29 (⭐⭐⭐ r90 VQC-AE CONVERGED-INFER LẬT KÈO "parity ~92%": ep_01900 greedy 50ep seed42 → QoS 96.8% / ΣRate 1.5093
+                  / +9.9% rate vs Greedy(1.3736,91.8%) → Pareto-DOMINATE Greedy CẢ 2 trục (+5.0pp QoS & +9.9% rate, serve-all α0.9).
+                  ⟹ AE 96.8% = DNN r53 96.8% ĐÚNG BẰNG (gap 0.0pp) & VƯỢT no-ae r83 92.5% (+4.3pp). Handoff-06-28
+                  "AE≈no-ae parity 92%, cả 2 <DNN 4.5pp" SAI vì viết lúc r90 mới ep469; converged ep1900 = NGANG HỆT DNN solver.
+                  (best/ep1637=96.1% < ep1900=96.8% vì critic firm-up muộn: reward-best≠QoS-best.) ⚠ CONFOUND: AE phase-warmup→95%
+                  vs no-ae cap 40% → +4.3pp có thể là AE-rep HOẶC phase-warmup-quality, CHƯA tách; single seed. → cần no-ae+phase-warmup-tốt tách confound.
+                  PHASE probe: alignment 99.4%(ep0)→97.8%(ep1637) median 100% = PPO churning LATERAL trong basin (KL_ph to cosmetic). trước đó 2026-06-28: ⭐⭐ A1 INFER (greedy 50ep seed42): VQC-no-ae r83 (clean α0.9) 92.5% ≈ r66 (no-clean α0.95) 92.1%
+                  → POWER-CLEAN *KHÔNG* GIÚP Case-2 (3× confirm: train-A/B r83-r73 + infer r83-r66; clean = Case-1/low-α lever only,
+                  vì α-cao ép equal-split nên Power ko cần discriminate). DNN r53 96.8% > VQC-no-ae ~92% = gap ~4.5pp STRUCTURAL
+                  (extraction-cost; --shots 1500→6000 KO cứu → ko phải measurement-noise mà là learnability).
+                  ⭐ r90 = VQC-AE (α0.9, oracle-warmup + phase-warmup→HIT 95%): PPO climbing ~92% (pending converge). AE phase-warmup
+                  CHẠM 95.7% vs no-ae cap ~40% (o_hat nhiễu) = clean AE-advantage cho PHASE rep — [⚠ SUPERSEDED 06-29: "phase NON-BINDING →
+                  QoS PARITY ~92%" SAI — r90 converged-infer = 96.1% > no-ae 92.5%; AE-rep/phase-warmup DOES lift QoS]. param IDENTICAL @inference (xem Common-Knowledge).
+                  ⭐⭐⭐ serve-all↔adaptive = full-③ POWER-FAIRNESS α (xem Common-Knowledge 06-28); META: hyperparameters.json actor_mode
+                  UNRELIABLE (r53 hiện "quantum" nq=0 nhưng LÀ DNN) → dùng actor_config `mode`+n_qubits. trước đó 2026-06-06
                   Result paths moved: results/result_N → results/Training-Case 2/result_N
                   (cleanup 2026-06-06: kept r8/11/12/13/14/15/18; deleted redundant + ghosts).
 --------------------------------------------------------------------------------
@@ -148,6 +163,47 @@
     **α-KHÔNG-λ_D** (probe: @λ1.5 reward-optimal đã là β=0 → λ_D đủ cao rồi; gap là agent-ko-tới-được = optimization, α ép thẳng, ko [K]).
     ⟹ RECIPE CASE-2 SOLVED: full-③ **α0.95** + oracle-warmup + ck-fix → **97%**. phase-warmup quality gần như VÔ CAN với trần (α lo QoS).
     ⚠ HỆ QUẢ: mọi plateau-62% trước (r35/43/47/49/r52) = α-too-low artifact, KHÔNG phải capacity. VQC cũng cần α0.95 (chưa test).
+  ⭐⭐⭐ result_90 (đĩa results/result_90) VQC-AE + α=0.90 FRESH + oracle-warmup + phase-warmup→95% [2026-06-29, RUNNING ep~1671/4000, still climbing]:
+    Cmd: FRESH (AE-pretrain) + `--oracle-warmup --phase-warmup-target 95 --phase-warmup-episodes 16 --phase-warmup-epochs 4000` + ③ α0.90, R_LoS0.2 λ1.5 gae0.9 K10M2 P50.
+    TRAIN: QoS μ leo đều 92→97% (sampled), PLATEAU @ep~1733 (best reward 306.6 stuck; QoS μ 96%, R_tot 1.49-1.50 phẳng). critic FIRM-UP muộn (explVar wobble 0.24-0.64 @ep1671 → stable 0.53-0.63 @ep1900).
+    ⭐⭐ INFER (greedy 50ep seed42) — ckpt MUỘN > reward-best (reward-best≠QoS-best vì critic firm muộn):
+      best/(ep~1637, critic-wobble): QoS 96.1% / ΣRate 1.5011 / Feas 70.8%
+      ⭐ ep_01900 (converged, critic firm): **QoS 96.8% / ΣRate 1.5093 / Feas 75.7% / +9.9% rate vs Greedy(1.3736,91.8%)** → Pareto-DOMINATE Greedy cả 2 trục (+5.0pp QoS & +9.9% rate, serve-all α0.9). Đập baselines (AllIRS 0.548/31%, Direct 0.669/38%).
+    ⭐⭐⭐ **AE ep1900 96.8% = DNN r53 96.8% ĐÚNG BẰNG (gap 0.0pp) & > no-ae r83 92.5% (+4.3pp)** → LẬT KÈO handoff-06-28 "AE≈no-ae parity 92%, cả 2 <DNN 4.5pp".
+    Handoff sai vì viết lúc r90 mới ep469 (~92%); converged ep1900 = 96.8% NGANG HỆT DNN solver. ⟹ C3 AE-VQC POSITIVE cho QoS (ko chỉ param-eff); VQC-AE đạt task-parity với DNN @Case-2.
+    ⚠ CONFOUND: AE phase-warmup→95% vs no-ae r83 cap 40% → +4.3pp = AE-rep HOẶC phase-warmup-quality, CHƯA tách; single seed.
+    ⭐ PHASE probe (post-warmup ep0 vs ep1637): alignment 99.4%→97.8% (median 100%) = PPO churning LATERAL trong basin tối-ưu (KL_ph 3-4.6 cosmetic; phase parked ~optimal, non-binding QoS + weakly-binding rate giữ basin). R_tot ổn định khớp.
+    Critic borderline-OK (explVar 0.27→0.47-0.50 wobble ~threshold, serve-all→low return-var), heads: q committing(1.21→0.68), phase very-converged(9.9→3.5 nhưng KL_ph 3-4.6+‖∇ph‖214-295 churning, non-binding benign), power α0.9 uniform(wc22/wp78), ck ok. IRS Σ≈7≈Blk6 [N]. λ moving y0.40 z0.51.
+    → ACTION: KEEP train tới plateau → RE-INFER chốt số cuối; chạy no-ae+phase-warmup-tốt để TÁCH confound (AE-rep vs phase-quality).
+    ⭐ UPDATE 06-29: r90 ep1900→ep2700 = QoS 96.8% Y HỆT (rate 1.509→1.524 +0.9%) — train thêm + KL↓ (KL_q 0.009→0.003, KL_ph 9.8→0.5 phase churn lắng) = SETTLE policy KHÔNG nâng performance (ceiling khoá).
+  ⭐⭐⭐ result_95 (đĩa results/result_95) DNN BASELINE UNIFIED-METHOD [2026-06-29, DONE ep2000] — A1 task-parity:
+    Cmd: `--actor-mode classical` + ③α0.9 full-③ + oracle-warmup + phase-warmup→95 + ck-fix(default), R_LoS0.2 λ1.5 K10M2 P50, FRESH (AE-enc + MLP head). = KHỚP HỆT r90 chỉ khác ACTOR → A1 apples-to-apples.
+    Converged QoS μ 95% sampled, R_tot 1.48, best 307.0 (no drift). INFER ep_02000 (greedy 50ep seed42): **QoS 96.5% / ΣRate 1.5093 / Feas 73.6%**.
+    ⭐⭐ A1 CASE-2 (unified, FAIR cùng-budget ep2000 cả hai): **VQC-AE r90 96.8%/1.512 ≈ DNN r95 96.5%/1.509 = TASK-PARITY** (chênh +0.3pp QoS/+0.2% rate trong noise), cả 2 Pareto-dominate Greedy (91.8%/1.374). (VQC ep1900/2000/2700 đều 96.8% = plateau, train thêm chỉ settle KL.)
+    ⟹ "gap −4.7pp extraction-cost" (DNN r53 vs no-ae r66) = **artifact no-ae**, AE khử → honest-prior PQC≈DNN XÁC NHẬN; câu chuyện paper = PARAM-EFF (decision-core 144 vs 43K = 300×) KHÔNG task-advantage. (supersede current-report DNN-r53/VQC-r66 cũ.)
+  ⭐⭐⭐ CURRICULUM CHAIN + A1 (correct-env, greedy seed42) [2026-06-29, sau infer.py ENV-FIX]:
+    ⚠ INFER.PY BUG-FIX (detail memory [[infer-env-fix-2026-06-29]]): load_training_cfg cũ để R_LoS+radius rơi về params.py ramp0.2 → infer curriculum (ramp≠0.2/unlock) SAI env (Greedy/AllIRS giống hệt mọi ramp = tell-tale). FIX: auto-đọc từ hyperparameters.json + CLI --R-LoS/--irs-spawn-frac/--user-free-frac + in "⚙ eval env:". Bug PHÓNG ĐẠI curriculum-cost.
+    DNN chain: r95(0.2)→r97/r98(0.3)→r100(0.4)→r101(0.5+FULL-UNLOCK radius 1.0/1.0). VQC chain: r90(0.2)→r99(0.3)→r103(0.4)→[0.5+unlock launched 07-04].
+    Post-fix numbers: ramp0.2 VQC 96.8%/1.512 ≈ DNN 96.5%/1.509 · ramp0.3 FINAL ep2000: VQC r99 **96.8%/1.530** > DNN r98 **95.8%/1.521** (+1.0pp; @ep1200 là 96.5 vs 95.1; DNN ep1200→2000 +0.7pp) · ramp0.5+unlock DNN r101 **95.3%/1.518** (VQC unlock launched 07-04 ←r103/ep2000, mirror r101).
+    ⭐ [07-04] RAMP0.4 PAIR KHÉP (infer ep_02000 greedy 50ep s42, ⚙env R_LoS=0.4 verified): VQC r103 **97.0%/1.5326** (rew 297.8, feas 80.3) > DNN r100 **96.1%/1.5266** (rew 289.3, feas 73.6) — +0.9pp, đúng pattern parity-VQC-nhỉnh MỌI cặp. r103 training sampled 98.5-98.8% phẳng suốt 2000ep (resume r99 không drift). Greedy @0.4: 92.0%/1.3748.
+    ⭐ **DNN ROBUST cả curriculum 96.5→95.1→95.3%** (giữ ~95% tới full-unlock; số SAI-env cũ tưởng tụt 93.9%). Task-parity giữ, VQC≈/nhỉnh DNN. Cả 2 Pareto-dominate Greedy mọi setting.
+    r101 = FRESH setting KHÓ NHẤT (ramp0.5 + radius unlock 0.667/0.4→1.0/1.0 cùng lúc, resume r100): big-jump KHÔNG collapse, QoS sampled giữ 98%, best hit ep64 unbeaten (policy ~optimal on resume). ck grad-explosion benign (full-③). critic wobble benign (serve-all).
+  ⭐⭐ READOUT LADDER C2 (K10/M2) — batch r125/127/129/130 → r131/132/133 + R1=r90 [2026-07-15→17, NEW-CODE CSI-split]:
+    Batch 4 FRESH (recipe r90-canonical + phase-warmup-target 99, seed 0, geometry 1/1, new-code): r125(R1) / r127(single-z) /
+    r129(nn-zz) / r130(full-zz) → ⚠ Windows-update REBOOT giết cả 4 sau warmup (chỉ còn ep_00000 post-warmup ckpt).
+    RESUME giữ readout từ actor_config của ckpt (QuantumActor.from_dir; --readout bị IGNORE khi resume — by design, đã verify):
+    r131←r129(nn-zz) · r132←r130(full-zz) · r133←r127(single-z, DONE ep2000 07-19) · r134←r125(R1-matched, RUNNING 07-18→19).
+    ⭐ INFER ep_02000 greedy 50ep s42 (⚙ R_LoS0.2 · 1/1 · α0.9): nn-zz r131 **1.5072/96.5%** (feas 73.8) · full-zz r132
+    **1.5012/95.5%** (feas 67.1); Greedy control TRÙNG HỆT 2 run (1.3754/92.0%) = so sánh sạch.
+    ⭐ R1 point = r90/ep_02000 RE-INFER (old-code, native 0.667/0.4, target95): **1.5120/96.8%** (feas 75.9); Greedy 1.3746/91.9%
+    ≈ control mới (<0.1%) → env-difficulty tương đương. ⚠ PROVISIONAL: 3 confound (old-code + confined-geo + target95) > span
+    C2 0.7% → matched-R1 = resume r125/ep_00000 nếu cần chốt thứ hạng.
+    ⭐ [07-19] single-z r133/ep_02000 INFER: **1.5025/97.1%** (feas 77.7); Greedy control 1.3754/92.0 TRÙNG HỆT → sạch.
+    ⭐ [07-19] R1-MATCHED r134/ep_02000 INFER: **1.5017/96.8%** (feas 75.3); Greedy 1.3754/92.0 TRÙNG HỆT → THAY r90 provisional.
+    ⟹ ⭐ LADDER C2 CLOSED — 4/4 MATCHED (new-code · 1/1 · target99 · seed0 · resume-from-warmup, HẾT 3-confound):
+    single-z 1.5025/97.1 (QoS #1) · nn-zz 1.5072/96.5 (rate #1) · full-zz 1.5012/95.5 (chót) · R1 1.5017/96.8 (rate #3).
+    Span 0.4% — R1 provisional r90 1.5120 từng đứng #1 = artifact old-code/confined-geo; matched thì R1 KHÔNG top →
+    "no systematic gain from richer/structured observables" VỮNG cả 2 case (8/8). KHÔNG claim "hurts" (single-seed).
   ⚠ result_70 (đĩa results/result_70) VQC NO-AE + α=0.50 (resume r61/ep_00000 no-ae chain), R_LoS0.2 P50 λ1.5 gae0.9 [2026-06-23, RUNNING ~ep301/4000]:
     Cmd = no-ae + phase-warmup(early-stop@ep10, match 92.2%) + ③ α=**0.50** (KHÔNG phải 0.95). ⚠⚠ ĐÚNG α-too-low artifact:
     QoS μ 62→56% (drift xuống nửa sau), best reward 287.7@ep111 unbeaten 189ep, L_pg≈0 = PLATEAU [D] ~60%. KHÔNG phải ceiling
@@ -157,6 +213,13 @@
     ⭐ ROOT = POWER α-too-low: wc40/wp60 (KHÔNG equal), ent_pw RỘNG dần 8→19 (spread, ko concentrate). | LIMITATION = α=0.5 (gap power).
     → ACTION: resume `--power-fairness 0.95 --no-ae` (= VQC test ĐẦU TIÊN của α0.95 solver, "chưa test"; α≠λ_D resume-safe, post-ck-fix
     high-α validated r47/r53). Kỳ vọng QoS leo 76-97%. Watch ent_ck dưới high-α. (no-ae chain r56-r66 vẫn CHƯA persist — xem handoff TO PERSIST.)
+  ⭐ result_73 (đĩa results/result_73) VQC NO-AE + α=0.90 (resume r61/ep_00000, phase-warmup 99.6%), R_LoS0.2 P50 λ1.5 gae0.9 [2026-06-24, RUNNING ~ep1115/4000]:
+    QoS mean **89→91%** (rolling 90%, climb chậm), committed (ent_q~1.2 ent_ph~3, **KL_q 0.006 = PPO ĐỒNG Ý commit**), critic khoẻ (explVar 0.62-0.78),
+    ③ α0.9 active (wp76/wc24 equal), ent_pw↑13.6, irs≈7≈Blk6 [N], λ frozen z0.54 benign. infer (50ep) ~? — r66 α0.95 cùng band 90-92%.
+    ⭐⭐ **PER-EP ROBUSTNESS LÀ METRIC ĐÚNG (không mean/best)**: đo phân bố 1115ep → QoS p10-floor **8.0→8.3**, min **6.1→6.8**, reward-p10 **18→66**
+    qua 3 thirds = đuôi xấu CO LẠI, robustness ĐANG LÊN. best-reward 299 unbeaten 93ep = **MISLEADING** (ceiling phẳng, floor mới là tín hiệu sống).
+    → ACTION: **KEEP**, watch **p10/min QoS floor** chứ KHÔNG best-reward. Floor kẹt 8.3 → đuôi VQC-extraction (lever **n_shots↑**, KHÔNG α). | LIMITATION =
+    đuôi ~8-10% spawn cứng (QoS floor ~68% vs oracle 99.8%) = VQC opt/extraction gap (per-ep brittleness), KHÔNG phải α/critic. α0.9 ≈ α0.95 cho mean.
   ⚠⚠ result_48 (đĩa results/result_48) FRESH + FULL-③ + oracle-warmup [2026-06-19, KILLED ep~1300, dominated by r49] — PHASE-LIMITED:
     Cmd: FRESH (no resume) + `--oracle-warmup` + `--power-fairness 0.6` (FULL-③ mới: blend split+common+private), λ1.5 gae0.9 K10M2 P50.
     ⭐ FULL-③ VALIDATED ACTIVE: behaviour wp=61%/wc=39% (= đúng full-③ α0.6, KHÁC old-③ wc-heavy). assign-warmup 97.8%

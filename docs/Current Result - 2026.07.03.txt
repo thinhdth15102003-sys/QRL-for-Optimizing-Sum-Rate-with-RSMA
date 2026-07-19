@@ -1,0 +1,165 @@
+================================================================================
+  STATUS REPORT — HQC-HAC vs baselines  (3 cases)
+================================================================================
+
+
+================================================================================
+#  SHARED PARAMETERS  (common to all 3 cases — change ONLY K and M per case)
+================================================================================
+
+  ── Architecture (HQC-HAC / AE-VQC) ──────────────────────────────────────────
+    AE encoder      : classical enc hidden (128,) → latent z_t, n_latent = 24
+    VQC actor       : n_qubits = 12, latent encode + data re-uploading,
+                      depth = n_var_layers (per-case), SoftmaxPQC readout
+                      → handles the (M+1)^K assignment action
+    Post-NN         : [256, 128]
+    Sub-actors      : PhaseMLP [64,128,256,128] · PowerMLP [128,128,64]
+                      · CkMLP [128,128,64,32]
+    Critic          : [512,256,128,64] + PopArt value normalisation
+
+  ── RL / training (shared) ───────────────────────────────────────────────────
+    Algorithm       : on-policy PPO (clip) + GAE (λ = 0.9) + entropy bonus
+    Rollout         : n_rollout_episodes = 12 per PPO update
+    Entropy β       : 0.001 → 0.0003, annealed by 10% of episodes
+    Critic          : lr = 3e-4, target_tau = 0.02, cold-start warm-up
+                      (16 ep × 50 epochs) before PPO
+    Reward          : D_k = 0.10 bps/Hz QoS demand, λ_D = 1.5 (per-ramp knob),
+                      reward_noise_avg = 16
+    Phase           : 2-bit quantisation (L = 4 levels per IRS)
+    Curriculum      : R_LoS ramp 0.2 → 0.5 (blockage hardens as ramp rises)
+
+  ── Per-case knobs (K-tier auto-derived) ─────────────────────────────────────
+    Case | K  | M | P_S(dBm) | n_var_layers (D_enc) | n_hidden_ae
+    -----+----+---+----------+----------------------+------------------
+      1  |  5 | 1 |    50    |          2           | [32]
+      2  | 10 | 2 |    50    |          3           | [128, 64]
+      3  | 15 | 3 |    50    |          5           | [256, 128, 64]
+
+
+################################################################################
+#  CASE 1  ·  K=5, M=1, P_S=50 dBm
+################################################################################
+
+  Recipe: critic warm-up · power-fairness α=0.5 · λ_D=1.5 ·
+          NO oracle-warmup (phase non-binding @K=5) · ck-fix · curriculum ramp 0.2→0.5 (both actors).
+
+  Inference (greedy, 50 ep × 200 step, seed 42; eval env R_LoS 0.3 · radius 1.0/1.0 FORCED
+  for BOTH spawn fracs; α = 0.50 restored). SAME checkpoint ep_01000 for a like-for-like pair (Not change):
+    Policy        |     Reward | ΣRate(bps/Hz) | Feas  | QoS frac
+    --------------+------------+---------------+-------+----------
+    VQC           |   357.767  |     1.7918    | 96.3% |  99.1%
+    DNN           |   358.286  |     1.7998    | 89.6% |  97.8%
+    Greedy        |   295.257  |     1.5058    | 92.4% |  98.3%
+    AllIRS        |  -353.760  |     0.7523    |  0.9% |  59.0%
+    DirectOnly    |  -133.535  |     0.8280    |  5.9% |  50.8%
+    Random        |  -412.137  |     0.5704    |  5.5% |  31.4%
+
+  ── N-SWEEP (VQC, ramp-0.2 unlock — effect of reflection-element count N) ────────
+  Fixed recipe: VQC · K5/M1 · ramp-0.2 · unlock 1/1 · α=0.5 · λ_D=1.5 · P_S=50 dBm; vary ONLY N.
+  Inference greedy 50 ep × 200 step, seed 42, ep_02000, spawn 1/1 forced (New training with variety of IRS-element N)
+
+    N   | run   |  Reward | ΣRate  | Feas  | QoS   | Greedy ΣRate/QoS | agent−Greedy rate
+    ----+-------+---------+--------+-------+-------+------------------+------------------
+    20  | r112  | 341.305 | 1.7141 | 97.3% | 99.4% |  1.4709 / 96.2%  |  +16.5%
+    24  | r108  | 348.648 | 1.7465 | 98.3% | 99.7% |  1.5062 / 98.3%  |  +16.0%
+    28  | r114  | 349.076 | 1.7483 | 98.8% | 99.8% |  1.5225 / 98.6%  |  +14.8%
+    32  | r115  | 338.873 | 1.7064 | 97.6% | 99.5% |  1.5069 / 98.3%  |  +13.2%
+    36  | r116  | 350.078 | 1.7529 | 98.2% | 99.6% |  1.5131 / 97.6%  |  +15.8%
+  → N32 dip DIAGNOSED (2026-07-10) = TRAINING-RUN VARIANCE, not physical/undertrained: ckpt-sweep
+    ep1800/1900/2000 all 1.71-1.72 (own plateau, slope +0.001/100ep); eval-seed band ±0.2% ≪ gap 2.4%;
+    mid-run detour ~ep1000-1250 → lower basin. N36>N28>N24 = no ceiling at 32. (logs analysis/data/nsweep_c1/)
+
+  ── P_S-SWEEP (VQC, ramp-0.2 unlock — effect of satellite power P_S) ─────────────
+  Fixed recipe: VQC · K5/M1 · ramp-0.2 · unlock 1/1 · α=0.5 · λ_D=1.5 · N=24; vary ONLY P_S (fresh train per point).
+  Inference greedy 50 ep × 200 step, seed 42, ep_02000, spawn 1/1 forced.
+
+    P_S | run   |  Reward | ΣRate  | Feas  | QoS   | Greedy ΣRate/QoS
+    ----+-------+---------+--------+-------+-------+------------------
+    30  | ...   |    —    |   —    |   —   |   —   |     — / —          (pending)
+    40  | ...   |    —    |   —    |   —   |   —   |     — / —          (pending)
+    50  | r108  | 348.648 | 1.7465 | 98.3% | 99.7% |  1.5062 / 98.3%
+    60  | ...   |    —    |   —    |   —   |   —   |     — / —          (pending)
+
+  ── NOISE-SWEEP (VQC, zero-shot infer — CSI error κ + receiver noise) ────────────
+  Fixed recipe: VQC · K5/M1 · ramp-0.2 · unlock 1/1 · α=0.5 · λ_D=1.5 · N=24 (trained @ κ0.05/nv10).
+  Inference greedy 50 ep × 200 step, seed 42, ep_02000; test-time --kappa / --noise-var override (no retrain).
+
+    Noise level     |  Reward | ΣRate  | Feas  | QoS   | Greedy QoS
+    ----------------+---------+--------+-------+-------+-----------
+    base κ.05/nv10  |    —    |   —    |   —   |   —   |    —        (pending)
+    κ = 0.10        |    —    |   —    |   —   |   —   |    —        (pending)
+    κ = 0.20        |    —    |   —    |   —   |   —   |    —        (pending)
+    nv = 13         |    —    |   —    |   —   |   —   |    —        (pending)
+    nv = 16         |    —    |   —    |   —   |   —   |    —        (pending)
+
+
+################################################################################
+#  CASE 2  ·  K=10, M=2, P_S=50 dBm
+################################################################################
+  Recipe: critic warm-up · oracle warm-up (dual, VQC Q-head) · full-③ power-fairness α=0.9 ·
+          λ_D=1.5 · ck-fix (_ck_group_softmax) · curriculum ramp 0.2→0.5 (both actors).
+
+  ── FULL-UNLOCK (ramp-0.5 · irs-spawn-frac 1.0 · user-free-frac 1.0) — A1 CLOSING PAIR ──
+  VQC checkpoint : result_110 / ep_01600  (ramp-0.5 + full-unlock, resumed r103/ep_02000;
+                   unified recipe α = 0.9 · λ_D = 1.5 · ck-fix · 12-qubit SoftmaxPQC)
+  DNN checkpoint : result_101 / ep_01900  (sibling, --actor-mode classical; same env/α/λ_D)
+
+  Inference (greedy, 50 ep × 200 step, seed 42, eval env R_LoS 0.5 · radius 1.0/1.0;
+  α = 0.90 restored — env-verified. Baseline rows from the VQC-run env draw; the DNN run's
+  own baselines are identical in QoS/rate to within RNG noise, ≤0.6% reward) (Updated since last results):
+
+    Policy        |     Reward | ΣRate(bps/Hz) | QoS frac
+    --------------+------------+---------------+-----------+
+    VQC           |   294.912  |     1.5300    |  97.3%   
+    DNN           |   280.033  |     1.5181    |  95.4%  
+    Greedy        |   215.279  |     1.3752    |  92.0%
+    AllIRS        | -1852.630  |     0.3871    |  27.2%
+    DirectOnly    |  -990.090  |     0.6867    |  39.4%
+    Random        | -1938.942  |     0.3037    |   7.6%
+
+  ── NOISE-SWEEP (VQC, zero-shot infer — CSI error κ + receiver noise) ────────────
+  Fixed recipe: VQC · result_110/ep_01600 · ramp-0.5 full-unlock · α=0.9 · λ_D=1.5 (trained @ κ0.05/nv10).
+  Inference greedy 50 ep × 200 step, seed 42; test-time --kappa / --noise-var override (no retrain).
+
+    Noise level     | ΣRate  | Feas  | QoS   | Greedy QoS
+    ----------------+--------+-------+-------+-----------
+    base κ.05/nv10  | 1.5300 | 81.2% | 97.3% |  92.0%     (= A1 row, reproduced)
+    κ = 0.10        | 1.5291 | 80.6% | 97.2% |  91.9%
+    κ = 0.20        | 1.5263 | 78.3% | 97.0% |  91.6%
+    nv = 13         | 1.5270 | 78.7% | 96.8% |  91.4%
+    nv = 16         | 1.5241 | 76.3% | 96.3% |  90.8%
+  → Graceful: κ0.05→0.20 QoS −0.3pp / ΣRate −0.2%; nv10→16 QoS −1.0pp. HQC-HAC keeps ~+5pp QoS over Greedy throughout.
+
+  ── READOUT-DESIGN LADDER (C2 half · tab:abl_readout) [2026-07-17] ──────────────
+  Recipe r90-canonical (α=0.9 · oracle-warmup · ramp0.2 · seed 0); r131/132 = NEW-code (CSI-split),
+  geometry 1/1, resume từ post-warmup ckpt (r129/r130). Inference greedy 50 ep × 200 step, seed 42.
+
+    Readout (|ô|)   | run                  | ΣRate  | Feas  | QoS   | Greedy (control)
+    ----------------+----------------------+--------+-------+-------+------------------
+    single-Z (12)   | result_133/ep_02000  | 1.5025 | 77.7% | 97.1% | 1.3754 / 92.0%
+    Z+NN-ZZ (23)    | result_131           | 1.5072 | 73.8% | 96.5% | 1.3754 / 92.0%
+    Z+full-ZZ (41)  | result_132           | 1.5012 | 67.1% | 95.5% | 1.3754 / 92.0%
+    R1 (42)         | result_134/ep_02000  | 1.5017 | 75.3% | 96.8% | 1.3754 / 92.0%
+  → [07-19] ⭐ 4/4 MATCHED HOÀN TOÀN (new-code · 1/1 · target99 · seed0 · resume-from-warmup —
+  HẾT caveat 3-confound; Greedy control TRÙNG HỆT cả 4). Span 0.4% rate (1.5012-1.5072) @
+  95.5-97.1% QoS — "no systematic gain from richer/structured observables" VỮNG ở M=2:
+  single-Z QoS cao nhất (97.1%), R1 matched chỉ #3 rate (r90 provisional 1.5120 từng #1 = artifact
+  old-code/confined-geo). Ladder 2 case = 8/8 CLOSED. (ref cũ: r90 re-infer 1.5120/96.8.)
+
+
+################################################################################
+#  CASE 3  ·  K=15, M=3, P_S=60 dBm
+################################################################################
+  Recipe (planned): full-③ power-fairness · λ_D=1.5 · oracle-warmup · ck-fix · n_var_layers=5 ·
+                    n_hidden_ae=[256,128,64] · curriculum ramp 0.2→. Status: NOT STARTED. No inference data yet.
+
+################################################################################
+# TABLE: PARAM-EFFICIENCY
+################################################################################
+  Assignment-actor params (VQC SoftmaxPQC vs classical MLP; phase/power/Ck sub-actors identical in both)
+  Algorithm      |   Case 1  |   Case 2  |   Case 3
+  ---------------+-----------+-----------+-----------
+  HQC-HAC (VQC)  |      120  |      144  |  (pending)
+  DNN (MLP)      |   40,586  |   43,166  |  (pending)
+  ratio DNN/VQC  |     338×  |     300×  |  (pending)
+

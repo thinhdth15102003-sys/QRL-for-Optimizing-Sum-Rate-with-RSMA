@@ -1,13 +1,73 @@
 ================================================================================
   PROJECT TODO LIST  ·  source of truth cho "việc gì tiếp theo"
 ================================================================================
-  Last updated: 2026-06-11 (Case2 FINAL-PUSH PLAN revised order N→cf→both — xem SEC 0B "FINAL-PUSH PLAN").
+  Last updated: 2026-07-17 (readout-ladder C2 3/4 filled — xem TRAINING QUEUE Tier-1; g-check CSI-split ≈null r126).
+                2026-06-11 (Case2 FINAL-PUSH PLAN revised order N→cf→both — xem SEC 0B "FINAL-PUSH PLAN").
                 2026-06-08 (REFRESH — xem STATUS SNAPSHOT ngay dưới). Trước: 2026-06-05
                 EXP-3 launch + USER PRIORITY PIVOT (training tasks ↑, paper trừ ablation-drafts lùi).
                 Strategy: train song song các Case sau khi assignment bottleneck được giải quyết.
   Convention:  [✅] done · [⏳] in-flight · [ ] pending · [🚫] skip/deferred · [⚠] blocked
   Priority tags: 🔴 critical-path · 🟡 important · 🟢 nice-to-have
 --------------------------------------------------------------------------------
+
+  ═══════════════════════════════════════════════════════════════════════════════
+  ⭐⭐ TRAINING QUEUE 2026-07-12  (ablation appendix D — chốt với user) — RUN NÀY
+  ═══════════════════════════════════════════════════════════════════════════════
+  Ablate trên CASE-2 headline (K10/M2, N24). ⚠ RESET params.py K=10 M=2 (N=24) TRƯỚC.
+  Base = recipe C2 chính (ramp chain 0.2→0.5 + α + oracle-warmup, xem Training-Case-2.txt)
+         + flag/params ablation dưới. Eval sau mỗi run = infer greedy 50ep s42, R_LoS +
+         geometry (1/1) khớp (Claude tự chạy + điền bảng).
+
+  🔴 TIER 1 — BẮT BUỘC (slot DUY NHẤT chưa có data):
+   [⏳] A5 readout LADDER trên CASE-1 (user chọn C1) — `--readout` flag ĐÃ BUILD+TEST (fwd+grad OK).
+       3 design đối chứng + R1 baseline, IDENTICAL HYPER (chỉ --readout khác):
+         single-z (12 obs) → nn-zz (23, Z+NN-ZZ generic) → full-zz (33, Z+all-ZZ) → R1 (34, của mình).
+       So sánh = STRUCTURED Pauli (R1) vs Pauli generic (Z / Z+NN-ZZ / Z+full-ZZ). Cùng basis, khác selection.
+       Cmd (params K5M1N24 R_LoS0.2 P50 λ1.5 sẵn đúng; recipe VANILLA+α0.5 = result_39/r108):
+         PY=/home/thinhduong/miniconda3/envs/IRS_QRL/bin/python3.11
+         $PY train.py --power-fairness 0.5 --seed 0 --readout single-z
+         $PY train.py --power-fairness 0.5 --seed 0 --readout nn-zz
+         $PY train.py --power-fairness 0.5 --seed 0 --readout full-zz
+         (+ optional `--readout r1` fresh cho 4-way khớp tuyệt đối; hoặc dùng r108 baseline sẵn có.)
+       Flag chi tiết: --readout {r1|single-z|nn-zz|full-zz} (fresh-only; --resume dùng config đã save).
+       ✅ [07-14] C1 DONE+FILLED tab:abl_readout: r121(single-z 1.789/99.9) r122(nn-zz 1.772/99.9)
+       r123(full-zz 1.728/99.7) + R1=r108 1.747/99.7 → readout vô can @M=1.
+       ✅ [07-19] C2 DONE — LADDER 8/8 CLOSED, MATCHED hoàn toàn (new-code·1/1·target99·seed0): single-z r133
+       **1.5025/97.1** (QoS #1) · nn-zz r131 1.5072/96.5 (rate #1) · full-zz r132 1.5012/95.5 · R1-matched r134
+       **1.5017/96.8** (đã THAY r90 provisional 1.5120 = artifact old-code/confined-geo). Span 0.4% →
+       "no systematic gain" vững cả 2 case. Chi tiết: Training-Case-2.txt "READOUT LADDER C2" + Current-Result C2.
+
+  🟡 TIER 2 — NÊN CÓ (làm mạnh appendix, flag launch-ready):
+   [ ] A6 (paper) power-fairness α-sweep — Case-1 `--power-fairness {0.3,0.4} --seed 0` (giữa 0.5
+       main đã có) · Case-2 `--power-fairness {0.5,0.7} --seed 0` (0.95 main đã có). IDENTICAL
+       recipe/curriculum khác chỉ α (paper sec:abl_power tab:abl_power, viết khung 07-13).
+       PY=/home/thinhduong/miniconda3/envs/IRS_QRL/bin/python3.11
+         $PY train.py --power-fairness 0.3 --seed 0   # Case-1 (K5M1)
+         $PY train.py --power-fairness 0.4 --seed 0   # Case-1 (K5M1)
+         $PY train.py --power-fairness 0.5 --seed 0   # Case-2 (K10M2, reset params K=10 M=2 trước)
+         $PY train.py --power-fairness 0.7 --seed 0   # Case-2 (K10M2)
+   [ ] A7 (paper) warm-up isolation — Case-2, fixed α (dùng α main 0.95), 4 config: (i) vanilla
+       (không cờ) · (ii) assignment-only (⚠ CHƯA CÓ FLAG — cần build cờ tách Q-head warmup khỏi
+       --oracle-warmup TRƯỚC khi chạy run này) · (iii) `--phase-warmup` · (iv) `--oracle-warmup`
+       (dual). Paper sec:abl_warmup tab:abl_warmup, viết khung 07-13.
+   [ ] A2 no-AE bypass: --no-ae — 1-2 run (C2 ±C1). ⚠ --no-ae = BỎ bypass z_t, KHÔNG phải raw.
+
+  🟢 TIER 3 — CONFIRM rẻ (optional, collapse/hiện nhanh):
+   [ ] A4 warm-up off (cold-start): bỏ --oracle-warmup — 1 run.
+   [ ] A6 entropy off: --beta-entropy 1e-4 --beta-entropy-min 1e-4 — 1 run.
+
+  ⚪ TIER 4 — NGOÀI SCOPE (chỉ nếu mở rộng paper):
+   [ ] A2 "hại-ở-case-lớn": cần raw-encoding plumbing MỚI (code) + Case-3 with-AE + raw = 2 run.
+   [ ] Case-3 K15/M3 full curriculum ~4 ramp run (case gap-structural khó: agent 23% vs oracle 62%).
+   [ ] Scale-K K6/7/8/9 @M1 P50 = 4 run retrain + cần --P-S flag (CHƯA build).
+   [ ] A1 multi-seed DNN: +2 seed × case (variance band).
+
+  ✅ KHÔNG train (viết từ data có sẵn): A1 (r117/r107 C1 + r110/r101 C2 + scaling/param-eff) ·
+     A2-nửa-"nén→giảm-qubit" (qubit/GPU analysis + distill z_t 51%>raw 27%) · A4-warmup (log cũ) ·
+     A6 recipe-sensitivity (entropy/PopArt/drift từ r2/r3/r7/r8/r11).
+
+  ĐƯỜNG: tối thiểu đóng D = 1 run (A5) · chắc tay = Tier1+2 ~5-6 run · đầy đủ = +2 (Tier3).
+  ═══════════════════════════════════════════════════════════════════════════════
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  ⭐ STATUS SNAPSHOT 2026-06-08 (REFRESH — supersedes stale items below)      ║

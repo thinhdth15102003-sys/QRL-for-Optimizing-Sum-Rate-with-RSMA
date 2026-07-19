@@ -4,7 +4,10 @@
   Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
   File này: hyper ĐÃ DÙNG cho Case 1 theo từng ramp 0.2→0.5, + bài học thực tế
   (result_1→11) và "set thế này → ra sao".
-  Cập nhật lần cuối: 2026-06-16 (⭐ result_39 = RECIPE FRESH + α=0.5 → QoS 95% CONVERGED (3pp dưới trần) CANONICAL; result_38 resume α=0.4 → 90%).
+  Cập nhật lần cuối: 2026-06-29 (⭐⭐ r94 ramp0.4 α0.5 CK-OFF ←r41: ADAPTIVE + DRIFT. sampled QoS 99→94% drift (QoS↓/rate↑); greedy QoS-best ep~800 = 96.1%/1.803, reward-best ep~1901 drift = 92.2%/1.816 (−3.9pp QoS chỉ đổi +0.8% rate = mild over-drift, nhẹ hơn r42). MINH CHỨNG pick-best-by-QoS≠reward. α-boundary serve-all↔adaptive GIỮA α0.5-0.6. ck-OFF vô can.) (2026-06-28: ⭐⭐ r81 no-ae ramp0.2: CONVERGED QoS 97.6% / deploy-greedy 96.4% / sum-rate 1.809 / ADAPTIVE corr(R_tot,QoS)=−0.25 / +20% rate vs Greedy. Vanilla `--no-ae --power-clean-input` (NO pretrain/oracle/phase) TỰ bootstrap routing (refute "no-ae cần bootstrap"; r71@9ep=premature-kill ko phải failure).
+                  ⭐⭐ AE CURRICULUM CHAIN: r39(0.2,95% canonical)→r41(0.3,96% deploy/1.77)→r42(0.4, OVER-DROP 95→82% vì old-③ adaptive + λ1.5-too-low)→r45(0.5, 91% λ2.0). Bài học: λ scale theo ramp; ‖∇ck‖ r42 bounded → drop là adaptive THẬT ko phải ck-collapse.
+                  ⭐⭐⭐ SERVE-ALL↔ADAPTIVE = power-fairness full-③ α (xem Common-Knowledge 06-28): r88/r91/r92 ramp0.4 SERVE-ALL 100% vì full-③ α0.5-0.6 (blend split→0.8-private); r42 ADAPTIVE vì old-③ (private-only). HẠ α để adaptive lại, KHÔNG đụng λ (λ inert @100%QoS). trước đó
+                  2026-06-16 (⭐ result_39 = RECIPE FRESH + α=0.5 → QoS 95% CONVERGED (3pp dưới trần) CANONICAL; result_38 resume α=0.4 → 90%).
                   2026-06-08 (G4 nq=12 UNIFIED: Case 1 now nq=12 D_enc=2 W_proj 10→22 EXPANSION).
                   Pre-2026-06-08: Case 1 had nq=8 (historical), see params_pre_unify_backup.py.
                   result_12 (đĩa: results/result_17) (arch-2 Case 1 nq=8 retry @λ=2, ep_00935 oracle) — historical reference.
@@ -161,6 +164,25 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
    → ✅ RECIPE Case-1 ramp-0.2 PROVEN end-to-end trên vanilla base. Best ckpt = ep_00300 (QoS-late 90%).
      Next: lock, hoặc advance ramp 0.3 (stable, critic khỏe, no entropy-dom → curriculum-ready; nâng α nhẹ khi All-IRS yếu dần 72→64).
 
+  ── ⭐⭐⭐ result_74 (đĩa results/result_74) — NO-AE + α0.5 + oracle-assign-warmup [2026-06-24, ep~1487 CONVERGED+ROBUST] ──
+   (disk-dir result_74 từng giữ run K10M2 α0 cũ; relaunch K5M1 α0.5 — hyperparameters.json committed ĐÃ ĐÚNG K5M1 α0.5.)
+   Cmd: no-ae + oracle-assign-warmup(57→100%) + phase-warmup(27%=random, vô hại Case-1) + ③ α0.5, λ1.5 gae0.9.
+   ⭐⭐ BEST Case-1 no-ae: QoS mean 93.3→98.4→**99.5%** (3 thirds, vượt servable 98.2%), R_tot 1.51→1.57, best reward 328. Vượt r39(95% AE)/r69(98% no-ae).
+   ⭐ PER-EP ROBUSTNESS HỘI TỤ HOÀN TOÀN (đo phân bố 1487ep): p10-floor 88→96→**100%** (90% ep phục vụ TRỌN K), min 56→64%, **96% ep≥200rew, 0% âm**.
+   Critic khỏe (explVar 0.71-0.90; dip 0.21 @σV0.71 = saturated-low-variance artifact, benign). Committed (ent_q0.1 KL_q0). phase non-binding (ent 32.6≈98%max random, direct gánh). λ frozen z0.51 benign.
+   ⟹ ĐỐI CHIẾU r73 (Case-2 α0.9, p10-floor kẹt 83%): **Case-1 (2^5) đạt per-ep robustness ĐẦY ĐỦ (p10=100%); Case-2 (3^10) còn đuôi VQC-extraction**. ⟹ floor-brittle = ĐỘ-KHÓ-BÀI-TOÁN (assignment-scale + extraction-cost), KHÔNG phải method/α/critic.
+   ⭐ GREEDY INFER (50ep held-out): QoS **99.1%** ΣRate 1.665 feas 96.5% rew 328.6 — vs r39(AE) greedy 98.4%/1.713/95.0%/334.1 = **TIED QoS** (r39 bù sum-rate). ⟹ no-AE ≈ AE deployed (honest-prior parity).
+   ⚠⚠ BÀI HỌC METHOD: sampled-gap r74-vs-r39 (97.1 vs 89.2 = 8pp) GẦN NHƯ TAN khi greedy (99.1 vs 98.4 = 0.7pp). ⟹ 8pp kia = **sampling-artifact** (r39 policy ít committed → sampled spread lớn), KHÔNG phải brittle. ĐỪNG đánh giá robustness bằng SAMPLED distribution khi 2 policy khác độ-committed — phải so GREEDY (deployed).
+   → STOP+lock best-QoS ckpt, HOẶC advance ramp 0.3 (stable, robust, curriculum-ready).
+
+  ── ⭐⭐⭐ result_77 (đĩa results/result_77) — NO-AE + `--power-clean-input` + oracle-assign-warmup [2026-06-24, ep1211/1500] — POWER-CLEAN-INPUT VALIDATED ──
+   Cmd: FRESH no-ae + **`--power-clean-input`** (PowerMLP đọc CHỈ h_eff sạch 2K, BỎ o_hat) + oracle-assign-warmup(57→99.8%) + α0.5, λ1.5 gae0.9.
+   ⚠ `--phase-warmup-target 0.95` bị parse = **1%** (flag nhận PERCENT, cần 95) → phase-warmup dừng 31% (vô hại C1 non-binding; assign-warmup 99.8% mới quan trọng).
+   ⭐⭐ **FIX no-AE R_tot-deficit ĂN**: QoS 95.8→99.2%, R_tot **1.58→1.72 (max 1.77)** = **AE-parity** (r39 AE 1.71) & **VƯỢT no-AE-o_hat r74 (1.67)**.
+   Cơ chế xác nhận: **Power+Ck CONCENTRATE lại** — wp-top2 **50→60%** (= AE r41), Ck-top **40→60%** (vs o_hat 40%). ⟹ R_tot-deficit của no-AE = o_hat shot-noise trong PowerMLP-input, KHÔNG phải α/capacity.
+   Critic OK (explVar 0.40 = saturated-low-σV artifact benign), committed (ent_q0.05 KL_q0), λ frozen z0.52, phase non-binding (ent 32.6 random). best-reward unbeaten 461ep = misleading (R_tot/QoS leo thật).
+   → ACTION: gần converged ramp 0.2, power-clean-input PROVEN. STOP+lock hoặc advance ramp 0.3. ⟹ **no-AE + power-clean-input = QoS-parity + R_tot-parity với AE, lại param-eff (circuit-core) + encoding-learns (assignment vẫn o_hat).**
+
 ── R_LoS = 0.3 ──────────────────────────────────────────────────────────────
   Run: result_4 (resume result_3, λ_D=3, gae=0).
   Kết quả: QoS ~81% — tốt.
@@ -237,7 +259,68 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
   result_39 R_LoS0.2 λ_D1.5 gae0.9 α0.5 FRESH       → QoS 59→95% CONVERGED (CANONICAL, −3pp trần)
   result_42 R_LoS0.4 λ_D1.5 gae0.9 α0.6 ←r41(ramp0.3) → QoS peak96%@ep300 → drift82% (best ckpt ep_00300)
   result_45 R_LoS0.5 λ_D2.0 gae0.9 α0.6 ←r42/ep_00300 → DONE 1000ep: QoS 95→dip→HỒI 91% CONVERGED, R_tot2.02; λ=2 CHẶN-DRIFT (vs r42-drift82%); CASE-1 LOCK ramp-0.5 = ep_01000(91%) hoặc ep_00100(95%)
-  ── ARCH-2 RETRY (2026-06-05/06, fresh K=5 M=1 nq=8) ──
+            ⭐⭐ RE-INFER ENV-FIXED 2026-07-03 (greedy 50ep seed42, ⚙R_LoS=0.5 radius 0.667/0.4, α0.6 restored):
+              ep_01000 = **QoS 99.8% / ΣRate 1.7707** / reward 353.3 / Feas 98.9% — SERVE-ALL point, vượt Greedy CẢ 2 trục
+              (+1.5pp QoS, +17.6% rate). Số cũ 06-23 "94.6%/1.9053" (20ep, PRE-env-fix, SAI env — AllIRS cũ −154.8 vs đúng −353.8) = VOID.
+  result_94 R_LoS0.4 λ_D1.5 gae0.9 α0.5 CK-OFF(--ck-logit-spread 1e9) ←r41/ep_00300 (đĩa results/result_94)
+            → 2026-06-29 ep~1924/4000 (RUNNING). ⭐⭐ α0.5 = ADAPTIVE + DRIFT (KHÔNG serve-all ổn định):
+              sampled QoS DRIFT 99%(ep~1300)→94%(ep~1850, ổn định), R_tot 1.80→1.85 (QoS↓/rate↑); best reward phẳng
+              ~378.8-378.9 suốt (reward const, MIX dịch tại λ1.5). 2 INFER (greedy 50ep seed42):
+                • best/ ep~800 (transient serve-all, QoS-best): QoS **96.1%** / ΣRate 1.803 / +19.8% rate
+                • best/ ep~1901 (adaptive equilib, reward-best drifted): QoS **92.2%** / ΣRate 1.816 / +20.6% rate
+              ⭐ DRIFT = TRADE XẤU: −3.9pp QoS chỉ lấy +0.8% rate (mild over-drift, NHẸ hơn r42 96→82 nhờ full-③ split-blend).
+              ⭐⭐ MINH CHỨNG "pick best-by-QoS KHÔNG reward": reward-best ep1901 drift 92.2%; QoS-best ~ep800 = 96.1% mới là deploy point.
+              ⭐ α-mapping refine: ranh giới serve-all↔adaptive GIỮA α0.5-0.6 (α0.6 r92=serve-all 100%, α0.5 r94=adaptive drift). Muốn α0.5 ko drift → λ↑~1.8-2.0 (như r45 chặn r42).
+              ⭐ COMMITMENT-CONFOUND (sampled overstate vs greedy honest) + CK-OFF vẫn adaptive-healthy (IRS≈3≈Blk, critic explVar 0.54-0.74,
+              ⚠ ‖∇‖V spike 2286-5055 = onset near-const degeneracy benign) → ck vô can ở deploy (re-confirm Finding-1). phase held ent~14 (43%max).
+  result_102 R_LoS0.2 λ_D1.5 gae0.9 α0.5 **DNN** (--actor-mode classical, FRESH vanilla mirror-r39) (đĩa results/result_102)
+            → 2026-06-30 DONE 2000ep. ⭐⭐ DNN CASE-1 FAIR BASELINE (thay r28/r29 α=0 unfair 76%):
+              sampled QoS 98-99% (chạm trần 98.2%), R_tot 1.79-1.81, best 382.2 plateaued. critic explVar wobble
+              0.93↔−1.01 = near-const degeneracy benign @99%. wc39/wp61 (α0.5 learnable), IRS2.7≈Blk [N].
+              INFER ep_02000 (greedy 50ep seed42, env-fix): **QoS 97.4% / ΣRate 1.797 / Feas 92.2% / +19.4% rate vs Greedy**.
+              ⭐⭐ A1 CASE-1 FAIR: DNN 97.4%/1.797 ≈ VQC-AE r39 98.4%/1.713 = TASK-PARITY (VQC +1.0pp QoS,
+              DNN +4.9% rate = 2 Pareto points sát nhau; cả 2 ≈ Greedy-QoS nhưng +14-19% rate). Nhất quán Case-2 parity.
+  result_104 R_LoS0.3 λ_D1.5 gae0.9 α0.5 **DNN** ←r102/ep_02000 (đĩa results/result_104)
+            → 2026-06-30 DONE 2000ep. INFER ep_02000 (greedy 50ep seed42, env-fix R_LoS=0.3): **QoS 95.9% / ΣRate 1.802**.
+              ⭐ A1 C1-ramp0.3: VQC r41 ep1000 (re-infer env-fix) **96.4%/1.780** ≈ DNN r104 **95.9%/1.802** = TASK-PARITY
+              (VQC +0.5pp QoS, DNN +1.3% rate; reward gần trùng 349.4 vs 350.7). Cả 2 adaptive: đổi ~2pp QoS lấy +18-20% rate
+              vs Greedy (98.3%/1.506). Caveat: r41 1000ep vs r104 2000ep (budget lệch); r41 execution full-③ (train old-③).
+              Số r41 cũ "96%/1.77" (pre-env-fix, sai env) tình cờ ≈ số mới → không đổi kết luận.
+  result_105 R_LoS0.4 λ_D1.5 gae0.9 α0.5 **DNN** ←r104/ep_02000 (đĩa results/result_105)
+            → 2026-07-01 DONE 2000ep. Tail-100: QoS 94.8% / R_tot 1.814, best 403.6 @ep604 plateaued.
+              CHƯA infer standalone (chain-step; ramp0.4 VQC counterpart cũng chưa có ở C1).
+  result_106 R_LoS0.5 λ_D1.5 gae0.9 α0.5 **DNN** ←r105/ep_02000 (đĩa results/result_106) — C1 DNN CURRICULUM FINAL
+            → 2026-07-03 DONE 2000ep. Sampled QoS ổn 93-96% suốt (không drift nặng @λ1.5 — khác VQC r42 cần λ2.0 chặn),
+              window cuối 95.2%/1.818; reward-best 398.3 @ep831. Tail-100: QoS 94.3% / R_tot 1.807, explVar 0.58.
+              2 INFER (greedy 50ep seed42, env-fix ⚙R_LoS=0.5 radius 0.667/0.4, α0.5 restored):
+                • ep_02000: **QoS 95.1% / ΣRate 1.8124** / reward 353.5 / Feas 78.1%  ← PICK (best-by-QoS + khớp method chain)
+                • best/ ep831 (reward-best): QoS 93.9% / 1.8423 — reward-best kém QoS hơn (re-confirm pick-best-by-QoS)
+              vs Greedy @ramp0.5: 98.3%/1.5060 → DNN đổi ~3pp QoS lấy +20.3% rate (adaptive, nhất quán r102/r104).
+              ⭐⭐ A1 C1-ramp0.5 (curriculum-final): VQC r45/ep_01000 re-infer **99.8%/1.7707** (serve-all, α0.6/λ2.0)
+              vs DNN r106 **95.1%/1.8124** (adaptive, α0.5/λ1.5) — reward GẦN TRÙNG 353.3 vs 353.5 = cùng equilibrium,
+              2 Pareto point khác nhau do config. ⚠ Cặp này KHÔNG clean (α/λ lệch, old-③ vs unified) — clean A1 pairs
+              vẫn là ramp0.2 (r39/r102) + ramp0.3 (r41/r104); dòng ramp0.5 = headline curriculum-final, ghi caveat.
+  result_107 R_LoS0.5 λ_D1.5 gae0.9 α0.5 **DNN** + FULL-UNLOCK (--irs-spawn-frac 1.0 --user-free-frac 1.0)
+            ←r105/ep_02000 (đĩa results/result_107) — SIBLING của r106, chỉ khác unlock geometry
+            → 2026-07-04 DONE 2000ep. Sampled QoS dao động 92.8-96.3% (window-best ep1400, ep2000 92.8%),
+              reward-best 411.2 @ep643. 2 INFER (greedy 50ep seed42, ⚙env radius 1/1 verified, α0.5 restored):
+                • ep_01400: **QoS 96.8% / ΣRate 1.7920** / reward 355.5 / Feas 85.8%  ← PICK (best-by-QoS; +3.4pp QoS giá −2% rate)
+                • ep_02000: QoS 93.4% / 1.8294 / reward 361.1 — reward-lean, re-confirm pick-best-by-QoS
+              ⭐⭐ **UNLOCK KHÔNG TỐN GÌ Ở C1**: 96.8%/1.792 (unlock) ≥ r106 95.1%/1.812 (standard) — QoS +1.7pp/−1.1% rate.
+              Đối chiếu C2: r101 unlock 95.3%. Greedy unlock ≈ standard (295.4/1.506/98.3 vs 295.3/1.506/98.3);
+              AllIRS tụt −353.8→−415.7 (env khó hơn cho fixed-policy, agent thích ứng OK). VQC-unlock C1 CHƯA chạy.
+  result_108 R_LoS0.2 λ_D1.5 gae0.9 α0.5 **VQC UNIFIED FRESH** + FULL-UNLOCK radius 1/1 (đĩa results/result_108)
+            — thay chuỗi VQC stale (r39 old-③); unlock do params.py radius=1/1 lúc launch (user chấp nhận: C1 hội tụ về unlock)
+            → 2026-07-04 DONE 2000ep. Trajectory: QoS 62→100% sampled (chạm trần servable 98.2%), R_tot 0.87→1.70,
+              best 355.6 @ep1842 (leo tới cuối, "↗ still improving"). Critic explVar 0.66-0.69 khoẻ; phase ent 68→43%max GIẢM ĐỀU;
+              Σirs 2.8≈Blk 2.5 [N]; ck calm (‖∇‖5 — C1 ko nổ grad); λ frozen [E] benign. KHÔNG bệnh suốt.
+              ⭐⭐ INFER ep_02000 (greedy 50ep s42, env 1/1): **QoS 99.7% / ΣRate 1.7465 / reward 348.6 / Feas 98.3%**
+              vs DNN r102/ep2000 ZERO-SHOT unlock 1/1: **99.0% / 1.8155 / 362.3** → A1 PARITY (VQC +0.7pp QoS + feas cao hơn,
+              DNN +4.0% rate = 2 Pareto point). r102 home 0.667/0.4 = 97.4%/1.797/346.8 (zero-shot unlock ≥ sân nhà 97.4→99.0%!).
+              ⚠⚠ REWARD GAP 348.6<362.3 = TOÀN BỘ RATE (ko QoS): λ1.5 DƯỚI λ_cliff C1=2.01 (§7.4) → reward metric THƯỞNG RATE →
+              DNN rate-lean ăn reward cao; deploy pick-best-by-QoS → VQC thắng. "reward==DNN" là SAI BAR (2 Pareto sát nhau @QoS~100%).
+              ⚠ PAIRING: r108=unlock train, DNN so=r102 ZERO-SHOT (train standard) → cặp A1 hoàn-toàn-sạch cần DNN-fresh-unlock-r0.2 (CHƯA có).
+              r108 unified 99.7% > r39 old-③ 98.4% (@ep2000) → xác nhận thay chuỗi stale đúng; nhưng r108=unlock nên ko phải bản standard 1-đổi-1 cho r39.
   result_12 R_LoS0.2 λ_D=2 gae0.9 β0.001 + PopArt + R1readout + SoftmaxPQC + Δ1 fresh  (thư mục đĩa: results/result_17)
             → ep~935 reached oracle RỒI STOPPED 2026-06-08 (drift −419% từ peak = λ=2 instability; xem r13/r14).
               Critic ⭐⭐ explVar+0.84 corr+0.92 (vs r1 blind = MAJOR arch win).
@@ -498,3 +581,12 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
        sampled ~80% = ~4pt. Kill r29 (duplicate). Drift lever thật (nếu cần stable-final) = lr_min_frac 0.25→0.10
        / beta_entropy_min↑ — KHÔNG phải lr_classical_actor (giờ live nhưng 1e-4 là lr công bằng, đừng đổi).
 ================================================================================
+
+  ⭐ result_120 (đĩa, P_S-SWEEP P70, FRESH K5M1 N24 R0.2 λ1.5 α0.5 unlock, 2000ep) @ep~1400 2026-07-11:
+     "Không assign IRS" = ĐÚNG OPTIMUM, không phải lỗi/[J]: P70 > ngưỡng ~68dBm IRS-moot (probe
+     in-log: Direct-only 100%/Σ1.82 > All-IRS 89.7%/1.26; blocked ×0.01 power vẫn đủ D_k @P70).
+     Agent hội tụ all-direct (dir=5.0 irs=[0.0], ent_q=0.003 committed, KL_q=0), QoS 100% từ sớm,
+     R_tot leo 1.61→2.37 (+30% vs Direct-only baseline nhờ power/Ck), qp=0.000, critic khỏe
+     (explVar 0.56-0.72, corr 0.78-0.85). Phase ent=0 = idle-by-construction (không có IRS user).
+     Khớp B*-theory (IRS-Group-Capacity §1): term (I) < 0 mọi user @P70 → B*=0 → all-direct.
+     ⟹ P_S-sweep data point hợp lệ: "IRS value dies at high power". Muốn agent dùng IRS: hạ P_S≤50.

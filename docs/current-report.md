@@ -1,19 +1,25 @@
 # CURRENT REPORT — DNN vs VQC, Case-1 & Case-2
 
-> Cập nhật: 2026-06-23. Số liệu lấy từ `infer.py` (held-out eval, greedy, 50 ep, seed mặc định).
+> Cập nhật: 2026-06-29. Số liệu lấy từ `infer.py` (held-out eval, greedy, 50 ep, seed 42).
 > Mục tiêu: bảng so sánh DNN (classical actor) vs VQC cho A1 (quantum-vs-classical) + bảng params no-ae VQC & DNN.
 > ⚠ Baseline (Greedy/AllIRS/...) KHÁC nhau giữa Case-1 và Case-2 (env khác) → chỉ so trong cùng case.
+> ⭐⭐ 2026-06-29: **A1 Case-2 UNIFIED-METHOD** (cả VQC & DNN: α0.9 full-③ + ck-fix + oracle+phase-warmup→95, ramp0.2, λ1.5, seed42).
+>   r90 VQC-AE 96.8% ≈ r95 DNN 96.5% = **TASK-PARITY** (honest-prior). AE khử "extraction-cost gap −4.7pp" cũ (= no-ae r66 artifact).
 
 ---
 
-## 1. KẾT QUẢ (infer held-out, 50 ep)
+## 1. KẾT QUẢ (infer held-out, 50 ep, seed 42)
 
 | Case | Actor | Run | QoS | ΣRate (bps/Hz) | Feasibility | Reward | Greedy (QoS / ΣRate) |
 |------|-------|-----|-----|----------------|-------------|--------|----------------------|
-| **Case-1** (K5M1) | **DNN** | r28/r29 | **76.0%** | 1.883 | 20.5% | 282.1 | 98.3% / 1.505 |
+| ⭐ **Case-1** (K5M1) | **DNN** (α0.5 fair) | **r102** ep2000 | **97.4%** | 1.797 | 92.2% | 346.8 | 98.3% / 1.505 |
+| ~~Case-1~~ (OLD, α=0 unfair) | DNN | r28/r29 | 76.0% | 1.883 | 20.5% | 282.1 | — |
 | **Case-1** (K5M1) | **VQC** (AE) | r39 | **98.4%** | 1.713 | 95.0% | 334.1 | 98.3% / 1.505 |
-| **Case-2** (K10M2) | **DNN** | r53 | **96.8%** | 1.506 | 76.4% | 280.0 | 91.8% / 1.374 |
-| **Case-2** (K10M2) | **VQC** (no-ae) | r66 | **92.1%** | 1.420 | 50.1% | 211.2 | 91.8% / 1.374 |
+| **Case-1** (K5M1) | **VQC** (no-AE) | r74 | **99.1%** | 1.665 | 96.5% | 328.6 | 98.3% / 1.505 |
+| ⭐ **Case-2** (K10M2) | **VQC** (AE, unified) | **r90** ep2000 | **96.8%** | 1.512 | 75.9% | 280.1 | 91.8% / 1.374 |
+| ⭐ **Case-2** (K10M2) | **DNN** (unified) | **r95** ep2000 | **96.5%** | 1.509 | 73.6% | 276.5 | 91.8% / 1.374 |
+| ~~Case-2~~ (OLD, pre-unified) | DNN | r53 | 96.8% | 1.506 | 76.4% | 280.0 | — |
+| ~~Case-2~~ (OLD, no-ae) | VQC no-ae | r66 | 92.1% | 1.420 | 50.1% | 211.2 | — |
 
 **Trần servable (probe):** Case-1 ≈ 98.2% · Case-2 (oracle@P50) ≈ 99.8% (in-log "59.4%" là under-count default-phase).
 
@@ -21,6 +27,7 @@
 - ⚠ **Case-1 DNN (r28/r29) = pre-recipe, α=0 (concentrated power)** → QoS chỉ 76%, KHÔNG fair với VQC (95-98%). Đây KHÔNG phải giới hạn năng lực DNN mà là artifact α=0 (giống Case-2 α-too-low). **Cần train mới DNN Case-1 với `--actor-mode classical --power-fairness 0.5`** để có baseline fair (kỳ vọng ~95%, ngang VQC). Tạm dùng 76% + đánh dấu rõ.
 - **Case-1 VQC** hiện là bản **AE** (r39, theo yêu cầu "bỏ qua việc Case-1 VQC đang là AE"). Bản no-ae Case-1 (r67/r69) đạt 98% nếu muốn thay sau.
 - **Case-2 DNN (r53) = 96.8% > Greedy 91.8%** ✓ (xác nhận doc 97%). **Case-2 VQC no-ae (r66)** ≈ 90% (training-eval) — chờ infer chốt.
+- ⭐⭐ **[06-29 UNIFIED] Case-2 VQC-AE (r90) 96.8% = DNN (r95) 96.5% = TASK-PARITY.** Gap "−4.7pp extraction-cost" (DNN r53 vs no-ae r66) là **artifact của no-ae**, KHÔNG phải bản chất VQC — AE-representation khử gap. r90 vs r95 unified-method (cùng α0.9 full-③ ck-fix oracle+phase-warmup→95) chỉ khác ACTOR → so A1 sạch. ⟹ honest-prior PQC≈DNN + param-eff (decision-core 300×).
 
 ### Bảng infer chi tiết (verbatim)
 
@@ -66,9 +73,32 @@
 ```
 ⟹ Case-2 VQC no-ae **92.1%** > Greedy 91.8% ✓; **DNN 96.8% > VQC 92.1% (~4.7pp gap = VQC extraction-cost**, đúng honest-prior: parity biểu diễn + chi phí learnability). Cả hai vượt Greedy.
 
+### A1 — CURRICULUM (correct-env, greedy seed42) [2026-06-29, sau infer.py env-fix]
+⚠ **INFER.PY BUG-FIX 06-29**: `load_training_cfg` cũ CHỈ đọc K/M/N/P_S/D_k từ training_config.json → R_LoS+radius rơi về **params.py (ramp0.2)** → mọi infer curriculum (ramp≠0.2 / radius-unlock) **eval trên SAI env** (tell-tale: Greedy/AllIRS baseline giống hệt mọi ramp). ĐÃ FIX: auto-đọc R_LoS_km+2 radius_frac từ hyperparameters.json (walk-up) + CLI `--R-LoS/--irs-spawn-frac/--user-free-frac`. **Số curriculum dưới đây là POST-FIX (đúng env).** Bug đã PHÓNG ĐẠI curriculum-cost.
+
+| Setting | VQC-AE QoS | DNN QoS | VQC ΣRate | DNN ΣRate | Greedy |
+|---------|-----------:|--------:|----------:|----------:|-------:|
+| **Case-1** ramp0.3 (r41 ep1000 / r104 ep2000) | 96.4% | 95.9% | 1.780 | 1.802 | 98.3% (C1-env) |
+| ramp0.2 (ep2000) | 96.8% | 96.5% | 1.512 | 1.509 | 91.8% |
+| ramp0.3 (ep1200) | 96.5% | 95.1% | 1.526 | 1.509 | 92.0% |
+| ramp0.3 (ep2000, final) | **96.8%** | **95.8%** | 1.530 | 1.521 | 92.0% |
+| ramp0.5+full-unlock (ep2000) | *(VQC pending)* | **95.3%** | — | 1.518 | 92.0% |
+
+- ⭐ **DNN robust cả curriculum: 96.5→95.1→95.3%** (giữ ~95% tới full-unlock; bug cũ tưởng tụt 93.9%).
+- ⭐ **Task-parity giữ**: VQC≈DNN @ramp0.2, VQC +1.4pp @ramp0.3. Cả hai Pareto-dominate Greedy mọi setting.
+- ⚠ TODO: VQC chain mới tới ramp0.3 (r99); cần ramp0.4→0.5+unlock để đủ cặp A1 ở setting cuối.
+
+### A1 — EVAL-SEED VARIANCE (C2 ramp0.2 ep2000, 50ep greedy × seeds 42-45) [2026-07-03]
+- **VQC r90: QoS 96.5 ± 0.24%** (96.8/96.7/96.4/96.2) · ΣRate 1.509 ± 0.002
+- **DNN r95: QoS 96.2 ± 0.23%** (96.5/96.2/95.9/96.0) · ΣRate 1.504 ± 0.004
+- ⟹ error bars CHỒNG NHAU → **parity claim solid với eval-seed bars**. Paired-by-seed: VQC > DNN cả 4/4 seed (+0.2→+0.5pp) = edge nhỏ consistent (để observation, KHÔNG claim advantage — cần train-seed mới nói về method). Greedy dao động theo seed (91.6/91.5/90.5) → không trộn seed giữa bảng.
+- Train multi-seed (2 seed × fresh ramp0.2 pair) vẫn nên có cho headline; eval bars đã đủ mức "mean±std over 4 eval seeds".
+
 ### A1 — Quantum vs Classical (đọc nhanh)
-- **Case-1**: VQC(AE) 98.4% ≫ DNN 76.0% — NHƯNG DNN ở α=0 (unfair); rerun α0.5 mới so được.
-- **Case-2**: DNN 96.8% > VQC(no-ae) 92.1%, cả hai > Greedy 91.8%. Gap ~4.7pp = extraction-cost (param-eff: VQC circuit-core 72 vs DNN head ~41K).
+- ⭐⭐ **Case-1 [06-30 FAIR]**: DNN r102 (α0.5, mirror-r39 vanilla, 2000ep) **97.4%/1.797** ≈ VQC-AE r39 **98.4%/1.713** = **TASK-PARITY** (VQC +1.0pp QoS, DNN +4.9% rate — 2 Pareto points sát nhau; cả 2 ≈ Greedy-QoS 98.3% nhưng +14-19% rate). Số 76% (r28/r29 α=0) OBSOLETE.
+- ~~Case-1 cũ: VQC(AE) 98.4% ≫ DNN 76.0%~~ — SUPERSEDED (α=0 artifact, r102 khử).
+- ⭐⭐ **Case-2 [06-29 UNIFIED]**: VQC-AE (r90) **96.8%** ≈ DNN (r95) **96.5%** = **TASK-PARITY** (chênh +0.3pp QoS / +0.9% rate = trong noise). Cả hai Pareto-dominate Greedy (+5pp QoS & +10% rate). Gap "−4.7pp" cũ = no-ae artifact (r66), AE khử. ⟹ honest-prior PQC≈DNN XÁC NHẬN với cùng method; câu chuyện = **param-eff** (decision-core circuit 144 vs DNN policy-MLP 43K = 300×), KHÔNG task-advantage.
+- ⚠ ~~Case-2 cũ: DNN 96.8% > VQC(no-ae) 92.1%~~ — SUPERSEDED (no-ae confound; dùng AE-unified r90/r95).
 
 ---
 

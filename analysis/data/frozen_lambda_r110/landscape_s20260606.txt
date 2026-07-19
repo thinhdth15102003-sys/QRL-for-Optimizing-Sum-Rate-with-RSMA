@@ -1,0 +1,29 @@
+  ⚙ cfg from ckpt: K=10 M=2 N=24 R_LoS=0.5
+==========================================================================
+  λ-LANDSCAPE DISCRIMINATOR · ckpt=results/result_110/checkpoints/ep_01600
+  60 states × 8 factors × 4 noise · K=10 M=2 N=24
+==========================================================================
+  Test A — global λ-factor sweep (mean reward over states):
+     ×0.1  : reward    -2.18
+     ×0.25 : reward    -0.49
+     ×0.5  : reward    +0.92
+     ×0.75 : reward    +1.35
+     ×1.0  : reward    +1.52  ← init(×1)
+     ×1.5  : reward    -1.67
+     ×2.0  : reward    -2.83
+     ×3.0  : reward    -3.52
+  init(×1) reward = +1.52 | best-global ×1.0 = +1.52 | Δ(best−init) = +0.00
+--------------------------------------------------------------------------
+  Test B — per-state-oracle vs best-global:
+     mean per-state-oracle reward = +1.53
+     best-global reward           = +1.52
+     GAP (oracle − global)        = +0.01   ⭐ (large → H1)
+  Test C — per-state best-factor: spread(std)=0.21  corr(best_f, blockage)=+0.00 (N/A: flat or const-blockage)
+--------------------------------------------------------------------------
+  ⚠ CAVEAT: a FLAT landscape on an MLP-head checkpoint can mean the high-capacity
+    post-NN ABSORBS λ-variation (so λ looks irrelevant). RE-RUN on an arch-2 (SoftmaxPQC
+    LINEAR head) checkpoint — if still flat there, frozen-λ is genuinely harmless (H3).
+  VERDICT:
+     → H3: λ at init already near-optimal (Δ+0.0) and gap≈0 (+0.0).
+       λ-frozen is HARMLESS → E-fix2 (accept fixed λ). DON'T build a λ-fix.
+==========================================================================

@@ -252,9 +252,11 @@ def _cf_assign_rewards(env, phase_net, power_net, ck_net, phi, z_t, cfg, demand,
                 phi2, Phi2, env.channels, wp, wcv, active_irs_ids=aid)
             s_ck = _build_ck_state(D_k, part['R_private'], part['R_c_group'], phi2, cfg)
             Ck, _, _ = ck_net.forward(s_ck, phi2, part['R_c_group'])
+            # Design (phase/power/Ck above) used ĝ; the counterfactual reward is
+            # scored on the true channel g, matching the real env.step reward.
             res = env.rate_computer.compute_sum_rate(
                 phi2, Phi2, env.channels, wp, wcv, C_k=Ck,
-                active_irs_ids=aid, sigma2=sigma2)
+                active_irs_ids=aid, sigma2=sigma2, use_true=True)
             Rt = res['R_private'] + res['C_k']
             sf = np.maximum(0.0, D_k - Rt)
             qp = lamD * float(np.sum((sf / (D_k + eps)) ** 2))
@@ -419,7 +421,9 @@ def _warmup_critic(env, actor, critic, phase_net, power_net, ck_net,
             proposed_Phi = env.phase_model.build_phi(phases_rad)
             h_eff   = env.rate_computer.effective_channels_all(
                           phi, proposed_Phi, env.channels)
-            s_power = np.concatenate([h_eff.real, h_eff.imag, rep])
+            s_power = (np.concatenate([h_eff.real, h_eff.imag])
+                       if getattr(args, 'power_clean_input', False)
+                       else np.concatenate([h_eff.real, h_eff.imag, rep]))
             w_c_vec, w_p, _, _ = power_net.forward(s_power, active_irs_ids)
             partial = env.rate_computer.compute_rates_partial(
                 phi, proposed_Phi, env.channels, w_p, w_c_vec,
@@ -740,9 +744,10 @@ def _env_feasibility_report(cfg, seed: int, n_ep: int = 15, n_steps: int = 12) -
     for _ in range(n_ep):
         obs = probe.reset()
         for _ in range(n_steps):
-            # per-user rate under each reference link choice (current Phi)
-            info_d = probe.rate_computer.compute_sum_rate(**_baseline_kwargs(pol_direct.act(obs), probe))
-            info_i = probe.rate_computer.compute_sum_rate(**_baseline_kwargs(pol_irs.act(obs), probe))
+            # per-user ACHIEVED rate under each reference link choice (true g, so
+            # the servable fraction is apples-to-apples with the agent's true-g QoS)
+            info_d = probe.rate_computer.compute_sum_rate(**_baseline_kwargs(pol_direct.act(obs), probe), use_true=True)
+            info_i = probe.rate_computer.compute_sum_rate(**_baseline_kwargs(pol_irs.act(obs), probe), use_true=True)
             Rd = info_d['R_private'] + info_d['C_k']
             Ri = info_i['R_private'] + info_i['C_k']
             Rbest = np.maximum(Rd, Ri)
@@ -1200,23 +1205,51 @@ def _build_components(args):
     # are driven ONLY by the task through the quantum path (the bypass is dropped in the head).
     if getattr(args, 'no_ae', False):
         P.ae_weight = 0.0
-        args.no_pretrain = True
-        print("  🔬 --no-ae: z_t bypass DROPPED (head+sub-actors use o_hat); "
-              "ae_weight→0, pretrain OFF. Encoder/λ forced through quantum path.")
+        _keep_pt = getattr(args, 'no_ae_keep_pretrain', False)
+        if not _keep_pt:
+            args.no_pretrain = True
+        print("  🔬 --no-ae: z_t bypass DROPPED (head+sub-actors use o_hat); ae_weight→0, "
+              + ("pretrain KEPT (--no-ae-keep-pretrain → encoder bootstrap → vanilla-adaptive, "
+                 "no oracle-warmup needed)." if _keep_pt else
+                 "pretrain OFF. Encoder/λ forced through quantum path."))
 
     if getattr(args, 'actor_mode', 'quantum') == 'classical':
         # DNN baseline (paper A2 / R5): pure-MLP actor replacing AE+VQC+head.
+        _pol_hidden = (tuple(args.pol_hidden)
+                       if getattr(args, 'pol_hidden', None)
+                       else getattr(P, 'classical_pol_hidden', (256, 128)))
         actor = ClassicalActor(
             cfg,
             n_latent   = P.n_latent,
             enc_hidden = getattr(P, 'classical_enc_hidden', (128,)),
-            pol_hidden = getattr(P, 'classical_pol_hidden', (256, 128)),
+            pol_hidden = _pol_hidden,
             lr         = getattr(P, 'lr_classical_actor', P.lr_actor_qc),
             seed       = args.seed,
         )
         print(f"  🧮 CLASSICAL ACTOR (DNN baseline): {actor.num_params():,} params "
               f"(enc {list(actor.ENC_HIDDEN)} → z{actor.N_LATENT} → pol {list(actor.POL_HIDDEN)})")
     else:
+        # --readout ablation (fresh runs): swap ONLY the VQC readout observable design,
+        # keeping every other hyperparameter identical. None → params.py default (r1).
+        # Ignored on --resume (the saved actor config wins).
+        _ro = getattr(args, 'readout', None)
+        if _ro is None:
+            _rm  = getattr(P, 'vqc_readout_mode', 'generic')
+            _ezz = P.extra_zz_pairs
+            _fzz = getattr(P, 'full_zz_pairs', ())
+        elif _ro == 'r1':
+            _rm, _ezz, _fzz = 'r1', (), ()
+        elif _ro == 'single-z':
+            _rm, _ezz, _fzz = 'single_z', (), ()
+        elif _ro == 'nn-zz':
+            _rm, _ezz, _fzz = 'generic', (), ()
+        elif _ro == 'full-zz':
+            _rm, _ezz, _fzz = 'generic', (), P._b1_zz_pairs(P.n_qubits, P.M)
+        else:
+            raise ValueError(f"unknown --readout {_ro!r}")
+        if _ro is not None:
+            print(f"  🔬 READOUT ABLATION: --readout {_ro} → mode={_rm} "
+                  f"extra_zz={len(_ezz)} full_zz={len(_fzz)}")
         actor = QuantumActor(
             cfg,
             n_qubits         = P.n_qubits,
@@ -1233,9 +1266,9 @@ def _build_components(args):
             spsa_n_reps      = P.spsa_n_reps,
             spsa_epsilon     = P.spsa_epsilon,
             extra_cz_pairs   = P.extra_cz_pairs,
-            extra_zz_pairs   = P.extra_zz_pairs,
-            full_zz_pairs    = getattr(P, 'full_zz_pairs', ()),
-            readout_mode     = getattr(P, 'vqc_readout_mode', 'generic'),
+            extra_zz_pairs   = _ezz,
+            full_zz_pairs    = _fzz,
+            readout_mode     = _rm,
             softmax_head     = getattr(P, 'vqc_softmax_head', False),
             softmax_beta_init= getattr(P, 'vqc_softmax_beta_init', 1.0),
             no_ae            = getattr(args, 'no_ae', False),
@@ -1258,6 +1291,12 @@ def _build_components(args):
     # [--no-ae] sub-actors consume o_hat (N_QUANTUM) instead of the AE latent z_t (n_latent)
     _rep_dim = (actor.N_QUANTUM if getattr(args, 'no_ae', False)
                 else P.n_latent)              # "system spatial latent" fed to Phase/Power
+    # [--power-clean-input] PowerMLP drops the rep (o_hat|z_t) → reads ONLY h_eff (2K).
+    # Power/Ck don't train the encoding, so o_hat is pure shot-noise to them (blocks
+    # concentration). h_eff = per-user effective channel = the discriminative signal needed.
+    if getattr(args, 'power_clean_input', False) and getattr(args, 'counterfactual_assign', False):
+        raise SystemExit('--power-clean-input is not compatible with --counterfactual-assign')
+    _pw_rep_dim = 0 if getattr(args, 'power_clean_input', False) else _rep_dim
     phase_net = PhaseMLP(
         d_s      = 3 * cfg.K + _rep_dim,      # c^SRU (2K) + rep (z_t|o_hat) + phi_mask (K)
         M        = cfg.M,
@@ -1268,7 +1307,7 @@ def _build_components(args):
         seed     = args.seed,
     )
     power_net = PowerMLP(
-        d_s    = 2 * cfg.K + _rep_dim,       # h_eff Re+Im (2K) + rep (z_t|o_hat)
+        d_s    = 2 * cfg.K + _pw_rep_dim,    # h_eff Re+Im (2K) [+ rep unless --power-clean-input]
         K      = cfg.K,
         M      = cfg.M,
         P_S    = cfg.P_S,
@@ -1276,6 +1315,13 @@ def _build_components(args):
         lr     = P.lr_power,
         seed   = args.seed,
     )
+    # [--ck-logit-spread] override the ck-stability floor (module global, read at call-time
+    # by _ck_group_softmax → setting it here applies to every C_k softmax this run).
+    import RL.sub_actors as _sub_actors
+    _ck_spread = float(getattr(args, 'ck_logit_spread', 8.0))
+    _sub_actors.CK_LOGIT_SPREAD = _ck_spread
+    print(f"  ck-stability: CK_LOGIT_SPREAD = {_ck_spread:g}"
+          + ("   ⚠ DISABLED (C_k may collapse to one-hot)" if _ck_spread >= 1e6 else ""))
     ck_net = CkMLP(
         d_s    = 5 * cfg.K,                  # D_k + R_p + R_c + shortfall + phi_float
         K      = cfg.K,
@@ -1315,7 +1361,11 @@ def _build_components(args):
             actor.n_shots     = P.n_shots_train
             actor.spsa_n_reps = P.spsa_n_reps
         phase_net = PhaseMLP.from_dir(resume_dir, seed=args.seed)
-        power_net = PowerMLP.from_dir(resume_dir, seed=args.seed)
+        if getattr(args, 'power_clean_input', False):
+            print("  🔧 --power-clean-input: PowerMLP RE-INITIALISED (clean h_eff-only input, "
+                  "o_hat dropped); actor/phase/ck/critic resumed as usual.")
+        else:
+            power_net = PowerMLP.from_dir(resume_dir, seed=args.seed)
         ck_net    = CkMLP.from_dir(resume_dir, seed=args.seed)
         # Warm-start the critic if it was persisted alongside the actors.
         if os.path.isfile(os.path.join(resume_dir, 'critic_config.json')):
@@ -1708,7 +1758,9 @@ def _train_body(args, run_dir: str, run_id: int,
 
             h_eff   = env.rate_computer.effective_channels_all(
                           phi, proposed_Phi, env.channels)
-            s_power = np.concatenate([h_eff.real, h_eff.imag, rep])   # (2K + rep_dim,)
+            s_power = (np.concatenate([h_eff.real, h_eff.imag])
+                       if getattr(args, 'power_clean_input', False)
+                       else np.concatenate([h_eff.real, h_eff.imag, rep]))   # (2K [+rep],)
             w_c_vec, w_p, _, power_action = power_net.forward(s_power, active_irs_ids)
 
             partial = env.rate_computer.compute_rates_partial(
@@ -2297,6 +2349,13 @@ def _parse_args() -> argparse.Namespace:
                         help='Skip matplotlib plot generation')
     parser.add_argument('--no-pretrain', action='store_true',
                         help='Skip AE hot-start pre-training (fast pipeline inspection)')
+    parser.add_argument('--no-ae-keep-pretrain', dest='no_ae_keep_pretrain', action='store_true',
+                        help='With --no-ae, KEEP the AE encoder pre-training (decouple no-ae from '
+                             'no-pretrain). The pretrained encoder bootstraps the representation so '
+                             'routing converges under VANILLA PPO (no --oracle-warmup needed) — '
+                             'recovering r39-style ADAPTIVE drop-for-R_tot that oracle-warmup '
+                             'suppresses (it commits to serve-everyone). Head still reads o_hat (no-ae); '
+                             'decoder discarded at inference so param-eff unchanged.')
     parser.add_argument('--full-phase-warmup', dest='full_phase_warmup', action='store_true',
                         help='Disable phase-warmup early-stop → run ALL --phase-warmup-epochs '
                              '(test whether more CE epochs unlock a higher phase-match ceiling).')
@@ -2306,6 +2365,13 @@ def _parse_args() -> argparse.Namespace:
                              'epoch cap (phase-warmup is classical/cheap) to give the actor max '
                              'chance to reach DNN-level phase: hits target → speed-limited (capable); '
                              'caps below → ceiling-limited representation. e.g. --phase-warmup-target 95')
+    parser.add_argument('--readout', dest='readout', default=None,
+                        choices=['r1', 'single-z', 'nn-zz', 'full-zz'],
+                        help='ABLATION (fresh runs only): VQC readout observable design. '
+                             'r1=structured per-action (params default); single-z=Z-only (no ZZ); '
+                             'nn-zz=Z+nearest-neighbor ZZ (generic); full-zz=Z+all-pairwise ZZ. '
+                             'Only the readout differs — every other hyperparameter identical. '
+                             'Ignored on --resume (saved actor config wins).')
     parser.add_argument('--no-ae', dest='no_ae', action='store_true',
                         help='ABLATION: drop the z_t classical bypass [B]. The assignment head '
                              'and sub-actors (Phase/Power) consume o_hat (quantum readout) instead '
@@ -2375,6 +2441,10 @@ def _parse_args() -> argparse.Namespace:
                              '"classical" = pure-MLP DNN baseline (paper A2/R5 VQC-vs-DNN, param-eff). '
                              'Sub-actors (phase/power/Ck) stay classical in both. ADDITIVE — default '
                              'quantum unchanged.')
+    parser.add_argument('--pol-hidden', dest='pol_hidden', type=int, nargs='+', default=None,
+                        help='ClassicalActor policy-MLP hidden widths for the A1 width-sweep '
+                             '(iso-performance grid), e.g. "--pol-hidden 40" or "--pol-hidden 64 32". '
+                             'Default None = params.py / (256, 128). Ignored for --actor-mode quantum.')
     parser.add_argument('--counterfactual-assign', dest='counterfactual_assign', action='store_true',
                         help='Q-HEAD CREDIT FIX (Option 2, COMA-style): per-user counterfactual baseline '
                              'A_cf(k)=R_cf[k,a_k]−Σ_c π_k(c)·R_cf[k,c], re-running downstream under each '
@@ -2406,6 +2476,18 @@ def _parse_args() -> argparse.Namespace:
                              'already-served users, starving unmet ~3.3×). 0 = off (learned head); 1 = exact '
                              'equal-split; ~0.6-0.8 = sweet-spot guess. Applied to w_p only (PPO path '
                              'unchanged). Distinct from beta_entropy_pwr_private (soft entropy, insufficient).')
+    parser.add_argument('--power-clean-input', dest='power_clean_input', action='store_true',
+                        help='Feed PowerMLP ONLY the clean per-user effective channels h_eff (Re+Im, 2K) '
+                             'and DROP the o_hat/z_t block. Power/Ck do not train the quantum encoding, so '
+                             'o_hat only adds shot-noise that blocks power-concentration (under-extracts '
+                             'R_tot vs AE). Fully no-AE (assignment head still reads o_hat). On RESUME the '
+                             'PowerMLP is RE-INITIALISED (input dim 2K+rep -> 2K). Incompatible with '
+                             '--counterfactual-assign.')
+    parser.add_argument('--ck-logit-spread', dest='ck_logit_spread', type=float, default=8.0,
+                        help='ck-stability floor (default 8.0): clamp the within-group C_k softmax '
+                             'logit spread so it cannot collapse to a one-hot (ent_ck->0, grad-explosion, '
+                             'common-rate dumped on 1 user -> QoS crash; r40/r44). Set LARGE (e.g. 1e9) '
+                             'to DISABLE ck-stability for ablation (lets C_k collapse like pre-06-18).')
     parser.add_argument('--lagrangian', dest='lagrangian', action='store_true',
                         help='CONSTRAINED-RL: treat λ_D as a Lagrange multiplier and adapt it via '
                              'dual ascent on a QoS target (maximize sum-rate s.t. QoS ≥ --qos-target) '

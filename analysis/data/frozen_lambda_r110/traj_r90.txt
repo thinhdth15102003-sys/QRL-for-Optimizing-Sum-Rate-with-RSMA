@@ -1,0 +1,11 @@
+n_diag_blocks_matched = 228
+ep range:        12 → 2736  (n=228)
+λ|max| y:        0.4300 (ep12) → 0.4100 (ep2736)  | min/max over run: 0.3900/0.4400
+λ|max| z:        0.4900 (ep12) → 0.5200 (ep2736)  | min/max over run: 0.4900/0.5200
+ρ_λ (|max| only): y=0.0465  z=0.0612  max=0.0612 = 6.12%
+
+λgrad mag:       min=4.160e-01  mean=5.609e-01  max=8.010e-01
+λgrad net:       min=1.900e-02  mean=3.739e-02  max=6.440e-02
+λgrad r=net/mag: min=0.0400  mean=0.0668  max=0.1000
+
+wrote analysis/data/frozen_lambda_r110/lambda_traj_r90.csv  (228 rows)

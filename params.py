@@ -25,9 +25,9 @@ Training cases (G4 nq=12 UNIFIED — 2026-06-08)
       Case 2: 3  (baseline)
       Case 3: 5  (more depth to encode larger state via soft-cluster)
 
-    P_S tier (DECIDED 2026-06-10): Case 3 K=15 → giữ tier K>10 → P_S=100 dBm (user chốt,
-      KHÔNG thêm tier K≤15). R3 scale-K sweep (K=5..9 M=1) thì FIX P_S=50 (theo paper gốc) —
-      cần --P-S override vì K6-9 auto rơi tier P_S=70. See docs/TODO.txt SECTION 0B.
+    P_S = 50 dBm UNIFORM cho mọi case (user chốt): Case 1/2/3 đều 50 dBm. Case-3 (K15)
+      structural-hard là do RSMA-sharing cap (P_S-invariant, xem docstring _per_case_hyper),
+      KHÔNG phải power → giữ 50 để so sánh nhất quán. --P-S override nếu cần sweep.
 
     Theory (Jerbi App. C.2 + Goto 2021): data-reuploading + λ + sufficient depth
     = universal approximator independent of nq.
@@ -38,8 +38,8 @@ from istn.config import SystemConfig
 # ══════════════════════════════════════════════════════════════════════════════
 # ACTIVE CASE  ←  change ONLY K and M; per-case hypers auto-derive
 # ══════════════════════════════════════════════════════════════════════════════
-K        = 5    # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
-M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 3
+K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
 
 # ── UNIFIED VQC register (DO NOT change per case) ──────────────────────────────
 n_qubits = 12    # ⭐ G4 UNIFIED: fixed 12 qubits across all cases (NISQ-feasible)
@@ -48,14 +48,12 @@ n_latent = 24    # ⭐ G4 UNIFIED: = 2 × n_qubits = 24 across all cases
 # ── Per-case hypers (auto-derived from K) ──────────────────────────────────────
 def _per_case_hyper(K_val: int) -> dict:
     """K-tier → P_S, depth (D_enc=n_var_layers), n_hidden_ae shape.
-    P_S (2026-06-14, user chốt + oracle feasibility probe analysis/probe_irs_group_capacity.py):
+    P_S = 50 dBm cho TẤT CẢ case (uniform, user chốt):
       Case 1/2 = 50 dBm — Direct-only ~30-43% (IRS REQUIRED), smart-routing oracle ceiling ~100%.
-      Case 3 (K15) = 60 dBm — at 50 dBm K=15 users share too little power → per-user rate < D_k
-        & many unservable; at ≥68 dBm Direct-only jumps to 100% (IRS moot, blocking is binary ×0.1).
-        60 keeps Direct-only ~31% (IRS needed) with every user per-user-feasible. NOTE: Case-3 JOINT
-        oracle ceiling ~52% is P_S-INVARIANT = STRUCTURAL multi-user RSMA-sharing cap (private rate
-        interference-limited < D_k → users depend on common stream, throttled by min-SINR_c). =
-        scale-limited hardest case (paper #3/#11/#8b), NOT a power problem."""
+      Case 3 (K15) = 50 dBm too (giữ uniform). Case-3 JOINT oracle ceiling ~52% là P_S-INVARIANT
+        = STRUCTURAL multi-user RSMA-sharing cap (private rate interference-limited < D_k → users
+        depend on common stream, throttled by min-SINR_c) = scale-limited hardest case (paper
+        #3/#11/#8b), NOT a power problem → nâng P_S cũng không lift được ceiling, nên giữ 50."""
     if K_val <= 5:    # Case 1 SMALL: DƯ qubit → expressivity via W_proj expansion
         return dict(P_S_dBm=50.0,  n_var_layers=2, n_hidden_ae=[32])
     elif K_val <= 10: # Case 2 MEDIUM: identity map (baseline)
@@ -122,8 +120,8 @@ h_IRS_km = 0.02   # IRS/building rooftop height (km) = 20 m
 # ── Spawn-region bounds (FRACTION of R_LoS, 0.0→centre … 1.0→full LoS disk) ──────
 # Keeps IRS central (urban core) and free users inner-half so nothing spawns at
 # the LoS edge with no coverage — critical as R_LoS grows toward 0.5.
-irs_spawn_radius_frac = 0.667      # IRS spawn within this·R_LoS, min-separated
-user_free_radius_frac = 0.4        # free (non-confined) users within this·R_LoS
+irs_spawn_radius_frac = 1          # IRS spawn within this·R_LoS, min-separated
+user_free_radius_frac = 1          # free (non-confined) users within this·R_LoS
 balanced_blocked_spawn = True      # ⭐ 2026-06-13 CANONICAL (user chốt): blocked chia ĐỀU cho M buildings.
                                    # LÝ DO: Case 1 M=1 → balanced≡binomial (no-op, lock vẫn valid); Case 2-3
                                    # M≥2 → binomial = IRS-load LỆCH = non-stationarity nguồn cho pipeline vốn

@@ -13,9 +13,12 @@ Channel convention
   g_RU_hat[m, k] ditto for IRS→user link
   g_SU_hat[k]    ditto for direct link
 
-  The RL agent observes the TRUE channels |g| (fed from env observation).
-  Rate/h computation (rate.py) uses the ESTIMATED channels g_hat — reflecting
-  that the real system designs precoding based on imperfect CSI.
+  Imperfect-CSI split (both views live in the same channels dict):
+    DESIGN  — assignment/phase/power/Ck decisions AND their input states use the
+              ESTIMATED ĝ (g_*_hat); the agent never sees the true channel.
+    ACHIEVED — the reward / achieved-rate / QoS are scored on the TRUE g (g_*)
+              via rate.py's compute_sum_rate(use_true=True) in env.step.
+  The imperfect-CSI penalty is thus the design-vs-reality gap (ĝ→g mismatch).
 
 Building blocking  (3-D)
 ------------------------

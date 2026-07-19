@@ -72,10 +72,13 @@ def make_cfg(k, m):
     return c
 
 def mock_obs(rng):
+    g_sr = rng.standard_normal(M) + 1j * rng.standard_normal(M)
+    g_ru = rng.standard_normal((M, K)) + 1j * rng.standard_normal((M, K))
+    g_su = rng.standard_normal(K) + 1j * rng.standard_normal(K)
+    # extract_state now decides on estimated CSI (ĝ); provide the *_hat keys too.
     return {
-        'g_SR': rng.standard_normal(M) + 1j * rng.standard_normal(M),
-        'g_RU': rng.standard_normal((M, K)) + 1j * rng.standard_normal((M, K)),
-        'g_SU': rng.standard_normal(K) + 1j * rng.standard_normal(K),
+        'g_SR': g_sr, 'g_RU': g_ru, 'g_SU': g_su,
+        'g_SR_hat': g_sr.copy(), 'g_RU_hat': g_ru.copy(), 'g_SU_hat': g_su.copy(),
     }
 
 def make_actor(full_zz=(), extra_cz=EXTRA_CZ, extra_zz=EXTRA_ZZ,

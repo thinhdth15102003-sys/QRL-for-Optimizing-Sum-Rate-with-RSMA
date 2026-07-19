@@ -168,9 +168,12 @@ class ISTNEnv:
         D_k = np.full(K, self.cfg.D_k_bps_hz)
 
         # Monte-Carlo average the reward over R independent noise realisations.
-        # compute_sum_rate is a pure function of sigma2 here (CSI g_hat is fixed
-        # within a step), so this reduces reward variance ~1/√R without biasing
-        # the expected reward — the critic can then actually fit V(s).
+        # The ACHIEVED rate/reward is scored on the TRUE channel g (use_true=True):
+        # the precoding was designed on the estimated ĝ upstream, but the signal
+        # propagates through the real channel — this is where imperfect CSI actually
+        # costs performance.  compute_sum_rate is a pure function of sigma2 here (the
+        # channels are fixed within a step), so averaging cuts reward variance ~1/√R
+        # without biasing the expected reward — the critic can then fit V(s).
         R_avg       = self.reward_noise_avg
         reward_acc  = 0.0
         sum_rate_acc = 0.0
@@ -185,6 +188,7 @@ class ISTNEnv:
                 self.w_p, self.w_c_vec, C_k=self.C_k,
                 active_irs_ids=self.active_irs_ids,
                 sigma2=sigma2_step,
+                use_true=True,           # achieved rate on the true physical channel
             )
             R_tot_r    = res['R_private'] + res['C_k']             # (K,)
             shortfall  = np.maximum(0.0, D_k - R_tot_r)
@@ -408,10 +412,16 @@ class ISTNEnv:
     def _get_obs(self) -> dict:
         ch = self.channels
         return {
-            # TRUE channels (complex) — split into Re/Im by each sub-actor's state builder
+            # TRUE channels (physical ground truth) — kept for oracle/analysis tooling
+            # and the reward physics; NOT what the assignment actor decides on.
             'g_SR':       ch['g_SR'].copy(),
             'g_RU':       ch['g_RU'].copy(),
             'g_SU':       ch['g_SU'].copy(),
+            # ESTIMATED channels (imperfect CSI ĝ = g + Δg) — the agent's assignment
+            # observation, matching the imperfect CSI used for precoding design.
+            'g_SR_hat':   ch['g_SR_hat'].copy(),
+            'g_RU_hat':   ch['g_RU_hat'].copy(),
+            'g_SU_hat':   ch['g_SU_hat'].copy(),
             'beta':       ch['beta'].copy(),
             'Phi_angle':  np.angle(
                 self.Phi[:, np.arange(self.cfg.N), np.arange(self.cfg.N)]

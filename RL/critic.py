@@ -205,17 +205,18 @@ class ClassicalCritic:
                       a_t:   np.ndarray,
                       target: float) -> tuple:
         """
-        TD(0) gradient computation.
+        Value-regression gradient: fit V(s_t) to the GAE λ-return target.
 
         Parameters
         ----------
         s_t    : (d_state,)  current state
         a_t    : (d_action,) action encoding (pass np.empty(0) if d_action==0)
-        target : float       r_t + γ · Q(s_{t+1}, a_{t+1})
+        target : float       GAE λ-return G_t = Â_t + V(s_t) (from train.py) —
+                             NOT a 1-step TD(0)/target-network bootstrap.
 
         Returns
         -------
-        td_loss : float
+        td_loss : float      ½(ṽ − (G−μ)/σ)² on the PopArt-normalised head
         grads   : dict  {'W0','b0',...}  gradients w.r.t. ψ
         """
         sa_norm = self._sa(s_t, a_t)
@@ -355,9 +356,9 @@ class ClassicalCritic:
 
         Structural dimensions (d_state, d_action, hidden) are taken from the
         saved critic_config.json so the network always matches its training-time
-        layout regardless of params.py. The target network is synced to the
-        loaded weights, so bootstrapped TD targets are calibrated from step one
-        instead of cold-starting from a random init.
+        layout regardless of params.py. PopArt running stats (μ,σ) are restored
+        so the value scale is calibrated from step one instead of cold-starting.
+        (No target network — the critic regresses the GAE λ-return directly.)
         """
         with open(os.path.join(path, 'critic_config.json')) as f:
             c = json.load(f)

@@ -762,16 +762,21 @@ def test_env_core(verbose=True):
     # --- reset ---
     obs = env.reset()
     assert set(obs.keys()) == {'g_SR', 'g_RU', 'g_SU',
+                                'g_SR_hat', 'g_RU_hat', 'g_SU_hat',
                                 'beta', 'Phi_angle', 'assignment', 'K_active'}
     ok("reset() returns obs with correct keys")
 
     assert obs['g_SR'].shape      == (cfg.M,)
     assert obs['g_RU'].shape      == (cfg.M, cfg.K)
     assert obs['g_SU'].shape      == (cfg.K,)
+    assert obs['g_SR_hat'].shape  == (cfg.M,)
+    assert obs['g_RU_hat'].shape  == (cfg.M, cfg.K)
+    assert obs['g_SU_hat'].shape  == (cfg.K,)
     assert obs['beta'].shape      == (cfg.M,)
     assert obs['Phi_angle'].shape == (cfg.M, cfg.N)
     assert obs['assignment'].shape == (cfg.K,)
     assert np.iscomplexobj(obs['g_SR']) and np.iscomplexobj(obs['g_RU'])
+    assert np.iscomplexobj(obs['g_SR_hat']) and np.iscomplexobj(obs['g_RU_hat'])
     ok(f"Observation shapes correct  (M={cfg.M}, K={cfg.K}, N={cfg.N})")
 
     assert np.all(obs['assignment'] >= 0) and np.all(obs['assignment'] <= cfg.M)

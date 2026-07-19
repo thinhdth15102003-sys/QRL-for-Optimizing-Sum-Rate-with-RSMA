@@ -43,7 +43,14 @@ def main():
     ap.add_argument('--gae', type=float, default=0.9)
     args = ap.parse_args()
 
-    cfg = make_config(); K = cfg.K
+    # topology + env from the CHECKPOINT itself (params.py may be on another Case)
+    from infer import load_training_cfg
+    try:
+        cfg = load_training_cfg(args.ckpt)
+        print(f"  ⚙ cfg from ckpt: K={cfg.K} M={cfg.M} N={cfg.N} R_LoS={cfg.R_LoS_km}")
+    except FileNotFoundError:
+        cfg = make_config()
+    K = cfg.K
     env = ISTNEnv(cfg=cfg, seed=args.seed, n_steps_ep=args.steps, reward_noise_avg=8)
 
     ckpt = args.ckpt

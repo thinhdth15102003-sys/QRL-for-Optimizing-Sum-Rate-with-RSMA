@@ -96,18 +96,25 @@ def _compute_blocked(env: ISTNEnv) -> np.ndarray:
 # Agent loading
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_training_cfg(run_dir: str, kappa=None, noise_var_dBW=None):
+def load_training_cfg(run_dir: str, kappa=None, noise_var_dBW=None,
+                      r_los=None, irs_spawn_frac=None, user_free_frac=None,
+                      n_elements=None, p_s_dbm=None, user_speed=None,
+                      natural_spawn=False):
     """
     Build a SystemConfig that exactly matches the training-time topology.
 
     Reads agents/training_config.json (written by train.py) to recover K, M,
-    N, quantization_bits, P_S_dBm, and D_k_bps_hz, then merges with remaining
-    params.py defaults.  This ensures the env and agents are always consistent
-    with the saved weights, regardless of what params.py currently says.
+    N, quantization_bits, P_S_dBm, and D_k_bps_hz, AND the run's
+    hyperparameters.json to recover the curriculum ENV geometry — R_LoS_km +
+    irs_spawn_radius_frac + user_free_radius_frac — which training_config.json
+    does NOT store.  Without this the eval env silently reverts to params.py's
+    R_LoS/radius (ramp0.2 confined) → a ramp0.3/0.5 or full-unlock policy would
+    be evaluated on the WRONG env (tell-tale: Greedy baseline identical across
+    ramps).  Remaining fields fall back to params.py defaults.
 
-    kappa / noise_var_dBW: optional TEST-TIME overrides for the R4 noise-robustness
-    sweep — evaluate a FIXED trained policy under elevated CSI error (kappa) or
-    receiver noise (noise_var_dBW) WITHOUT retraining (zero-shot robustness).
+    kappa / noise_var_dBW / r_los / irs_spawn_frac / user_free_frac: optional
+    TEST-TIME overrides for zero-shot env sweeps — evaluate a FIXED trained
+    policy under a different noise / ramp / spawn geometry WITHOUT retraining.
     """
     topo_path = os.path.join(run_dir, 'agents', 'training_config.json')
     if not os.path.isfile(topo_path):
@@ -124,8 +131,32 @@ def load_training_cfg(run_dir: str, kappa=None, noise_var_dBW=None):
         P_S_dBm=t['P_S_dBm'],
         D_k_bps_hz=t['D_k_bps_hz'],
     )
-    if kappa is not None:          ov['kappa']         = float(kappa)
-    if noise_var_dBW is not None:  ov['noise_var_dBW'] = float(noise_var_dBW)
+    # Recover the training-time ramp + spawn geometry from hyperparameters.json
+    # (walk up from run_dir; training_config.json does NOT store these).
+    _d = os.path.abspath(run_dir)
+    for _ in range(5):
+        _d = os.path.dirname(_d)
+        _hp = os.path.join(_d, 'hyperparameters.json')
+        if os.path.isfile(_hp):
+            try:
+                _sys = json.load(open(_hp)).get('system', {})
+                for _k in ('R_LoS_km', 'irs_spawn_radius_frac',
+                           'user_free_radius_frac'):
+                    if _k in _sys:
+                        ov[_k] = _sys[_k]
+            except Exception:
+                pass
+            break
+    # Test-time overrides (zero-shot env sweep) — applied AFTER the training env.
+    if kappa is not None:          ov['kappa']          = float(kappa)
+    if noise_var_dBW is not None:  ov['noise_var_dBW']  = float(noise_var_dBW)
+    if r_los is not None:          ov['R_LoS_km']              = float(r_los)
+    if irs_spawn_frac is not None: ov['irs_spawn_radius_frac'] = float(irs_spawn_frac)
+    if user_free_frac is not None: ov['user_free_radius_frac'] = float(user_free_frac)
+    if n_elements is not None:     ov['N']                     = int(n_elements)
+    if p_s_dbm is not None:        ov['P_S_dBm']               = float(p_s_dbm)
+    if user_speed is not None:     ov['user_speed_mps']        = float(user_speed)
+    if natural_spawn:              ov['balanced_blocked_spawn'] = False
     return make_config(**ov)
 
 
@@ -215,7 +246,12 @@ def run_hqchac_episode(env: ISTNEnv,
         proposed_Phi = env.phase_model.build_phi(phases_rad)
 
         h_eff   = env.rate_computer.effective_channels_all(phi, proposed_Phi, env.channels)
-        s_power = np.concatenate([h_eff.real, h_eff.imag, rep])
+        # [--power-clean-input] auto-detect from the loaded PowerMLP's expected input
+        # dim: a clean PowerMLP reads ONLY h_eff (2K); a normal one also reads the rep
+        # (o_hat|z_t). No flag needed at inference — power_net.d_s tells us.
+        s_power = np.concatenate([h_eff.real, h_eff.imag])
+        if power_net.d_s > s_power.shape[0]:
+            s_power = np.concatenate([s_power, rep])
         w_c_vec, w_p, _, _ = power_net.forward(s_power, active_irs_ids)
 
         partial = env.rate_computer.compute_rates_partial(
@@ -284,17 +320,35 @@ def run_baseline_episode(env: ISTNEnv, policy, policy_name: str,
 
 def evaluate(run_dir: str, n_episodes: int, seed: int,
              greedy: bool, n_steps: int,
-             kappa=None, noise_var_dBW=None) -> dict:
+             kappa=None, noise_var_dBW=None, shots=None,
+             r_los=None, irs_spawn_frac=None, user_free_frac=None,
+             n_elements=None, p_s_dbm=None, user_speed=None,
+             natural_spawn=False) -> dict:
 
-    # Rebuild cfg from saved topology — guarantees K/M/N/bits match the weights.
-    # kappa/noise_var_dBW = optional R4 test-time noise overrides (no retrain).
-    cfg    = load_training_cfg(run_dir, kappa=kappa, noise_var_dBW=noise_var_dBW)
+    # Rebuild cfg from saved topology — guarantees K/M/N/bits AND the curriculum
+    # ramp/radius geometry match the env the policy was TRAINED on.
+    # kappa/noise_var/r_los/spawn/free/N/P_S/speed/spawn-mode = optional
+    # test-time zero-shot overrides.
+    cfg    = load_training_cfg(run_dir, kappa=kappa, noise_var_dBW=noise_var_dBW,
+                               r_los=r_los, irs_spawn_frac=irs_spawn_frac,
+                               user_free_frac=user_free_frac,
+                               n_elements=n_elements, p_s_dbm=p_s_dbm,
+                               user_speed=user_speed, natural_spawn=natural_spawn)
+    print(f"  ⚙ eval env: R_LoS={cfg.R_LoS_km} · radius irs/user="
+          f"{cfg.irs_spawn_radius_frac}/{cfg.user_free_radius_frac}")
     if kappa is not None or noise_var_dBW is not None:
         print(f"  ⚙ R4 noise override: kappa={cfg.kappa} noise_var_dBW={cfg.noise_var_dBW}")
+    if (n_elements is not None or p_s_dbm is not None or user_speed is not None
+            or natural_spawn):
+        print(f"  ⚙ zero-shot env override: N={cfg.N} P_S={cfg.P_S_dBm}dBm "
+              f"speed={cfg.user_speed_mps}m/s balanced_spawn={cfg.balanced_blocked_spawn}")
     env    = ISTNEnv(cfg, seed=seed, n_steps_ep=n_steps)
     demand = np.full(cfg.K, cfg.D_k_bps_hz)
 
     actor, phase_net, power_net, ck_net = load_agents(run_dir, seed=seed)
+    if shots is not None and hasattr(actor, 'n_shots'):
+        print(f"  ⚙ deploy-shots override: n_shots {actor.n_shots} → {shots}")
+        actor.n_shots = shots
 
     rng = np.random.default_rng(seed)
     policies = {
@@ -382,6 +436,29 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--noise-var', dest='noise_var', type=float, default=None,
                         help='R4 test-time override: receiver noise variance noise_var_dBW (default '
                              '= training 10.0). Sweep up for SNR-robustness eval (no retrain).')
+    parser.add_argument('--shots', type=int, default=None,
+                        help='Deploy-time override: VQC measurement shots (default = trained '
+                             'n_shots, usu. 1500). Raise (6000/10000) to cut o_hat shot-noise → '
+                             'more consistent assignment (no retrain). Ignored for classical actor.')
+    parser.add_argument('--R-LoS', dest='r_los', type=float, default=None,
+                        help='Test-time override: eval R_LoS_km ramp (default = training value from '
+                             'hyperparameters.json). Set to eval a policy on a DIFFERENT ramp (zero-shot).')
+    parser.add_argument('--irs-spawn-frac', dest='irs_spawn_frac', type=float, default=None,
+                        help='Test-time override: irs_spawn_radius_frac (default = training value). '
+                             '=1.0 → full-unlock eval geometry.')
+    parser.add_argument('--user-free-frac', dest='user_free_frac', type=float, default=None,
+                        help='Test-time override: user_free_radius_frac (default = training value). '
+                             '=1.0 → full-unlock eval geometry.')
+    parser.add_argument('--n-elements', dest='n_elements', type=int, default=None,
+                        help='Zero-shot override: IRS elements per panel N (default = training '
+                             'value). d_aff is N-independent so the policy transfers as-is.')
+    parser.add_argument('--p-s-dbm', dest='p_s_dbm', type=float, default=None,
+                        help='Zero-shot override: satellite power P_S in dBm (default = training value).')
+    parser.add_argument('--user-speed', dest='user_speed', type=float, default=None,
+                        help='Zero-shot override: user mobility speed in m/s (default = training 1.5).')
+    parser.add_argument('--natural-spawn', dest='natural_spawn', action='store_true',
+                        help='Zero-shot override: disable balanced_blocked_spawn — blocked users '
+                             'spawn naturally (binomial across buildings) instead of evenly split.')
     return parser.parse_args()
 
 
@@ -395,4 +472,12 @@ if __name__ == '__main__':
         n_steps    = args.steps,
         kappa         = args.kappa,
         noise_var_dBW = args.noise_var,
+        shots         = args.shots,
+        r_los          = args.r_los,
+        irs_spawn_frac = args.irs_spawn_frac,
+        user_free_frac = args.user_free_frac,
+        n_elements     = args.n_elements,
+        p_s_dbm        = args.p_s_dbm,
+        user_speed     = args.user_speed,
+        natural_spawn  = args.natural_spawn,
     )

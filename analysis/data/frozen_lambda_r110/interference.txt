@@ -1,0 +1,16 @@
+  ⚙ cfg from ckpt: K=10 M=2 N=24 R_LoS=0.5
+========================================================================
+  λ-GRADIENT INTERFERENCE PROBE · ckpt=results/result_110/checkpoints/ep_01600
+  240 samples · 2·nq=24 λ-dims
+========================================================================
+  per-sample ||g_b||      : mean=1.039e+01  (HEALTHY O(0.01-1) → not vanishing)
+  mean pairwise cos(g_b,g_b') : +0.0092   ⭐ KEY
+  coherence ρ=||Σg||/Σ||g||   : 0.3202   (≈ in-train λgrad 'r')
+  cos of DIRECTION only (strip advantage sign): +0.1025
+------------------------------------------------------------------------
+  ✅ INTERFERENCE CONFIRMED: ||g_b|| healthy (1.04e+01) but mean cos≈0 (+0.009)
+     → per-sample λ-grads point in ~random directions → batch-mean cancels →
+       Adam 1st-moment≈0 → λ FROZEN.  NOT vanishing/barren-plateau.
+     But direction-only cos=+0.103 ≠ 0 → much of the cancellation is
+       ADVANTAGE-SIGN flips → a variance-reduction / baseline lever might help.
+========================================================================

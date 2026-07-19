@@ -3,17 +3,17 @@ quantum_actor.py
 ----------------
 Quantum Actor for IRS-assisted user selection.
 
-Architecture  (sizes for Case 3: n_qubits=16, n_latent=32, M=4, K=20)
+Architecture  (sizes for Case 2: n_qubits=12, n_latent=24, M=2, K=10)
 ----------------------------------------------------------------------
   a_t  →  GroupNorm  →  Dual-Branch Encoder (B2)  →  z_t ∈ R^{n_latent}
        IRS branch:  [q_m(M), p_m(M)] → FC(2M,16,ReLU) → FC(16,2M) → z_IRS ∈ R^{2M}
-       User branch: shared φ: [a_{k,0..M-1},D_k] → FC(M+1,8,ReLU) → FC(8,2) → z_k ∈ R^2
+       User branch: shared φ: [a_{k,0..M-1},D_k,|ĝ_SU_k|] → FC(M+2,8,ReLU) → FC(8,2) → z_k ∈ R^2
                     stack K embeddings → linear projection P → z_user ∈ R^{2(nq-M)}
                     z_t = [z_user | z_IRS] ∈ R^{2(nq-M)+2M} = R^{n_latent}
-       →  LN(z_t)  →  Encoding angles (λ)
+       →  LN(z_t)·γ+β  →  Encoding angles (λ)
        →  n_qubits-qubit quantum circuit  →  o_hat ∈ R^{N_QUANTUM}
        →  h_t = [z_t, o_hat] ∈ R^{n_latent + N_QUANTUM}
-       →  Post-NN (ξ)  →  logits ∈ R^{K(B+1)}  →  per-user softmax  →  φ ∈ {0,…,B}^K
+       →  head ξ (SoftmaxPQC linear+β  |  Post-NN MLP)  →  logits ∈ R^{K(B+1)}  →  per-user softmax  →  φ ∈ {0,…,B}^K
 
 Observables: ⟨Z_i⟩ (nq) + configurable ZZ pairs via configure_topology()
              B4: N_QUANTUM = 2·nq − 1 + len(extra_zz_pairs)
@@ -21,20 +21,22 @@ Observables: ⟨Z_i⟩ (nq) + configurable ZZ pairs via configure_topology()
 
 Affinity feature vector  (B2 — replaces raw Re/Im channels)
 ------------------------------------------------------------
-  a_t = [a_{k,m} affinities (K×M), D_k demands (K), |g_SU_k| direct (K),
+  Built from ESTIMATED channels ĝ (imperfect CSI), not the true physical g.
+  a_t = [a_{k,m} affinities (K×M), D_k demands (K), |ĝ_SU_k| direct (K),
          q_m means (M), p_m powers (M)]
   d_aff = K*(M+2) + 2*M   (e.g. 17 for K=5, M=1)
 
 Parameters  Ω = {ω, λ, θ, ξ}
   ω : AE weights  (encoder + decoder)
-  λ : quantum encoding scales  (λ^y, λ^z) ∈ R^{8×2}
-  θ : quantum variational angles  (θ^y, θ^z) ∈ R^{8×2}
-  ξ : post-processing NN weights
+  λ : quantum encoding scales  λ^y, λ^z ∈ R^{n_q}  (+ enc-norm affine γ,β ∈ R^{n_latent})
+  θ : quantum variational angles  θ^y, θ^z ∈ R^{L × n_q}
+  ξ : assignment-head weights  (SoftmaxPQC linear+β, or Post-NN MLP)
 
 Gradient computation
 --------------------
   Classical layers (ω, ξ) : standard backprop
-  Quantum parameters (λ, θ): parameter-shift rule (see quantum_circuit.py)
+  Quantum parameters (λ, θ, γ, β): SPSA (default) or exact parameter-shift on the
+      circuit observable Jacobian ∂o_hat/∂·, then analytic chain-rule (quantum_circuit.py)
 
 All architecture hyperparameters are defined in params.py and must be
 passed explicitly at construction — there are no fallback defaults.
@@ -177,6 +179,8 @@ class QuantumActor:
         if self.READOUT_MODE == 'r1':
             _nu = n_qubits - cfg.M
             self.N_QUANTUM = _nu * (cfg.M + 2) + cfg.M
+        elif self.READOUT_MODE == 'single_z':
+            self.N_QUANTUM = n_qubits              # single-Z only (ablation baseline)
         elif full_zz_pairs:
             self.N_QUANTUM = n_qubits + len(full_zz_pairs)
         else:
@@ -327,24 +331,29 @@ class QuantumActor:
         -------
         a_t : (d_aff,) float  with d_aff = K*(M+2) + 2*M
               BLOCK layout (contiguous per feature type):
-                [ affinity (K*M) | demand (K) | |g_SU| (K) | q_m (M) | p_m (M) ]
+                [ affinity (K*M) | demand (K) | |ĝ_SU| (K) | q_m (M) | p_m (M) ]
               affinity block is user-major: [a_{0,0..M-1}, a_{1,0..M-1}, …].
+
+        Imperfect CSI: the assignment actor decides on the ESTIMATED channels
+        ĝ = g + Δg (the same imperfect CSI used for precoding design), NOT the
+        true physical channels g.  Falls back to the true keys only if the obs
+        dict predates the ĝ keys (e.g. a hand-built mock).
         """
-        g_sr = obs['g_SR']                          # (M,) complex
-        g_ru = obs['g_RU']                          # (M, K) complex
-        g_su = obs['g_SU']                          # (K,) complex — direct sat→user
+        g_sr = obs.get('g_SR_hat', obs['g_SR'])     # (M,) complex — estimated ĝ_SR
+        g_ru = obs.get('g_RU_hat', obs['g_RU'])     # (M, K) complex — estimated ĝ_RU
+        g_su = obs.get('g_SU_hat', obs['g_SU'])     # (K,) complex — estimated ĝ_SU (direct)
         _M, _K = self.B, self.K
 
-        # Affinity a_{k,m} = |g_SR[m]| × |g_RU[m,k]|  (IRS-path quality)
+        # Affinity a_{k,m} = |ĝ_SR[m]| × |ĝ_RU[m,k]|  (IRS-path quality, estimated CSI)
         g_sr_mag = np.abs(g_sr)                     # (M,)
         g_ru_mag = np.abs(g_ru)                     # (M, K)
         # a_mat[k, m] = g_sr_mag[m] * g_ru_mag[m, k]
         a_mat    = (g_sr_mag[:, None] * g_ru_mag).T  # (K, M)
 
         d_t      = demand.astype(np.float64)         # (K,)
-        g_su_mag = np.abs(g_su)                      # (K,)  direct-path quality
+        g_su_mag = np.abs(g_su)                      # (K,)  direct-path quality (estimated)
 
-        # IRS features: q_m = mean affinity per IRS, p_m = |g_SR[m]|²
+        # IRS features: q_m = mean affinity per IRS, p_m = |ĝ_SR[m]|²
         q_m = a_mat.mean(axis=0)                    # (M,)  mean over K users
         p_m = g_sr_mag ** 2                          # (M,)
 

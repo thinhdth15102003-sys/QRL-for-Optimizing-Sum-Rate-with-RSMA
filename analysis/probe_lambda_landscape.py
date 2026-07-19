@@ -52,7 +52,14 @@ def main():
     ap.add_argument('--seed', type=int, default=20260602)
     args = ap.parse_args()
 
-    cfg = make_config(); K, M, N = cfg.K, cfg.M, cfg.N
+    # topology + env from the CHECKPOINT itself (params.py may be on another Case)
+    from infer import load_training_cfg
+    try:
+        cfg = load_training_cfg(args.ckpt)
+        print(f"  ⚙ cfg from ckpt: K={cfg.K} M={cfg.M} N={cfg.N} R_LoS={cfg.R_LoS_km}")
+    except FileNotFoundError:
+        cfg = make_config()
+    K, M, N = cfg.K, cfg.M, cfg.N
     D_k = cfg.D_k_bps_hz; lamD = cfg.lambda_D; eps = getattr(cfg, 'epsilon_qp', 1e-3)
     env = ISTNEnv(cfg=cfg, seed=args.seed, n_steps_ep=args.states + 5, reward_noise_avg=1)
 

@@ -153,6 +153,8 @@ def _n_obs(nq: int) -> int:
     if _READOUT_MODE == 'r1':
         nu = nq - _R1_M                  # user qubits
         return nu * (_R1_M + 2) + _R1_M  # R1-a + R1-b + R1-c + R1-d
+    if _READOUT_MODE == 'single_z':
+        return nq                        # single-Z only (ablation baseline, no ZZ)
     if _FULL_ZZ_PAIRS:
         return nq + len(_FULL_ZZ_PAIRS)
     return 2 * nq - 1 + len(_EXTRA_ZZ_PAIRS)
@@ -284,6 +286,9 @@ def _obs_from_batch(psi_b, nq: int):
     for i in range(nq):
         z_exp[:, i] = (probs * sign[i]).sum(axis=1)
 
+    if _READOUT_MODE == 'single_z':                     # ablation: Z-only readout (no ZZ)
+        return z_exp                                    # (B, nq)
+
     if _READOUT_MODE == 'r1':                            # Δ2: structured per-action readout
         M  = _R1_M
         nu = nq - M
@@ -377,6 +382,9 @@ def expectations_shots(alpha: np.ndarray, delta: np.ndarray,
     # Per-qubit Z eigenvalue signs per shot: s[i] = (1 - 2·bit_i) ∈ {±1}^n_shots
     s_shot = [(1 - 2 * ((samples >> (nq - 1 - i)) & 1)) for i in range(nq)]
     z_exp  = np.array([s_shot[i].mean() for i in range(nq)])
+
+    if _READOUT_MODE == 'single_z':                     # ablation: Z-only readout (no ZZ)
+        return z_exp                                    # (nq,)
 
     if _READOUT_MODE == 'r1':                            # Δ2: structured per-action readout
         M  = _R1_M

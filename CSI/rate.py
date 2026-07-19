@@ -3,12 +3,15 @@ rate.py
 -------
 SINR and achievable rate computation for the Multi-IRS RSMA system.
 
-Channel convention
+Channel convention  (see effective_channels_all / compute_sum_rate `use_true`)
 ------------------
-  Effective channel h_k is computed from ESTIMATED channels (g_*_hat) —
-  the system designs precoding based on what the CSI estimator provides,
-  not the true channel.  The RL agent observes true channels; the physical
-  system operates on g_hat.
+  DESIGN view  (use_true=False, default): effective channel h_k from ESTIMATED
+    ĝ (g_*_hat) — precoding (assignment/phase/power/Ck) is designed on the
+    imperfect CSI estimate the system actually has.
+  ACHIEVED view (use_true=True): h_k from the TRUE channel g (g_*) — the
+    reward / achieved-rate / QoS score the ĝ-designed precoding against reality
+    (env.step reward, counterfactual reward).  Imperfect CSI costs performance
+    precisely through this design-vs-reality gap.
 
 RSMA grouping  (G+1 common streams, G = active IRS count)
 ----------------------------------------------------------
@@ -70,32 +73,44 @@ class RateComputer:
 
     def effective_channels_all(self, assignment: np.ndarray,
                                Phi: np.ndarray,
-                               channels: dict) -> np.ndarray:
+                               channels: dict,
+                               use_true: bool = False) -> np.ndarray:
         """
         Compute h[k] for all K users simultaneously.  Returns (K,) complex.
 
         For IRS user k with assignment[k]=m (1-based):
-            h[k] = beta[m-1] * conj(g_SR_hat[m-1]) * sum_n(diag(Phi[m-1])) * g_RU_hat[m-1, k]
+            h[k] = beta[m-1] * conj(g_SR[m-1]) * sum_n(diag(Phi[m-1])) * g_RU[m-1, k]
         For direct user k with assignment[k]=0:
-            h[k] = g_SU_hat[k]
+            h[k] = g_SU[k]
+
+        use_true : which channel realisation to evaluate the effective channel on.
+            False (default) → ESTIMATED ĝ (g_*_hat): the imperfect CSI the precoding
+                              is DESIGNED on (assignment/phase/power decisions).
+            True            → TRUE g (g_*): the actual physical channel the signal
+                              propagates through — used for the ACHIEVED rate/reward,
+                              so the ĝ-designed precoding is scored on reality.
         """
         K = self.cfg.K
         N = Phi.shape[1]
+        sfx = '' if use_true else '_hat'                 # '' = true g, '_hat' = ĝ
+        g_SR = channels['g_SR' + sfx]
+        g_RU = channels['g_RU' + sfx]
+        g_SU = channels['g_SU' + sfx]
 
         # sum of diagonal elements for each IRS phase matrix: (M,)
         phi_diag = Phi[:, np.arange(N), np.arange(N)]
         eff_phi  = phi_diag.sum(axis=1)
 
-        # per-IRS coefficient: beta[m] * conj(g_SR_hat[m]) * eff_phi[m]  → (M,)
-        irs_coeff = channels['beta'] * channels['g_SR_hat'].conj() * eff_phi
-        # h_irs[m, k] = irs_coeff[m] * g_RU_hat[m, k]  → (M, K)
-        h_irs = irs_coeff[:, np.newaxis] * channels['g_RU_hat']
+        # per-IRS coefficient: beta[m] * conj(g_SR[m]) * eff_phi[m]  → (M,)
+        irs_coeff = channels['beta'] * g_SR.conj() * eff_phi
+        # h_irs[m, k] = irs_coeff[m] * g_RU[m, k]  → (M, K)
+        h_irs = irs_coeff[:, np.newaxis] * g_RU
 
         # Select per user: IRS path or direct path
         mask  = assignment > 0                           # (K,) bool
         m_idx = np.clip(assignment - 1, 0, None)         # (K,) 0-based, clamped
         h_from_irs = h_irs[m_idx, np.arange(K)]          # (K,)
-        return np.where(mask, h_from_irs, channels['g_SU_hat'])
+        return np.where(mask, h_from_irs, g_SU)
 
     # ------------------------------------------------------------------ #
     # Vectorised SINR helper
@@ -200,9 +215,15 @@ class RateComputer:
                          w_c_vec: np.ndarray,
                          C_k: Optional[np.ndarray] = None,
                          active_irs_ids: Optional[List[int]] = None,
-                         sigma2: Optional[float] = None) -> dict:
+                         sigma2: Optional[float] = None,
+                         use_true: bool = False) -> dict:
         """
         Compute achievable sum-rate for all users under multi-group RSMA.
+
+        use_true : evaluate the achieved rate on the TRUE channel g (reward /
+            achieved-rate / QoS) when True; on the ESTIMATED ĝ (design view) when
+            False.  The precoding (Phi, w_p, w_c) is unchanged — only the channel
+            the signal is scored against differs (see effective_channels_all).
 
         Parameters
         ----------
@@ -228,7 +249,7 @@ class RateComputer:
             active_irs_ids = sorted(set(int(a) for a in assignment[:K] if a > 0))
 
         wc_map = self._make_wc_map(active_irs_ids)
-        h      = self.effective_channels_all(assignment, Phi, channels)
+        h      = self.effective_channels_all(assignment, Phi, channels, use_true=use_true)
         wp     = w_p[:K]
 
         groups = self._build_groups(assignment)

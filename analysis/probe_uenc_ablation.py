@@ -156,14 +156,25 @@ def run_ckpt(ckpt_path: str, args, c_uenc_list, include_bypass_zero: bool):
     print(f"  CKPT  : {ckpt_path}")
     print("=" * 76)
 
-    cfg = make_config()
-    D_k = getattr(P, "D_k_bps_hz", 0.1)
+    # topology + env from the CHECKPOINT itself (params.py may be on another Case)
+    from infer import load_training_cfg
+    try:
+        cfg = load_training_cfg(ckpt_path)
+        print(f"  ⚙ cfg from ckpt: K={cfg.K} M={cfg.M} N={cfg.N} R_LoS={cfg.R_LoS_km}")
+    except FileNotFoundError:
+        cfg = make_config()
+    D_k = getattr(cfg, "D_k_bps_hz", 0.1)
     env = ISTNEnv(cfg=cfg, seed=args.seed,
                   n_steps_ep=args.steps + args.warmup + 2,
                   reward_noise_avg=1)
-    actor = QuantumActor.from_dir(ckpt_path, seed=args.seed)
+    # normalize: an ep_XXXXX dir holds the nets under agents/
+    actor_dir = ckpt_path
+    if os.path.isdir(os.path.join(ckpt_path, 'agents')) and \
+       not os.path.isfile(os.path.join(ckpt_path, 'actor_config.json')):
+        actor_dir = os.path.join(ckpt_path, 'agents')
+    actor = QuantumActor.from_dir(actor_dir, seed=args.seed)
     actor.n_shots = getattr(P, "n_shots_train", 1500)
-    policy = make_checkpoint_policy(ckpt_path, cfg)
+    policy = make_checkpoint_policy(actor_dir, cfg)
 
     states = _sample_states(env, actor, policy, args, D_k)
     N = len(states)

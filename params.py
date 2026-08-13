@@ -33,6 +33,7 @@ Training cases (G4 nq=12 UNIFIED — 2026-06-08)
     = universal approximator independent of nq.
 """
 
+import os
 from istn.config import SystemConfig
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -42,8 +43,8 @@ K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
 M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
 
 # ── UNIFIED VQC register (DO NOT change per case) ──────────────────────────────
-n_qubits = 12    # ⭐ G4 UNIFIED: fixed 12 qubits across all cases (NISQ-feasible)
-n_latent = 24    # ⭐ G4 UNIFIED: = 2 × n_qubits = 24 across all cases
+n_qubits = 12                                      # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+n_latent = 2 * n_qubits                            # = 2 × n_qubits (auto-derives from QRL_NQ; 24 @nq12, 28 @nq14)
 
 # ── Per-case hypers (auto-derived from K) ──────────────────────────────────────
 def _per_case_hyper(K_val: int) -> dict:
@@ -75,7 +76,13 @@ f_GHz         = 1.58   # carrier frequency (GHz)
 h_SR_km       = 800.0  # satellite altitude (km)
 G_S_dBi       = 60.0   # satellite TX antenna gain (dBi)
 G_U_dBi       = 60.0   # user RX antenna gain (dBi)
-noise_mean_dBW = -30.0  # 0 dBm = -30 dBW = 10^-3 W  (paper: n_0 ~ N(0,10) dBm)
+# Matches Tan Sec. V-A verbatim: "the Gaussian white noise ... is set to n_0 ~ N(0,10)[dB]",
+# i.e. mean 0 dBm with variance 10 dB^2, and Fig. 8 sweeps that VARIANCE over 8..20 dB.
+# A reading of sigma_1^2 as noise POWER was tested (2026-07-24) and discarded: it happens to
+# match their Fig. 8 left endpoint (1.582 vs 1.57) but contradicts the text, and the
+# remaining ~0.3 sum-rate gap is explained by their g_RU (constant 10 dB, no path loss) and
+# by their SDR+SA solver being weaker than our coordinate-ascent AO.
+noise_mean_dBW = -30.0  # 0 dBm = -30 dBW = 10^-3 W  (Tan: n_0 ~ N(0,10) dBm)
 noise_var_dBW  = 10.0   # noise variance in dB^2; sampled per step: n_0 ~ N(-30,10) dBW
 
 # ── Rain attenuation  (lognormal, ITU-R) ────────────────────────────────────────
@@ -97,7 +104,12 @@ quantization_bits = 2   # 2-bit → 4 levels: {0, π/2, π, 3π/2}
 
 # ── QoS constraint & demand-aware reward (quadratic penalty) ────────────────────
 # QoS: R_private[k] + C_k[k] >= D_k for every user k
-D_k_bps_hz = 0.10   # per-user QoS demand D_k (bps/Hz); penalised if R_tot < D_k
+# 0.05 bps/Hz is 17% / 36% / 55% of the per-user rate AO achieves in cases 1/2/3, i.e. inside
+# the 10-40% band that min-rate constraints usually occupy, and the only value under which all
+# three cases stay feasible (best reachable QoS 100/100/97.7%).  Tan states the constraint
+# (eq. 15g) but never assigns it a value, so there is no reference figure to inherit; note
+# also that theirs binds the PRIVATE rate whereas D_k here binds R_private + C_k.
+D_k_bps_hz = 0.05   # per-user QoS demand D_k (bps/Hz); penalised if R_tot < D_k
 lambda_D   = 1.5    # penalty weight λ_D (QoS vs sum-rate knob). ↑ → agent keeps weak
                   # [Case 2 R_LoS=0.2: 3.0→1.5. result_1 stuck at QoS54% with λ_D=3.0
                   #  because Direct-only ALREADY = 100% QoS → λ_D=3.0 made qp(4.2)≫
@@ -110,11 +122,17 @@ lambda_D   = 1.5    # penalty weight λ_D (QoS vs sum-rate knob). ↑ → agent 
 epsilon_qp = 0.001  # positive error tolerance ε for QoS denominator guard
 
 # ── Ground geometry & satellite LoS zone ────────────────────────────────────────
-R_LoS_km = 0.2     # satellite LoS coverage radius on ground (km)
+R_LoS_km = 0.5     # satellite LoS coverage radius on ground (km)
                   # users and IRS are both placed within this circle
-                  # curriculum: 0.2 → 0.3 → 0.4 → 0.45 → 0.5 (resume each step)
-                  # [Case 2: START fresh at 0.2 (easiest), then ramp & resume each step.
-                  #  Read feasibility probe at each R_LoS; set λ_D per docs/Training-Case-2.txt.]
+                  # ⭐ 2026-07-21: DEFAULT MOVED 0.2 → 0.5 (train directly at the
+                  # deployed operating point; no ramp curriculum, no 0.2-vs-0.5
+                  # staging rule). Justification: with the per-element physics the
+                  # Pareto frontier is nearly INVARIANT to R_LoS — measured 0.2 vs
+                  # 0.5 differ in the 4th decimal. The geometry does scale
+                  # (mean|user| 0.1→0.4 km) but blocked% barely moves (71.2%→70.0%)
+                  # and the link is INTERFERENCE-limited, so a common channel
+                  # scaling cancels in the SINR. Ramping bought nothing.
+                  # ⚠ Runs trained at 0.2 are NOT comparable to these.
 h_IRS_km = 0.02   # IRS/building rooftop height (km) = 20 m
 
 # ── Spawn-region bounds (FRACTION of R_LoS, 0.0→centre … 1.0→full LoS disk) ──────
@@ -143,7 +161,14 @@ d_block_km    = 0.02   # building footprint half-width (km) — each building is
                        # the satellite at (0,0,h_SR_km).
 
 # ── Reinforcement learning — episode counts (also used by test suite) ────────────
-n_episodes           = 6000   # training episodes
+n_episodes           = 15000  # training episodes [07-25: 10000 → 15000. Measured on
+                              # r216/r217 (aux-teacher runs): greedy J still climbs
+                              # +0.025-0.028/1000ep at ep 10000 with NO saturation
+                              # (1.497@6900 → 1.575@10000), and the AO crossing
+                              # (~1.65) extrapolates to ~ep 13000 — inside 15k. Do
+                              # NOT pre-commit to 20k: measure the slope at 12k/15k
+                              # checkpoints and resume only the winner further if
+                              # it is still >~0.01/1k. 07-21 history: 6000 → 10000.]
 n_steps_per_ep       = 200    # max environment steps per episode
 n_rollout_episodes   = 12     # collect this many episodes before each PPO update
                               # [result_8: 8→12 — near the optimum the advantage
@@ -244,11 +269,14 @@ adv_clip   = 5.0  # clip normalised advantage to ±this (0/None = off). Bounds g
 data_reuploading = True   # True: circuit = H→U_E→∏_ℓ(U_L(θ_ℓ)·U_E(z))
 
 # ── Phase-shift MLP (IRS element phase policy) ──────────────────────────────────
-n_hidden_phase = [64, 128, 256, 128]          # hidden units  31→64→128→256→96
+n_hidden_phase = [64, 64]  # ⛔ NO CLI FLAG — Tables VI/VII were trained on THIS set; a run launched
+                                    # with any other value is not comparable to them. Verify a finished run
+                                    # from agents/{phase,power,ck}_config.json, NOT hyperparameters.json
+                                    # (that file records params.py even when --resume overrode it).
 lr_phase       = 1e-4  # Adam lr
 
 # ── Power allocation MLP  ([w_c, w_p] summing to P_S) ───────────────────────────
-n_hidden_power = [128, 128, 64]  # Case 2: nới lớp đầu (input 2K+nlat=44)
+n_hidden_power = [64, 32]
 lr_power       = 1e-4  # Adam lrLem
 # [Case2 result_8 2026-06-01] factored output (3-way: split + common + private),
 # fix coupling-induced wp-concentration. Probe (probe_power_qos): equal-split private
@@ -264,7 +292,7 @@ beta_entropy_pwr_private = 0.003 # added on top of global β_entropy for π_priv
                                   #  global, ent/pg expected <1.0. Probe target wp-top2<35%.]
 
 # ── Common-rate split MLP  (C_k fractions, normalised within groups) ────────────
-n_hidden_ck    = [128, 128, 64, 32]     # Case 2: nới lớp đầu (input 5K=50)
+n_hidden_ck    = [64, 32]
 lr_ck          = 5e-5  # Adam lr (↓ from 1e-4 2026-06-18: slower Ck = stable; pairs với _ck_group_softmax spread-clamp chống degenerate collapse [result_40/44])
 
 # ── Critic architecture ───────────────────────────────────────────────────────────

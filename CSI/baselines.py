@@ -81,11 +81,13 @@ class GreedyPolicy:
             best_gain = np.abs(ch['g_SU_hat'][k])
             best_a    = 0
 
-            # IRS reflected link gain for each IRS (using estimated CSI)
+            # IRS reflected link gain for each IRS (using estimated CSI).
+            # PER-ELEMENT: element n reflects with its own phase Phi[m,n,n] onto
+            # its own channel g_RU_hat[m,n,k], so the sum is over the N elements.
             for m in range(cfg.M):
                 beta_m = ch['beta'][m]
-                h_m    = beta_m * np.sum(
-                    ch['g_SR_hat'][m].conj() * np.diag(Phi[m]) * ch['g_RU_hat'][m, k]
+                h_m    = beta_m * ch['g_SR_hat'][m].conj() * np.sum(
+                    np.diag(Phi[m]) * ch['g_RU_hat'][m, :, k]
                 )
                 gain = np.abs(h_m)
                 if gain > best_gain:

@@ -112,7 +112,8 @@ def test_signal_flow(verbose=True):
     print(f"  Stage 2 — Channel Coefficients  g_SR, g_RU, g_SU")
     print(f"  {'─'*W}")
     print(f"  Sat→IRS  : g_SR[m]   = (free-space path loss) · rain_attn · exp(jφ_SR)")
-    print(f"  IRS→User : g_RU[m,k] = sqrt(G_U · g_sf · path_loss) · Rayleigh sample")
+    print(f"  IRS→User : g_RU[m,n,k] = sqrt(G_U · g_sf · path_loss) · Rayleigh sample")
+    print(f"             ↑ PER-ELEMENT: large-scale terms shared over n, Rayleigh i.i.d. per n")
     print(f"  Sat→User : g_SU[k]   = (free-space path loss) · rain_attn · exp(jφ_SU)")
     print(f"  Observed : g̃ = g_true + Δg,  Δg = κ|g|ε,  ε~CN(0,1),  κ={cfg.kappa}")
     print(f"  Blocking : g_SU[k] ×= β_block={cfg.beta_blocking} when building intercepts sat→user path")
@@ -213,15 +214,15 @@ def test_signal_flow(verbose=True):
     print(f"  Stage 5 — Effective Channel  h_k")
     print(f"  {'─'*W}")
     print(f"  Direct (φ[k]=0)  : h_k = g_SU[k]")
-    print(f"  IRS m  (φ[k]=m)  : h_k = β_m · Σ_n g_SR[m] · Φ[m,n] · g_RU[m,k]")
-    print(f"                             ↑ N={cfg.N} reflecting elements summed coherently")
+    print(f"  IRS m  (φ[k]=m)  : h_k = β_m · Σ_n g_SR[m] · Φ[m,n] · g_RU[m,n,k]")
+    print(f"                             ↑ N={cfg.N} elements, each with its OWN channel+phase")
 
     h_eff = rc.effective_channels_all(assignment, Phi, ch)   # (K,) complex
 
     # Best IRS effective channel for each user (for comparison)
     h_irs_mat = np.array([
         ch['beta'][m] * np.abs(
-            ch['g_SR'][m] * np.sum(np.diag(Phi[m])) * ch['g_RU'][m])
+            ch['g_SR'][m] * (np.diag(Phi[m])[:, None] * ch['g_RU'][m]).sum(axis=0))
         for m in range(cfg.M)
     ])   # (M, K)
     h_direct = np.abs(ch['g_SU'])   # (K,)
@@ -535,10 +536,10 @@ def test_channel(verbose=True):
 
     # Shape checks using cfg attributes (not hardcoded)
     assert ch['g_SR'].shape     == (cfg.M,)
-    assert ch['g_RU'].shape     == (cfg.M, cfg.K)
+    assert ch['g_RU'].shape     == (cfg.M, cfg.N, cfg.K)
     assert ch['g_SU'].shape     == (cfg.K,)
     assert ch['g_SR_hat'].shape == (cfg.M,)
-    assert ch['g_RU_hat'].shape == (cfg.M, cfg.K)
+    assert ch['g_RU_hat'].shape == (cfg.M, cfg.N, cfg.K)
     assert ch['g_SU_hat'].shape == (cfg.K,)
     assert ch['beta'].shape     == (cfg.M,)
     assert ch['d_SU'].shape     == (cfg.K,)
@@ -701,12 +702,12 @@ def test_rate(verbose=True):
     # Blocking indicator: user is "blocked" when the best available IRS effective
     # channel outperforms the direct link  →  user benefits from IRS routing.
     #   h_direct[k]   = |g_SU[k]|
-    #   h_irs[m,k]    = beta_m * |Σ_n g_SR[m] · φ_n · g_RU[m,k]|
+    #   h_irs[m,k]    = beta_m * |Σ_n g_SR[m] · φ_n · g_RU[m,n,k]|   (PER-ELEMENT)
     #   blocked[k]    = max_m(h_irs[m,k]) > h_direct[k]
     h_direct = np.abs(ch['g_SU'])                          # (K,)
     h_irs    = np.array([
         ch['beta'][m] * np.abs(
-            ch['g_SR'][m] * np.sum(np.diag(Phi[m])) * ch['g_RU'][m])
+            ch['g_SR'][m] * (np.diag(Phi[m])[:, None] * ch['g_RU'][m]).sum(axis=0))
         for m in range(cfg.M)
     ])                                                      # (M, K)
     blocked = h_irs.max(axis=0) > h_direct                 # (K,) bool
@@ -767,10 +768,10 @@ def test_env_core(verbose=True):
     ok("reset() returns obs with correct keys")
 
     assert obs['g_SR'].shape      == (cfg.M,)
-    assert obs['g_RU'].shape      == (cfg.M, cfg.K)
+    assert obs['g_RU'].shape      == (cfg.M, cfg.N, cfg.K)
     assert obs['g_SU'].shape      == (cfg.K,)
     assert obs['g_SR_hat'].shape  == (cfg.M,)
-    assert obs['g_RU_hat'].shape  == (cfg.M, cfg.K)
+    assert obs['g_RU_hat'].shape  == (cfg.M, cfg.N, cfg.K)
     assert obs['g_SU_hat'].shape  == (cfg.K,)
     assert obs['beta'].shape      == (cfg.M,)
     assert obs['Phi_angle'].shape == (cfg.M, cfg.N)
@@ -813,7 +814,7 @@ def test_env_core(verbose=True):
 
     if verbose:
         hint(f"State dim breakdown: "
-             f"g_SR={cfg.M}, g_RU={cfg.M*cfg.K}, "
+             f"g_SR={cfg.M}, g_RU={cfg.M*cfg.N*cfg.K}, "
              f"g_SU={cfg.K}, beta={cfg.M}, "
              f"Phi(cos+sin)={2*cfg.M*cfg.N}, assign={cfg.K}  → total={env.state_dim}")
         hint(f"State vector range: [{sv.min():.3e}, {sv.max():.3e}]")

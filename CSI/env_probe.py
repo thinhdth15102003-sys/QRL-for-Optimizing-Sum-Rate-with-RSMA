@@ -98,7 +98,9 @@ class _SourceControl:
         # ── 'n0': pin sigma2 to its expected value (linear of mean dBW) ──
         if 'n0' in self.disable:
             self._saved['sample_noise_sigma2'] = ch_model.sample_noise_sigma2
-            fixed_sigma2 = 10.0 ** (ch_model.cfg.noise_mean_dBW / 10.0)
+            # per-user (K,) to match the live sampler's shape
+            fixed_sigma2 = np.full(ch_model.cfg.K,
+                                   10.0 ** (ch_model.cfg.noise_mean_dBW / 10.0))
             ch_model.sample_noise_sigma2 = lambda: fixed_sigma2  # type: ignore
 
         # ── 'csi_kappa': zero the CSI estimation error coefficient ──

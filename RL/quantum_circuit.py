@@ -102,6 +102,7 @@ def _cz_idx(nq: int, ctrl: int, tgt: int):
 
 # ── Cross-block topology (B3/B4/B1 — configurable at actor init time) ──────────
 _EXTRA_CZ_PAIRS: tuple = ()   # B3: cross-block CZ bridges applied after NN chain per layer
+_NO_ENTANGLE: bool = False   # ablation: drop ALL two-qubit gates (product-state circuit)
 _EXTRA_ZZ_PAIRS: tuple = ()   # B4: extra ⟨Z_i Z_j⟩ observables appended to NN ZZ
 _FULL_ZZ_PAIRS:  tuple = ()   # B1: full ZZ set — when non-empty, REPLACES NN ZZ + extra ZZ
                                #     n_obs = nq + len(_FULL_ZZ_PAIRS)
@@ -124,7 +125,8 @@ def configure_topology(extra_cz_pairs: tuple = (),
                        extra_zz_pairs: tuple = (),
                        full_zz_pairs:  tuple = (),
                        readout_mode:   str   = 'generic',
-                       r1_m:           int   = 0) -> None:
+                       r1_m:           int   = 0,
+                       no_entangle:    bool  = False) -> None:
     """
     Configure cross-block entanglement topology + readout mode.
 
@@ -139,13 +141,26 @@ def configure_topology(extra_cz_pairs: tuple = (),
                      entirely.  N_QUANTUM = nq + len(full_zz_pairs).
     readout_mode   : 'generic' (Z + NN-ZZ + extra/full) | 'r1' (structured per-action).
     r1_m           : number of IRS qubits (= M) when readout_mode == 'r1'.
+    no_entangle    : ABLATION. Drops the NN CZ chain and every cross-block bridge,
+                     leaving a product-state circuit. The readout is NOT touched and
+                     keeps its dimension: on a product state the two-qubit terms
+                     satisfy <Z_i Z_j> = <Z_i><Z_j> exactly (measured: residual
+                     3.3e-07, against 0.351 with the chain in place), so R1-b and
+                     R1-c degenerate into products of R1-a/R1-d rather than
+                     disappearing. That is the point of the ablation -- it removes
+                     the quantum correlations while changing neither the parameter
+                     count (CZ carries no parameters) nor the interface.
     """
     global _EXTRA_CZ_PAIRS, _EXTRA_ZZ_PAIRS, _FULL_ZZ_PAIRS, _READOUT_MODE, _R1_M
+    global _NO_ENTANGLE
     _EXTRA_CZ_PAIRS = tuple(extra_cz_pairs)
     _EXTRA_ZZ_PAIRS = tuple(extra_zz_pairs)
     _FULL_ZZ_PAIRS  = tuple(full_zz_pairs)
     _READOUT_MODE   = str(readout_mode)
     _R1_M           = int(r1_m)
+    _NO_ENTANGLE    = bool(no_entangle)
+    if _NO_ENTANGLE:
+        _EXTRA_CZ_PAIRS = ()          # the bridges are two-qubit gates too
 
 
 def _n_obs(nq: int) -> int:
@@ -256,10 +271,11 @@ def _build_batch(alpha_b, delta_b, theta_y_b, theta_z_b,
         for i in range(nq):
             _apply_ry_flat(psi, theta_y_b[:, ell, i], i, nq)
             _apply_rz_flat(psi, theta_z_b[:, ell, i], i, nq)
-        for i in range(nq - 1):
-            _apply_cz_flat(psi, i, i + 1, nq)
-        for ctrl, tgt in _EXTRA_CZ_PAIRS:       # B3: cross-block entanglement bridges
-            _apply_cz_flat(psi, ctrl, tgt, nq)
+        if not _NO_ENTANGLE:
+            for i in range(nq - 1):
+                _apply_cz_flat(psi, i, i + 1, nq)
+            for ctrl, tgt in _EXTRA_CZ_PAIRS:   # B3: cross-block entanglement bridges
+                _apply_cz_flat(psi, ctrl, tgt, nq)
 
     return psi
 

@@ -41,6 +41,7 @@ import params as P
 from params  import make_config
 from CSI.env import ISTNEnv
 from CSI.baselines import DirectOnlyPolicy, AllIRSPolicy
+from analysis.phase_oracle import oracle_phase_idx   # --phase-aux-weight target
 from RL        import QuantumActor, ClassicalActor, ClassicalCritic, PhaseMLP, PowerMLP, CkMLP
 from RL.critic_diag import (compute_critic_diag, format_critic_diag_lines,
                             write_critic_diag_jsonl)
@@ -82,7 +83,7 @@ def _flog(msg: str = "") -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _build_phase_state(channels: dict, phi: np.ndarray, cfg,
-                       z_t: np.ndarray) -> np.ndarray:
+                       z_t: np.ndarray, d_s: int = None) -> np.ndarray:
     """
     Build per-IRS cascade channel states for PhaseMLP.
 
@@ -93,23 +94,370 @@ def _build_phase_state(channels: dict, phi: np.ndarray, cfg,
       phi_mask_m[k] = 1  iff user k is assigned to IRS m  — tells PhaseMLP which
       users are its "clients" without having to unmix the global z_t.
 
-    Returns (M, 2K + n_latent + K) float:
-      row m = [Re(c^SRU_m) (K), Im(c^SRU_m) (K), z_t (n_latent), phi_mask_m (K)]
-      inactive IRS rows are all-zero in channel/mask cols; z_t is broadcast to all rows.
+    Returns (M, N, 4K + n_latent + K) float — one row PER REFLECTING ELEMENT:
+      row (m,n) = [Re(c^SRU_{m,n}) (K), Im(c^SRU_{m,n}) (K),
+                   Re(g_SU) (K), Im(g_SU) (K),          ← added 2026-07-21
+                   z_t (n_latent), phi_mask_m (K)]
+      with c^SRU_{m,n,k} = conj(g_SR_hat[m]) · g_RU_hat[m,n,k] — element n's OWN
+      cascade channel. PhaseMLP is applied per element with shared weights, so this
+      is what makes phi_{m,n} a real decision (a per-IRS row cannot distinguish
+      elements).
+      Inactive IRS rows are all-zero in channel/g_SU/mask cols; z_t is broadcast.
+
+    ⭐ WHY g_SU IS IN THE STATE (added 2026-07-21 — it was the phase bottleneck).
+    The effective channel is h_k = g_SU[k] + Σ_n e^{jθ_n} c_{n,k}, so the oracle
+    phase is θ_n = arg(g_SU[k]) − arg(c_{n,k}): it needs the DIRECT-LINK ANGLE to
+    know what to align against. Without g_SU that angle is a per-state constant
+    absent from the input, so the supervised target was NOT A FUNCTION OF THE
+    STATE and the best possible fit was uniform. Measured on result_151
+    (K10/M2): phase warm-up converged to CE 1.376 vs ln(4)=1.386 (0.010 nats
+    below a uniform predictor) and per-element match 29.2% vs 25% chance; the
+    live head then scored coherent-gain alignment 0.1% (q=0.204 vs random
+    0.203) — i.e. indistinguishable from random phases, leaving the whole
+    per-element phase lever (|h|² ×11 at oracle phase) untouched.
+
+    ⭐ WHY UNIT PHASORS, NOT RAW Re/Im (2026-07-21 — this was THE phase bottleneck).
+    PhaseMLP layer-norms each element row as a whole, and the row mixes blocks
+    that differ by three orders of magnitude: c^SRU ~1e-3, g_SU ~5e-3, z_t ~4e-1,
+    mask 1.0. The norm's mean/std are set by z_t and mask, so the tiny channel
+    entries all collapse to nearly the same value and their ANGLE — the only
+    thing the phase target depends on — is destroyed before the MLP sees it.
+    Measured on one row: arg(c) = [2.633, -0.341, 0.402, 1.266] became
+    [-2.356, -2.356, -2.331, -2.358] after the norm (max Δ 4.99 rad).
+
+    Feeding c/|c| and g_SU/|g_SU| (i.e. cos∠, sin∠) keeps the angle exactly and
+    is already scale-free, so the norm cannot corrupt it. Offline supervised fit
+    on the oracle target, identical architecture/seed, only the encoding changed:
+        raw Re/Im            CE 1.3317  match 35.2%
+        unit phasor          CE 0.4571  match 84.2%      ← this
+        unit phasor + log|·| CE 0.9552  match 61.3%   (log|·| ~ -7 re-breaks the norm)
+    Magnitude is deliberately dropped: the target is angle-determined, and the
+    third row is direct evidence that adding raw-scale magnitude back HURTS.
+    This is a re-encoding of the SAME observed quantities — no new information,
+    no oracle leakage; the head still has to learn to combine ∠g_SU with ∠c.
+
+    LEGACY d_s: pass d_s=3K+n_latent to emit the PRE-g_SU layout, for probing
+    checkpoints trained before 2026-07-21 (their PhaseMLP has the narrow input
+    layer and would otherwise fail on a width mismatch). Probes should pass
+    `phase_net.d_s`; training always uses the new layout.
     """
-    M, K     = cfg.M, cfg.K
+    M, N, K  = cfg.M, cfg.N, cfg.K
     n_latent = len(z_t)
-    s        = np.zeros((M, 2 * K + n_latent + K))
+    legacy   = (d_s is not None and int(d_s) == 3 * K + n_latent)
+    # width MUST include the trailing phi_mask block (K) — legacy 2K+nl+K = 3K+nl,
+    # new 4K+nl+K = 5K+nl. It must equal the PhaseMLP d_s exactly.
+    if legacy:
+        off_z, off_mask = 2 * K, 2 * K + n_latent
+        width = 3 * K + n_latent
+    else:
+        off_z, off_mask = 4 * K, 4 * K + n_latent
+        width = 5 * K + n_latent
+    off_su   = 2 * K                       # Re/Im g_SU block (new layout only)
+    s        = np.zeros((M, N, width))
+    g_su     = channels['g_SU_hat']        # (K,) ESTIMATED — same CSI as c^SRU
+    EPS      = 1e-30
     for k in range(K):
         m = int(phi[k]) - 1          # 0-based IRS index; -1 for direct users
         if m >= 0:
-            c_mk = channels['g_SR_hat'][m].conj() * channels['g_RU_hat'][m, k]
-            s[m, k]                    += c_mk.real
-            s[m, K + k]                += c_mk.imag
-            s[m, 2 * K + n_latent + k]  = 1.0   # phi_mask: user k belongs to IRS m
-    # Broadcast z_t into every row (same system spatial state for all IRS panels)
-    s[:, 2 * K : 2 * K + n_latent] = z_t[None, :]
+            c_mnk = channels['g_SR_hat'][m].conj() * channels['g_RU_hat'][m, :, k]  # (N,)
+            if legacy:
+                s[m, :, k]     += c_mnk.real
+                s[m, :, K + k] += c_mnk.imag
+            else:
+                # UNIT PHASOR (cos∠, sin∠) rather than raw Re/Im — see the
+                # normalisation note in the docstring.
+                a_c = np.abs(c_mnk) + EPS
+                s[m, :, k]     += c_mnk.real / a_c
+                s[m, :, K + k] += c_mnk.imag / a_c
+                # direct-link phasor of THIS user, broadcast across the elements —
+                # constant in n, but it is the reference the elements align to.
+                a_g = abs(g_su[k]) + EPS
+                s[m, :, off_su + k]     += g_su[k].real / a_g
+                s[m, :, off_su + K + k] += g_su[k].imag / a_g
+            s[m, :, off_mask + k]      = 1.0   # phi_mask: user k belongs to IRS m
+    # Broadcast z_t into every element row (same system spatial state everywhere)
+    s[:, :, off_z : off_z + n_latent] = z_t[None, None, :]
     return s
+
+
+def _beta_pwr_priv(args) -> float:
+    """
+    Extra entropy bonus on the PRIVATE power axis (on top of the global β).
+
+    ⚠ params.py default is 0.003, i.e. 4× the global β=0.001 on that one axis.
+    That was tuned when PowerMLP could not learn from reward at all (the
+    phantom-action bug), so an entropy crutch was the only thing spreading w_p.
+    With the Dirichlet policy the axis DOES learn, and the extra pressure now
+    fights it: measured on result_150 (K5/M1, ep1200) the private max-share sat
+    frozen at 29% against a 20% flat floor while split/common moved freely
+    (43→81%). Pass --beta-entropy-pwr-private 0.0 to remove the crutch.
+    """
+    v = getattr(args, 'beta_entropy_pwr_private', None)
+    return float(P.beta_entropy_pwr_private if v is None else v)
+
+
+def _closed_form_ck(partial: dict, cfg) -> np.ndarray:
+    """
+    Closed-form common-rate split: fill the CHEAPEST unmet demand first inside
+    each group, then spend the leftover budget evenly (leftover is QoS-neutral
+    but pure sum-rate, so never leave it unspent).
+
+    Used by --closed-form-ck. Unlike the phase oracle (which only maximises
+    coherent gain, a HEURISTIC for J), this is provably optimal for the
+    sub-problem it solves: given R_private and the group budget R_c_group,
+    cheapest-demand-first maximises the number of users clearing D_k.
+
+    Measured motivation (result_159 ep_00200, K10/M2): the learned CkMLP hit
+    QoS 77.4% where this allocator hits 89.7% on the SAME routing/phase/power —
+    it over-allocated 0.514/state above need against only 0.089 below, i.e. it
+    spread C_k over users already met by their private rate instead of filling
+    the ones short of D_k.
+    """
+    from analysis.oracle_alloc import oracle_ck_met
+    Dk = cfg.D_k_bps_hz
+    _, C_k = oracle_ck_met(partial['R_private'], partial['R_c_group'],
+                           partial['groups'], Dk)
+    for gid, members in partial['groups'].items():
+        mem = np.asarray(list(members), dtype=int)
+        if mem.size == 0:
+            continue
+        left = float(partial['R_c_group'].get(int(gid), 0.0)) - float(C_k[mem].sum())
+        if left > 1e-12:
+            C_k[mem] += left / mem.size
+    return C_k
+
+
+def _po_est(ch: dict) -> dict:
+    """Env channels → the plain keys oracle_phase_idx expects, on ESTIMATED CSI."""
+    return {'g_SR': ch['g_SR_hat'], 'g_RU': ch['g_RU_hat'],
+            'g_SU': ch['g_SU_hat'], 'beta': ch['beta']}
+
+
+def _ck_aux_target(partial: dict, cfg) -> dict:
+    """
+    Per-group demand-fill SHARE vector (sums to 1) used as the teacher signal for
+    --ck-aux-weight. Groups whose common budget is ~0 map to None and are skipped.
+    """
+    C_k = _closed_form_ck(partial, cfg)
+    out = {}
+    for gid, members in partial['groups'].items():
+        mem = np.asarray(list(members), dtype=int)
+        if mem.size == 0:
+            out[gid] = None
+            continue
+        v = np.asarray(C_k[mem], dtype=float)
+        s = float(v.sum())
+        out[gid] = (v / s) if s > 1e-12 else None
+    return out
+
+
+# Grid for the power teacher, chosen by measuring what each candidate leaves on the
+# table against the full 7×13 sweep the ceiling is computed on (2026-07-24):
+#   (0,1,4,16)×(0.4,0.6,0.8)        Case 1 0.2%   Case 2 4.1%   ← kept, 12 pts
+#   (0,1,4,8,16)×(0.35,.5,.6,.7)    Case 1 14.4%  Case 2 3.1%
+#   (0,2,8,16)×(0.35,.55,.75,.95)   Case 1 8.1%   Case 2 6.6%
+#   (0,1,2,4,8,16)×(0.4,0.6,0.8)    Case 1 0.2%   Case 2 3.8%   (+50% cost)
+# f* differs sharply by case (Case 1 wants ~0.8, Case 2 ~0.6), so dropping either
+# endpoint is expensive; extra β rungs buy almost nothing. The residual 4% is not a
+# hard bound — the head still receives the full PPO gradient and can pass the target.
+_PW_AUX_BETAS = (0.0, 1.0, 4.0, 16.0)     # private-power concentration exponent
+_PW_AUX_FRACS = (0.4, 0.6, 0.8)           # fraction of P_S given to the private stream
+
+# [--power-aux-beta-cap] 2026-08-01. Swept beta on 100 states of r232, CHOOSING on
+# the estimated channel and SCORING on the true one, and the achieved J is:
+#     beta   0.00    0.50    1.00    2.00    4.00   16.00
+#     J    1.5312  1.5538  1.5765  1.4697  1.3752  1.3920
+#     QoS   99.6%   99.3%   98.8%   96.3%   93.8%   93.3%
+# J peaks at beta=1 (a 33x dynamic range) and collapses beyond it — heavy
+# concentration is WORSE than equal power once the allocation is paid on the real
+# channel. The grid above is selected per state by maximising on g-hat, where
+# extreme concentration looks good precisely because it exploits estimation
+# error, so it hands the head a target that loses on g. That is a concrete
+# mechanism for the 21 power-aux runs that all came out net-harmful.
+_PW_AUX_BETAS_CAPPED = (0.0, 0.25, 0.5, 1.0)
+
+
+def _power_aux_target(rate_computer, phi, Phi, channels, active_irs_ids,
+                      h_eff, cfg) -> dict:
+    """
+    Teacher allocation for --power-aux-weight: the (β*, f*) on a small grid that
+    maximises the DESIGN-view objective for this state, expressed as the three
+    simplex vectors PowerMLP samples.
+
+        private ∝ |h_eff|^{2β}      β=0 equal power … β large winner-take-all
+        split   = [1-f, f]          (common budget, private budget)
+        common  = uniform over the active slots
+
+    ⚠ 2026-07-24 KNOWN-LIMITED. A noise-aware variant (J averaged over σ²
+    quantiles) was tried and REVERTED — it did not change the picked β (0.826 →
+    0.816 max-private, still 88% WTA), because on the agent's imperfect routing
+    the design objective genuinely rates high β well. Measured separately: clean
+    β-power + closed-form C_k on the agent's routing gives achieved J 1.46 (β=0)
+    → 1.60 (β=4) → 1.59 (β=16), i.e. β is a MINOR lever and even WTA is fine. The
+    live power-aux collapse (r208 J 0.70) comes from the learned power × neural
+    C_k interaction, NOT from over-concentration. Power-aux with neural C_k was
+    net-harmful vs fairness-only; prefer --closed-form-ck when using this. Do not
+    reintroduce noise-averaging here without re-measuring — it costs 4× for ~0.
+
+    12 grid points, each one partial + one sum-rate evaluation on the estimated
+    channel — the same design-view convention the phase and C_k teachers use.
+    """
+    g = np.abs(h_eff) ** 2 + 1e-30
+    G = len(active_irs_ids)
+    Dk  = float(cfg.D_k_bps_hz)
+    lam = float(cfg.lambda_D)
+    eps = float(getattr(cfg, 'epsilon_qp', 1e-3))
+    best_J, best_w, best_f = None, None, _PW_AUX_FRACS[1]
+    betas = (_PW_AUX_BETAS_CAPPED if getattr(cfg, 'power_aux_beta_cap', False)
+             else _PW_AUX_BETAS)
+    for b in betas:
+        w = g ** b
+        s = float(w.sum())
+        if not np.isfinite(s) or s <= 0.0:
+            continue
+        w = w / s
+        for f in _PW_AUX_FRACS:
+            w_p = w * (cfg.P_S * f)
+            w_c = np.full(G + 1, cfg.P_S * (1.0 - f) / (G + 1))
+            part = rate_computer.compute_rates_partial(
+                phi, Phi, channels, w_p, w_c, active_irs_ids=active_irs_ids)
+            C_k = _closed_form_ck(part, cfg)
+            out = rate_computer.compute_sum_rate(
+                phi, Phi, channels, w_p, w_c, C_k=C_k,
+                active_irs_ids=active_irs_ids, sigma2=cfg.sigma2)
+            R_tot = np.asarray(out['R_private']) + np.asarray(out['C_k'])
+            sh    = np.maximum(0.0, Dk - R_tot) / (Dk + eps)
+            J     = float(out['sum_rate']) - lam * float((sh ** 2).sum())
+            if best_J is None or J > best_J:
+                best_J, best_w, best_f = J, w, f
+    if best_w is None:
+        return None
+    return {'split':   np.array([1.0 - best_f, best_f], dtype=float),
+            'common':  np.ones(cfg.M + 1, dtype=float),   # masked+renormalised later
+            'private': np.asarray(best_w, dtype=float)}
+
+
+def _build_power_state(h_eff, rep=None, cfg=None, mag=None):
+    """
+    Power-head input, with the channel block RESCALED to survive LayerNorm.
+
+    ⚠ 2026-07-24 RANKING FIX. Raw |h_eff| (~0.02) is ~44× smaller than the latent
+    rep (~1.0), so PowerMLP's input LayerNorm was dominated by rep and collapsed
+    the h-block — the per-user |h|² ranking survived only 27% of the time, and the
+    head therefore concentrated private power on the WRONG user 85% of the time
+    (top-1 agreement with |h|² was 15% vs the teacher's 95%), costing ~0.85 J at
+    D_k=0.05. Dividing h_eff by its own per-state magnitude makes the block
+    scale-free (like the PhaseMLP unit-phasor), so the joint LayerNorm preserves
+    the ranking (measured 27% → 87%). Absolute |h| is dropped, but it cancels in
+    the interference-limited SINR anyway; the rep still carries state context.
+    """
+    hs  = float(np.mean(np.abs(h_eff))) + 1e-9
+    blk = np.concatenate([h_eff.real / hs, h_eff.imag / hs])
+    if cfg is not None:
+        blk = np.concatenate([blk, _power_scale_feats(h_eff, cfg)])
+    if mag:
+        blk = np.concatenate([blk, _power_mag_feats(h_eff, mag)])
+    return blk if rep is None else np.concatenate([blk, rep])
+
+
+def _power_mag_feats(h_eff, mode: str) -> np.ndarray:
+    """[--power-mag-feats] The per-user MAGNITUDE ORDERING, handed over directly.
+
+    The teacher allocation this head keeps failing to reach is a power law,
+    private ∝ |h_eff|^{2β}, with β up to 16 — a 32nd power. From [Re h/hs, Im h/hs]
+    the head would have to square its own inputs and then raise that to β, which
+    a ReLU MLP approximates badly. Measured on 600 states of result_261, fitting
+    the teacher's log-shares by least squares:
+
+        current input   R² 0.245
+        + |h|²          R² 0.601      ← the quantity the target is a power OF
+        + log|h|        R² 0.559
+
+    So over half the linearly available signal is simply absent from what the
+    head is shown. This is NOT what --power-scale-feats supplies: that block is
+    tanh(log2(cap/D_k)), a saturated FEASIBILITY flag, not the magnitude ordering.
+
+    'sq'  : |h|² / mean|h|²           closest to the target's own form
+    'log' : log|h|² - mean log|h|²    scale-free; a power law becomes LINEAR here,
+                                      which is what the Dirichlet concentration
+                                      needs, and it cannot blow up the row the way
+                                      a raw ratio can
+
+    ⚠ PowerMLP layer-norms its whole input row, so a block that dominates the row
+    statistics squashes the h-block and destroys the per-user ranking — the
+    2026-07-24 bug. 'sq' is a ratio and can reach 100× on a spread-out state;
+    'log' cannot. Check either against scratchpad/ln_dilution.py before training.
+    """
+    a2 = np.abs(np.asarray(h_eff)) ** 2 + 1e-30
+    if mode == 'sq':
+        v = a2 / float(np.mean(a2))
+    elif mode == 'log':
+        v = np.log(a2)
+    else:
+        raise ValueError(
+            f"--power-mag-feats: expected 'sq' or 'log', got {mode!r}")
+    # Standardised PER STATE, and this is not cosmetic. Measured on 300 states
+    # (K=10), appending the raw blocks cut the h-block's post-LayerNorm std by
+    # 19% (sq) and 49% (log) — over the 15% line that flags the 2026-07-24
+    # ranking bug. Standardised, both land at +1.5% and per-user ranking
+    # retention RISES (top-1 95.7% → 96.7%, Spearman 0.795 → 0.818), because the
+    # block now carries the ordering redundantly instead of crowding it out.
+    # Both modes contribute mean 0 / std 1 to the row, so LayerNorm sees them
+    # identically; only their internal shape differs.
+    return (v - float(v.mean())) / (float(v.std()) + 1e-9)
+
+
+def _power_scale_feats(h_eff, cfg) -> np.ndarray:
+    """The ABSOLUTE scale the rescaled h-block deliberately throws away.
+
+    Dividing h_eff by its own mean (above) is what makes the per-user RANKING
+    survive LayerNorm, but it also removes every absolute quantity: after it the
+    head knows who is strongest and nothing about whether ANYONE can reach D_k.
+    Two states with identical rankings but a 10 dB difference in link budget look
+    the same to it — which is why the policy cannot react to a P_S shift, and why
+    a fixed power-fairness prior is the only thing carrying QoS.
+
+    Restores what is missing, per user and once globally:
+      tanh(log2(cap_k / D_k))   feasibility margin. Sign says whether user k can
+                                reach the demand at all; magnitude says by how
+                                much, in octaves.
+      tanh(log10(mean Gamma))   which regime the link is in (noise- vs
+                                interference-limited).
+
+    ⚠ BOTH ARE BOUNDED TO [-1,1] ON PURPOSE. PowerMLP layer-norms the whole input
+    row, so a block on a larger scale takes over the row statistics and squashes
+    the others — the exact mechanism of the 2026-07-24 ranking bug, where the rep
+    was 44x the h-block and cost ~0.85 J. A first version of this function
+    returned raw log2(1+Gamma) and D_k/cap; measured, they came out 3.3x the
+    h-block and cut its post-LayerNorm std by 55%, reintroducing that bug. Any
+    feature added here must be checked against scratchpad/ln_dilution.py before
+    it is trained on.
+
+    Shortfall is deliberately NOT here: it is a function of the rate, which is a
+    function of the power this head is about to choose, so it is not observable
+    at decision time.
+    """
+    g = np.abs(np.asarray(h_eff)) ** 2 * cfg.P_S / cfg.sigma2      # per-user SNR
+    cap = np.log2(1.0 + g)                                          # (K,)
+    # [--power-feat-scale] log2(cap/D_k) was measured to have sd ~5.8-6.0 and a
+    # p5..p95 span of -9.5..+7.0, so tanh() of it pins 70% of entries past 0.99:
+    # the feature degenerates into a sign bit, "can user k reach D_k", and the
+    # by-how-much that the docstring promises is thrown away. Dividing first
+    # restores the gradation; s=4 measured 2.2-2.5% saturation while keeping ~90%
+    # of the variance. Default 1.0 keeps the trained runs (r270/r273) reproducible.
+    s = float(getattr(cfg, 'power_feat_scale', 1.0) or 1.0)
+    margin = np.tanh(np.log2(np.maximum(cap, 1e-9) / cfg.D_k_bps_hz) / s)
+    regime = np.tanh(np.log10(float(np.mean(g)) + 1e-12))
+    return np.concatenate([margin, [regime]])
+
+
+def _pf_priv(args) -> float:
+    """α for the PRIVATE power axis: --power-fairness-priv, falling back to the
+    global --power-fairness when unset (so the default behaviour is unchanged)."""
+    v = getattr(args, 'power_fairness_priv', None)
+    if v is None:
+        v = getattr(args, 'power_fairness', 0.0) or 0.0
+    return max(0.0, min(1.0, float(v)))
 
 
 def _get_active_irs(phi: np.ndarray) -> np.ndarray:
@@ -188,10 +536,15 @@ def _build_action_vec(phi: np.ndarray, phase_idx: np.ndarray,
     return np.concatenate([phi_f, phase_f, w_c_pad, w_p_n, C_k])
 
 
-def _compute_blocked(env: ISTNEnv) -> np.ndarray:
+def _compute_irs_favored(env: ISTNEnv) -> np.ndarray:
     """
     Per-user indicator: True when the best IRS path (via estimated CSI)
     gives a stronger effective channel than the direct satellite link.
+
+    NOTE: this is *IRS-favoured*, NOT the physical blockage flag
+    (env.channels['su_blocked']), and it depends on the CURRENT env.Phi.
+    It is passed to actor.extract_state() but IGNORED there — the affinity
+    features already encode blockage implicitly (blocked link → a_{k,m} ≈ 0).
     """
     ch       = env.channels
     h_direct = np.abs(ch['g_SU_hat'])
@@ -207,7 +560,7 @@ def _compute_blocked(env: ISTNEnv) -> np.ndarray:
 def _irs_favored_target(env: ISTNEnv):
     """Routing-shaping target (Option 1): per user, the IRS id (1-based) whose
     estimated-CSI path is strongest, plus a mask = (best IRS path > direct).
-    Reuses the _compute_blocked channel math → target is the IRS that makes the
+    Reuses the _compute_irs_favored channel math → target is the IRS that makes the
     user 'IRS-favored'. Returns (target (K,) int 1-based, mask (K,) float)."""
     ch       = env.channels
     h_direct = np.abs(ch['g_SU_hat'])
@@ -407,7 +760,7 @@ def _warmup_critic(env, actor, critic, phase_net, power_net, ck_net,
         ep_s: list = []
         ep_r: list = []
         for _step in range(args.steps):
-            blocked = _compute_blocked(env)
+            blocked = _compute_irs_favored(env)
             s_t     = actor.extract_state(obs, demand, blocked)
             phi, _, actor_info = actor.forward(s_t)
             z_t = actor_info['z_t']
@@ -421,9 +774,10 @@ def _warmup_critic(env, actor, critic, phase_net, power_net, ck_net,
             proposed_Phi = env.phase_model.build_phi(phases_rad)
             h_eff   = env.rate_computer.effective_channels_all(
                           phi, proposed_Phi, env.channels)
-            s_power = (np.concatenate([h_eff.real, h_eff.imag])
-                       if getattr(args, 'power_clean_input', False)
-                       else np.concatenate([h_eff.real, h_eff.imag, rep]))
+            s_power = _build_power_state(
+                h_eff, None if getattr(args, 'power_clean_input', False) else rep,
+                cfg if getattr(args, 'power_scale_feats', False) else None,
+                getattr(args, 'power_mag_feats', None))
             w_c_vec, w_p, _, _ = power_net.forward(s_power, active_irs_ids)
             partial = env.rate_computer.compute_rates_partial(
                 phi, proposed_Phi, env.channels, w_p, w_c_vec,
@@ -496,7 +850,7 @@ def _warmup_assignment(env, actor, cfg, args, demand: np.ndarray,
     for _ep in range(n_episodes):
         obs = env.reset()
         for _step in range(args.steps):
-            blocked = _compute_blocked(env)
+            blocked = _compute_irs_favored(env)
             s_t = actor.extract_state(obs, demand, blocked)
             buf.append({'s_t': s_t.copy(), 'phi': _oracle_assign_env(env)})
             env.user_pos = env._walk_users(env.user_pos)
@@ -521,8 +875,16 @@ def _warmup_assignment(env, actor, cfg, args, demand: np.ndarray,
     idx_arr = np.arange(n_buf)
     # Per-epoch match curve + early-stop at plateau (only ever stops EARLY → caps
     # wasted epochs; see 2026-06-15 warmup-epoch study). Patience = 3 checks, δ=0.5pp.
+    #
+    # ⚠ COST: this trains the VQC ACTOR — every epoch is a full PQC forward/SPSA
+    # pass over the buffer, ~3 min/epoch at K10/M2 (NOT a cheap classical CE fit).
+    # So each wasted check costs real wall-clock; hence the saturation exit below.
     log_every = max(1, min(n_epochs // 10, 10))   # cap @10: check/early-stop mỗi ≤10 ep
-                                                  # (saturated assign-warmup dừng nhanh; phase dừng khi plateau)
+    # Saturation exit: assignment is a classification task, so once the match is
+    # essentially perfect there is nothing left to learn and waiting out `patience`
+    # non-improving checks is pure cost (r151: hit 100% @ep30, still ran to ep50
+    # ≈ 1 extra hour). Stop immediately instead.
+    sat_thr = 99.5
     best_m, no_imp, patience = m_init, 0, 3
     m_final = m_init
     for _epoch in range(n_epochs):
@@ -539,6 +901,10 @@ def _warmup_assignment(env, actor, cfg, args, demand: np.ndarray,
         if (_epoch + 1) % log_every == 0 or _epoch == n_epochs - 1:
             m_final = _match()
             print(f"      ① assign-warmup ep {_epoch+1:>4}/{n_epochs}: match {m_final:5.1f}%")
+            if m_final >= sat_thr:
+                print(f"      ① assign-warmup SATURATED @ep {_epoch+1} "
+                      f"(match {m_final:.1f}% ≥ {sat_thr}% — nothing left to fit)")
+                break
             if m_final > best_m + 0.5:
                 best_m, no_imp = m_final, 0
             else:
@@ -556,15 +922,17 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
     """
     EXP-3 supervised PhaseMLP pretrain on closed-form ORACLE phase targets.
 
-    Channel model (CSI/rate.py): h_irs[m,k] = β·conj(g_SR[m])·(Σ_n e^{jφ_n})·g_RU[m,k].
-    With all N elements sharing one index, eff_phi = N·exp(jθ_m) — optimal combining
-    reduces the search space to L=4 indices per IRS. The closed-form oracle is then
-    just the index whose θ aligns IRS reflection with the direct-link g_SU at the
-    dominant routed user; see analysis/phase_oracle.oracle_phase_idx.
+    Channel model (CSI/rate.py), PER-ELEMENT:
+        h_irs[m,k] = Σ_n e^{jθ_{m,n}} · c_{m,n,k},  c = β·conj(g_SR[m])·g_RU[m,n,k].
+    Each element sees its own Rayleigh draw, so each needs its OWN phase to co-phase
+    its contribution. The oracle is closed-form per element for a single routed user
+    (θ_n = arg g_SU[k] − arg c_{n,k}, quantised) plus coordinate ascent when an IRS
+    carries several; see analysis/phase_oracle.oracle_phase_idx.
 
-    Empirical headroom @ result_14 ep_00700: live PhaseMLP 41% alignment vs oracle
-    100%, per-IRS index match 26% ≈ random 1/L → PhaseMLP elements-mostly-agree but
-    picks WRONG-of-4 index ~75% of the time. Supervised warmup teaches that pick.
+    ⚠ The "live 41% vs oracle 100%, index match 26%" headroom recorded @result_14
+    predates the per-element refactor (g_RU was (M,K), one scalar per IRS, so all
+    elements shared one optimal index). Those numbers do NOT transfer — re-measure
+    with `python analysis/phase_oracle.py --ckpt <run>` before quoting them.
 
     Procedure: roll the (frozen) current actor for n_episodes, collect (s_phase,
     oracle_idx) tuples for each active IRS, then fit PhaseMLP via cross-entropy
@@ -582,7 +950,7 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
     for _ep in range(n_episodes):
         obs = env.reset()
         for _step in range(args.steps):
-            blocked = _compute_blocked(env)
+            blocked = _compute_irs_favored(env)
             s_t = actor.extract_state(obs, demand, blocked)
             phi, _, info = actor.forward(s_t)               # frozen-actor sample
             z_t = info['z_t']
@@ -613,18 +981,26 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
         return {'n_samples': 0, 'ce_initial': float('nan'),
                 'ce_final': float('nan'), 'match_initial': 0.0, 'match_final': 0.0}
 
-    # ── Metric: per-IRS index match (live argmax == oracle) before training ──
+    # ── Metric: PER-ELEMENT index match (live argmax == oracle) ──────────────
+    # ⚠ 2026-07-21: this used to read `idx_live[0] == tgt[0]` — element 0 only.
+    # Correct while all N elements shared one index (scalar g_RU); under
+    # per-element g_RU each element is an independent choice, so element 0
+    # sampled ~1/N of the signal and made the metric extremely noisy (and made
+    # --phase-warmup-target gate on a coin flip). Now averaged over all N.
+    # Random floor is unchanged at 100/L %. The TRAINING loss was always
+    # over all elements — only this reported metric was wrong.
     def _eval_match(active_buf):
-        n_pair = 0; n_match = 0; ce_sum = 0.0
+        n_pair = 0; n_match = 0.0; ce_sum = 0.0
         for tr in active_buf:
             active_irs = _get_active_irs(tr['phi'])
             for m in active_irs:
-                # forward single IRS to get its categorical
+                # forward single IRS → (N,) indices, (N, n_levels) probs
                 idx_live, _, probs = phase_net._forward_irs(tr['s_phase'][m], greedy=True)
-                tgt = tr['phase_idx'][m]                    # (N,) all-equal
-                n_match += int(idx_live[0] == tgt[0])
+                tgt = np.asarray(tr['phase_idx'][m])        # (N,) per-element
+                n_match += float(np.mean(idx_live == tgt))
                 n_pair  += 1
-                ce_sum  -= float(np.log(probs[0, tgt[0]] + 1e-10))
+                ce_sum  -= float(np.mean(
+                    np.log(probs[np.arange(tgt.shape[0]), tgt] + 1e-10)))
         return ce_sum / max(1, n_pair), 100.0 * n_match / max(1, n_pair)
 
     ce_init, match_init = _eval_match(buf)
@@ -646,9 +1022,21 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
     # phase genuinely can't escape (e.g. lossy-z_t VQC ceiling). This decouples the
     # stop criterion from the check cadence: log_every=10 no longer stops too early
     # (r54), and we never need the coarse log_every=60 that ran too long (r51).
-    floor_m  = 100.0 / phase_net.n_levels      # random per-IRS match baseline (≈25% @ L=4)
-    esc_thr  = floor_m + 12.0                  # must climb >12pp (~6σ) above random to "count"
-    best_m, no_imp, patience = match_init, 0, 3
+    #
+    # ⭐ 2026-07-21: the stop criterion now reads CE, NOT match. Match is a coarse
+    # argmax statistic — it quantises progress and is noisy, so late in the fit it
+    # sits inside the 0.5pp band while the model is still clearly improving.
+    # Observed in result_153: EARLY-STOP fired @ep480 on "match plateaued ~74.5%
+    # for 3 checks" while CE was descending monotonically 0.657→0.653→0.649→0.645.
+    # A still-improving supervised fit was killed ~120 epochs short of the cap.
+    # CE is the actual training objective, smooth, and monotone here.
+    floor_ce = float(np.log(phase_net.n_levels))   # CE of a uniform predictor
+    esc_ce   = 0.97 * floor_ce                     # must be meaningfully below uniform
+    ce_rtol  = 0.005                               # 0.5% RELATIVE CE gain per check counts
+    floor_m  = 100.0 / phase_net.n_levels          # kept for the log line only
+    esc_thr  = floor_m + 12.0                      # kept for the pre-escape tag only
+    best_ce, no_imp, patience = ce_init, 0, 3
+    n_chk, stall_chk = 0, 20          # failsafe: abort if never escapes the floor
     ce_final, match_final = ce_init, match_init
     for _epoch in range(n_epochs):
         rng.shuffle(idx_arr)
@@ -661,15 +1049,17 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
                 phase_net.apply_grads(grads)
         if (_epoch + 1) % log_every == 0 or _epoch == n_epochs - 1:
             ce_chk, match_chk = _eval_match(sub)
-            tag = "" if match_chk >= esc_thr else "  (pre-escape: no early-stop)"
+            tag = "" if ce_chk <= esc_ce else "  (pre-escape: no early-stop)"
             print(f"      🌡 phase-warmup ep {_epoch+1:>4}/{n_epochs}: "
                   f"CE {ce_chk:.3f}  match {match_chk:5.1f}%{tag}")
-            if match_chk > best_m + 0.5:
-                best_m, no_imp = match_chk, 0
+            # plateau tracked on CE (smooth) with a RELATIVE tolerance
+            if ce_chk < best_ce * (1.0 - ce_rtol):
+                best_ce, no_imp = ce_chk, 0
             else:
                 no_imp += 1
             # Stop policy: (a) target → stop only when match ≥ target (else run to cap);
-            # (b) --full-phase-warmup → never early-stop; (c) default → escaped-floor + plateau.
+            # (b) --full-phase-warmup → never early-stop; (c) default → CE escaped the
+            #     uniform floor AND stopped improving for `patience` consecutive checks.
             _target = getattr(args, 'phase_warmup_target', None)
             if _target is not None:
                 if match_chk >= _target:
@@ -677,11 +1067,23 @@ def _warmup_phase(env, actor, phase_net, cfg, args, demand: np.ndarray,
                           f"(match {match_chk:.1f}% ≥ target {_target:.0f}%)")
                     break
                 # chasing a target → no plateau early-stop (run to cap if unreached)
-            elif (not getattr(args, 'full_phase_warmup', False)
-                    and match_chk >= esc_thr and no_imp >= patience):
-                print(f"      🌡 phase-warmup EARLY-STOP @ep {_epoch+1} "
-                      f"(match plateaued ~{match_chk:.1f}% for {patience} checks)")
-                break
+            elif not getattr(args, 'full_phase_warmup', False):
+                if ce_chk <= esc_ce and no_imp >= patience:
+                    print(f"      🌡 phase-warmup EARLY-STOP @ep {_epoch+1} "
+                          f"(CE plateaued ~{ce_chk:.3f} — <{ce_rtol*100:.1f}% relative gain "
+                          f"for {patience} checks)")
+                    break
+                # FAILSAFE: still glued to the uniform predictor after a long run
+                # ⇒ the target is not learnable from this state (r151: CE 1.376 vs
+                # ln4 1.386 for 1000 epochs). Escaping takes <150 epochs when the
+                # encoding is right, so this is a genuine failure, not slow start.
+                n_chk += 1
+                if n_chk >= stall_chk and ce_chk > esc_ce:
+                    print(f"      🌡 phase-warmup ABORT @ep {_epoch+1} — NOT LEARNING "
+                          f"(CE {ce_chk:.3f} still ≈ uniform {floor_ce:.3f} after "
+                          f"{n_chk} checks). Target likely not a function of the "
+                          f"phase state — do NOT burn the remaining cap.")
+                    break
 
     ce_final, match_final = _eval_match(buf)
     return {
@@ -728,11 +1130,16 @@ def _print_diag_panel(ep: int, d: dict, signals: list) -> None:
 def _env_feasibility_report(cfg, seed: int, n_ep: int = 15, n_steps: int = 12) -> dict:
     """
     Probe the CURRENT environment with fixed reference policies to separate
-    'geometry difficulty' from 'agent skill'. Reports what fraction of users
-    CAN meet the QoS demand D_k under Direct-only / All-IRS / best-of-both.
-    Use this BEFORE a run to calibrate λ_D vs R_LoS:
-      servable ≫ agent-QoS  → agent's fault → raise λ_D
-      servable low          → geometry too hard → lower R_LoS or D_k, don't crank λ_D
+    'geometry difficulty' from 'agent skill'. Reports the fraction of users that
+    meet D_k under Direct-only / All-IRS / per-user best-of-both.
+
+    ⚠ 'servable_frac' is a BASELINE FLOOR, not a ceiling (relabelled 07-21). It
+    is the per-user max over two FIXED naive policies at hardcoded equal power
+    and the current Phi. A real policy mixes routing per user and tunes
+    phase/split/C_k, and beats it by a wide margin (K10/M2 @0.5: 59.8% here vs
+    99.4% under oracle routing+phase+equal power). Read it as:
+      agent-QoS  <  this  → agent is worse than a naive baseline → real problem
+      agent-QoS  >  this  → normal and expected, NOT a bug
     """
     probe = ISTNEnv(cfg=cfg, seed=seed + 12345, n_steps_ep=n_steps,
                     reward_noise_avg=1)
@@ -766,19 +1173,22 @@ def _env_feasibility_report(cfg, seed: int, n_ep: int = 15, n_steps: int = 12) -
     }
     print(f"\n  Environment feasibility probe  (R_LoS={cfg.R_LoS_km} km, D_k={Dk}, λ_D={cfg.lambda_D})")
     print(f"  ────────────────────────────────────────────────────────────────")
-    print(f"    Servable users (best link ≥ D_k) : {rep['servable_frac']*100:5.1f}%   "
-          f"← QoS ceiling for ANY policy")
-    print(f"    QoS under Direct-only            : {rep['qos_direct']*100:5.1f}%   "
+    print(f"    Best-of-2-baselines (per-user max) : {rep['servable_frac']*100:5.1f}%   "
+          f"← BASELINE FLOOR, *not* a ceiling")
+    print(f"    QoS under Direct-only              : {rep['qos_direct']*100:5.1f}%   "
           f"(Σ R_tot {rep['rtot_direct']:.2f})")
-    print(f"    QoS under All-IRS                : {rep['qos_irs']*100:5.1f}%   "
+    print(f"    QoS under All-IRS                  : {rep['qos_irs']*100:5.1f}%   "
           f"(Σ R_tot {rep['rtot_irs']:.2f})")
-    print(f"    Direct link blocked              : {rep['blocked_frac']*100:5.1f}% of users")
-    if rep['servable_frac'] < 0.6:
-        print(f"    ⚠ Only {rep['servable_frac']*100:.0f}% servable → λ_D high will punish "
-              f"UNAVOIDABLE failures. Lower R_LoS / D_k before raising λ_D.")
-    else:
-        print(f"    ✓ {rep['servable_frac']*100:.0f}% servable → if agent QoS is below this, "
-              f"raising λ_D is safe & should help.")
+    print(f"    Direct link blocked                : {rep['blocked_frac']*100:5.1f}% of users")
+    # ⚠ 2026-07-21 RELABELLED. This is the per-user max over TWO FIXED naive
+    # baselines (all-direct, all-IRS), each at its own hardcoded equal power
+    # split and the CURRENT Phi. It is NOT "the QoS ceiling for any policy":
+    # a real policy mixes routing per user, optimises phase, the private/common
+    # split and C_k, and routinely BEATS it — measured K10/M2 @R_LoS=0.5,
+    # oracle routing+phase+equal power reaches QoS 99.4% against this number's
+    # 59.8%. Treat it as a sanity FLOOR the agent should clear, nothing more.
+    print(f"    ↑ per-user max over the two naive baselines at fixed power — a policy that")
+    print(f"      mixes routing + tunes phase/power/C_k should EXCEED this comfortably.")
     return rep
 
 
@@ -821,8 +1231,9 @@ def _analysis_summary(hist: dict, n_diverge: int, args) -> None:
     print(f"  Recommendations for next run:")
     recs = []
     if not np.isnan(qos) and qos < 0.6 and not np.isnan(qp) and qp > 1.0:
-        recs.append(f"QoS low ({qos*100:.0f}%) + penalty high → check feasibility probe; "
-                    f"if servable≫QoS raise λ_D, else lower R_LoS/D_k")
+        recs.append(f"QoS low ({qos*100:.0f}%) + penalty high → compare against the "
+                    f"baseline FLOOR in the feasibility probe (not a ceiling): below it = "
+                    f"worse than a naive policy; above it, look at routing/phase/C_k, not λ_D")
     if not np.isnan(ev) and ev < 0.2:
         recs.append(f"explVar low ({ev:+.2f}) → critic struggling: ↑lr_critic or ↓reward variance "
                     f"(↑reward_noise_avg)")
@@ -844,6 +1255,33 @@ def _compute_beta(ep: int, n_episodes: int) -> float:
     end_ep = max(1, int(P.beta_entropy_anneal_end * n_episodes))
     prog   = min(1.0, ep / end_ep)
     return max(P.beta_entropy_min, P.beta_entropy * (1.0 - prog))
+
+
+def _aux_w(args, name: str, ep: int, n_episodes: int) -> float:
+    """
+    Aux-teacher weight at episode `ep`, with optional linear anneal to zero.
+
+    `--<head>-aux-weight w` alone is CONSTANT for the whole run (the original and
+    still the default): the teacher must not decay the way the one-shot phase
+    warm-up did, since PPO eroded that (alignment 15.6% → 7.0% over 1300 ep).
+
+    `--phase-aux-anneal-end f` makes the phase teacher decay linearly w → 0 by
+    f·n_episodes. Motivated by cost: the teacher runs `oracle_phase_idx` every
+    rollout step and adds a term to every PPO epoch, and PPO updates are 58-65%
+    of wall-clock. Once the phase head tracks the oracle there is little left to
+    teach — the measured phase gap is only 5-7% of the remaining J gap.
+
+    ⚠ The ASSIGNMENT teacher can never anneal, and that is enforced HERE rather
+    than by simply not exposing a flag: it is what fixed the routing-identity
+    collapse (7/7 runs peaked at ep~2500 then fell to 40-66% QoS without it), so a
+    stray attribute must not be able to decay it back into that failure.
+    """
+    w0 = float(getattr(args, f'{name}_aux_weight', 0.0) or 0.0)
+    end_frac = None if name == 'assign' else getattr(args, f'{name}_aux_anneal_end', None)
+    if w0 <= 0.0 or not end_frac:
+        return w0
+    end_ep = max(1, int(float(end_frac) * n_episodes))
+    return w0 * max(0.0, 1.0 - min(1.0, ep / end_ep))
 
 
 def _compute_lr_frac(ep: int, n_episodes: int) -> float:
@@ -884,6 +1322,11 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
     hp = {
         "run_id":    run_id,
         "timestamp": datetime.now().isoformat(timespec='seconds'),
+        # Training seed — recorded so a reported number can be traced to its run and
+        # so multi-seed tables (mean±std over TRAINING seeds, not just eval seeds) can
+        # be assembled after the fact. Runs before 2026-07-25 did not store it; they
+        # all used params.seed_default (0) unless --seed was passed explicitly.
+        "seed":      int(getattr(args, 'seed', P.seed_default)),
         "system": {
             "K":              cfg.K,
             "M":              cfg.M,
@@ -977,7 +1420,7 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
             "popart_beta":  getattr(critic, 'pa_beta', None),
         },
         "phase_net": {
-            "d_s":      2 * cfg.K,
+            "d_s":      phase_net.d_s,
             "M":        cfg.M,
             "N":        cfg.N,
             "n_levels": phase_net.n_levels,
@@ -992,12 +1435,36 @@ def _save_hyperparameters(run_dir: str, cfg, actor: QuantumActor,
             "hidden": P.n_hidden_power,
             "lr":     P.lr_power,
             "power_fairness": max(0.0, min(1.0, float(getattr(args, 'power_fairness', 0.0) or 0.0))),
+            "power_priv_frac": float(getattr(args, 'power_priv_frac', 0.8)),
+            # infer.py must rebuild the SAME input or the head is fed a state it
+            # never saw; it reads this flag rather than guessing from d_s.
+            "power_scale_feats": bool(getattr(args, 'power_scale_feats', False)),
+            "no_entangle": bool(getattr(args, 'no_entangle', False)),
+            "power_feat_scale": float(getattr(args, 'power_feat_scale', 1.0) or 1.0),
+            "power_mag_feats": (getattr(args, 'power_mag_feats', None) or None),
+            "power_fairness_priv": _pf_priv(args),
         },
         "ck_net": {
             "d_s":    3 * cfg.K,
             "K":      cfg.K,
             "hidden": P.n_hidden_ck,
             "lr":     P.lr_ck,
+        },
+        # ⚡ levers that change the EXECUTED policy or the loss but live only on the
+        # CLI — record them or a finished run cannot be reproduced/identified.
+        # (r169-r178 predate this and have to be told apart by probing.)
+        "levers": {
+            "assign_aux_weight": float(getattr(args, 'assign_aux_weight', 0.0) or 0.0),
+            "phase_aux_weight":  float(getattr(args, 'phase_aux_weight', 0.0) or 0.0),
+            "phase_aux_anneal_end": getattr(args, 'phase_aux_anneal_end', None),
+            "phase_aux_sweeps":  int(getattr(args, 'phase_aux_sweeps', 0)),
+            "phase_aux_hspread": float(getattr(args, 'phase_aux_hspread', 0.0) or 0.0),
+            "power_aux_anneal_end": getattr(args, 'power_aux_anneal_end', None),
+            "ck_aux_weight":     float(getattr(args, 'ck_aux_weight', 0.0) or 0.0),
+            "power_aux_weight":  float(getattr(args, 'power_aux_weight', 0.0) or 0.0),
+            "closed_form_ck":    bool(getattr(args, 'closed_form_ck', False)),
+            "freeze_phase":      bool(getattr(args, 'freeze_phase', False)),
+            "beta_entropy_pwr_private": _beta_pwr_priv(args),
         },
     }
     with open(os.path.join(run_dir, "hyperparameters.json"), 'w') as f:
@@ -1198,6 +1665,18 @@ def _build_components(args):
     cfg = make_config(**cfg_overrides)
     if cfg_overrides:
         print(f"  ⚠ CFG OVERRIDE: {cfg_overrides}  (D_k_HYPOTHESIS test)")
+    # Carried on cfg rather than threaded through _build_power_state's four call
+    # sites (train rollout, warm-up, aux teacher, infer) — every one of them
+    # already has cfg, none of them would otherwise need a new argument.
+    cfg.power_feat_scale = float(getattr(args, 'power_feat_scale', 1.0) or 1.0)
+    cfg.power_aux_beta_cap = bool(getattr(args, 'power_aux_beta_cap', False))
+    if cfg.power_aux_beta_cap:
+        print(f"  ⚙ power-aux teacher beta grid CAPPED: {_PW_AUX_BETAS_CAPPED} "
+              f"(default {_PW_AUX_BETAS})")
+    if getattr(args, 'power_scale_feats', False):
+        print(f"  ⚙ power-scale-feats ON · margin tanh divisor s="
+              f"{cfg.power_feat_scale:g}"
+              f"{'  (s=1 saturates ~70% of entries)' if cfg.power_feat_scale == 1.0 else ''}")
     env = ISTNEnv(cfg=cfg, seed=args.seed, n_steps_ep=args.steps,
                   reward_noise_avg=getattr(P, 'reward_noise_avg', 1))
 
@@ -1272,8 +1751,13 @@ def _build_components(args):
             softmax_head     = getattr(P, 'vqc_softmax_head', False),
             softmax_beta_init= getattr(P, 'vqc_softmax_beta_init', 1.0),
             no_ae            = getattr(args, 'no_ae', False),
+            no_entangle      = getattr(args, 'no_entangle', False),
             seed             = args.seed,
         )
+        if getattr(args, 'no_entangle', False):
+            print("  ⚙ ABLATION --no-entangle: product-state circuit "
+                  "(no CZ chain, no cross-block bridges); parameter count and "
+                  "R1 readout unchanged")
     # State-value critic V(s) — action-independent baseline (d_action=0).
     # A Q(s,a) baseline cancels the action's own value, giving E[advantage]≈0
     # and a vanishing policy gradient; V(s) is the correct PPO/GAE baseline.
@@ -1298,7 +1782,7 @@ def _build_components(args):
         raise SystemExit('--power-clean-input is not compatible with --counterfactual-assign')
     _pw_rep_dim = 0 if getattr(args, 'power_clean_input', False) else _rep_dim
     phase_net = PhaseMLP(
-        d_s      = 3 * cfg.K + _rep_dim,      # c^SRU (2K) + rep (z_t|o_hat) + phi_mask (K)
+        d_s      = 5 * cfg.K + _rep_dim,      # c^SRU (2K) + g_SU (2K) + rep + phi_mask (K)
         M        = cfg.M,
         N        = cfg.N,
         n_levels = env.n_phase_levels,
@@ -1306,8 +1790,25 @@ def _build_components(args):
         lr       = P.lr_phase,
         seed     = args.seed,
     )
+    # Carried as an attribute rather than a constructor argument so that agents
+    # saved before this flag existed still load: getattr defaults it to 0.0,
+    # which reproduces the uniform teacher exactly.
+    phase_net.aux_hspread_gamma = float(getattr(args, 'phase_aux_hspread', 0.0) or 0.0)
+    if phase_net.aux_hspread_gamma > 0.0:
+        print(f"  ⚙ phase teacher redistributed by log-hspread, gamma="
+              f"{phase_net.aux_hspread_gamma:g} (mean weight unchanged)")
+    # --power-scale-feats appends 2K+1 absolute-scale features (see
+    # _power_scale_feats). Gated by a flag so the change is one controlled
+    # variable against the existing runs rather than a silent redefinition of
+    # the head's input.
+    _pw_scale_dim = (cfg.K + 1) if getattr(args, 'power_scale_feats', False) else 0
+    # --power-mag-feats appends the per-user |h|^2 ordering (K dims). Separate
+    # flag from --power-scale-feats because they supply different quantities and
+    # measured differently: the scale block is a saturated feasibility flag, this
+    # one is the magnitude the teacher target is a power of (linear R² .245→.601).
+    _pw_mag_dim = cfg.K if getattr(args, 'power_mag_feats', None) else 0
     power_net = PowerMLP(
-        d_s    = 2 * cfg.K + _pw_rep_dim,    # h_eff Re+Im (2K) [+ rep unless --power-clean-input]
+        d_s    = 2 * cfg.K + _pw_scale_dim + _pw_mag_dim + _pw_rep_dim,  # h_eff Re+Im (2K) [+ scale] [+ mag] [+ rep]
         K      = cfg.K,
         M      = cfg.M,
         P_S    = cfg.P_S,
@@ -1384,7 +1885,11 @@ def _build_components(args):
 
     # ③ power-fairness lever (--power-fairness α): set on power_net for BOTH the
     # fresh and resumed paths — forward() reads it. 0.0 = off (pure learned head).
+    # --power-fairness-priv / --power-priv-frac are applied here too so a RESUME
+    # picks them up from the CLI rather than the checkpoint's baked-in values.
     power_net.power_fairness = max(0.0, min(1.0, float(getattr(args, 'power_fairness', 0.0) or 0.0)))
+    power_net.power_fairness_priv = _pf_priv(args)
+    power_net.power_priv_frac = float(getattr(args, 'power_priv_frac', 0.8))
 
     return cfg, env, actor, critic, phase_net, power_net, ck_net
 
@@ -1443,7 +1948,14 @@ def _train_body(args, run_dir: str, run_id: int,
     print(f"       Encoder: {d_s} → B2-DualAE → {actor.N_LATENT}  (z_t)"
           f"  [IRS:{2*cfg.M}D + User:2×{cfg.K}D→P]")
     print(f"       Decoder: {actor.N_LATENT} → {_dec_arch} → {d_s}  (AE regulariser)")
-    _cz_desc = (f"+{len(actor.EXTRA_CZ_PAIRS)}×CZ-bridge" if actor.EXTRA_CZ_PAIRS else "")
+    # actor.EXTRA_CZ_PAIRS keeps the CONFIGURED pairs; --no-entangle clears them
+    # in the circuit module, not on the actor, so the summary has to check the
+    # ablation flag or it prints CZ bridges that are not being applied.
+    if getattr(actor, 'NO_ENTANGLE', False):
+        _cz_desc = " NO-CZ(ablation)"
+    else:
+        _cz_desc = (f"+{len(actor.EXTRA_CZ_PAIRS)}×CZ-bridge"
+                    if actor.EXTRA_CZ_PAIRS else "")
     if actor.FULL_ZZ_PAIRS:
         _zz_desc = f"+{len(actor.FULL_ZZ_PAIRS)}×ZZ-full(B1)"
     elif actor.EXTRA_ZZ_PAIRS:
@@ -1458,9 +1970,10 @@ def _train_body(args, run_dir: str, run_id: int,
     print(f"       Output : φ ∈ {{0,…,{cfg.M}}}^{cfg.K}  "
           f"({actor.n_choices}^{cfg.K} combinations)")
     print(f"    2. PhaseMLP  (IRS phase shifts — active IRS only)")
-    _d_phase = 3 * cfg.K + P.n_latent
-    print(f"       State  : c^SRU_m ∈ R^{_d_phase} per active IRS  "
-          f"([Re+Im c^SRU({2*cfg.K}) ‖ z_t({P.n_latent}) ‖ phi_mask({cfg.K})])")
+    _d_phase = phase_net.d_s
+    print(f"       State  : per ELEMENT ∈ R^{_d_phase}  "
+          f"([∠c^SRU cos+sin({2*cfg.K}) ‖ ∠g_SU cos+sin({2*cfg.K}) ‖ "
+          f"z_t({P.n_latent}) ‖ phi_mask({cfg.K})])  unit-phasor")
     print(f"       Net    : {phase_net.architecture}  "
           f"(shared weights, N={cfg.N} elements/IRS, categorical)")
     print(f"       Output : phase_idx ∈ {{0..{env.n_phase_levels-1}}}^{{G×{cfg.N}}}  "
@@ -1472,9 +1985,14 @@ def _train_body(args, run_dir: str, run_id: int,
     print(f"       Net    : {power_net.architecture}  softmax → ×P_S")
     print(f"       Output : w_c_vec ∈ R^{{G+1}}  (per-group common, G≤{cfg.M}),  "
           f"w_p ∈ R^{cfg.K}  (private)  [Σ=P_S]")
-    if getattr(power_net, 'power_fairness', 0.0) > 0.0:
-        print(f"       ③ POWER-FAIRNESS α={power_net.power_fairness:.2f}  "
-              f"(private power blended toward equal-split; α=1 → exact equal-split)")
+    _a_pf, _a_pv = (getattr(power_net, 'power_fairness', 0.0),
+                    getattr(power_net, 'power_fairness_priv', 0.0))
+    if _a_pf > 0.0 or _a_pv > 0.0:
+        print(f"       ③ POWER-FAIRNESS  α_split/common={_a_pf:.2f}  α_private={_a_pv:.2f}  "
+              f"f={getattr(power_net, 'power_priv_frac', 0.8):.2f}")
+        if _a_pv < _a_pf:
+            print(f"          ↳ private axis left FREE to concentrate — needs a "
+                  f"demand-filling C_k or QoS collapses")
     print(f"    4. CkMLP  (common-rate split)")
     _d_ck = 5 * cfg.K
     print(f"       State  : [D_k, R_p_k, R_c_g_k, shortfall_k, phi_k] ∈ R^{_d_ck}  (per user)")
@@ -1585,8 +2103,14 @@ def _train_body(args, run_dir: str, run_id: int,
     # decayed initial +0.028 reward boost back to -0.029 over 400ep).
     _oracle_wu = getattr(args, 'oracle_warmup', False)
     if _oracle_wu:
-        aw_eps    = int(getattr(args, 'phase_warmup_episodes', 8))
-        aw_epochs = int(getattr(args, 'phase_warmup_epochs', 30))
+        # ① and 🌡 have VERY different cost profiles and budgets, so they get their
+        # own flags (defaulting to the phase ones = old behaviour):
+        #   ① assign — trains the VQC actor, ~3 min/epoch @K10/M2, saturates ~30 ep
+        #   🌡 phase — classical MLP over N elements, cheap/epoch, needs many more
+        aw_eps    = int(getattr(args, 'assign_warmup_episodes', None)
+                        or getattr(args, 'phase_warmup_episodes', 8))
+        aw_epochs = int(getattr(args, 'assign_warmup_epochs', None)
+                        or getattr(args, 'phase_warmup_epochs', 30))
         print(f"  🎯 ① ORACLE ASSIGNMENT WARMUP: {aw_eps} rollout ep × {aw_epochs} CE epochs "
               f"on oracle routing (blocked→its-IRS) …")
         _aw = _warmup_assignment(env, actor, cfg, args, demand, aw_eps, aw_epochs)
@@ -1731,7 +2255,7 @@ def _train_body(args, run_dir: str, run_id: int,
             # ════════════════════════════════════════════════════════════════
             # 1) Forward on the LIVE trajectory
             # ════════════════════════════════════════════════════════════════
-            blocked = _compute_blocked(env)
+            blocked = _compute_irs_favored(env)
             ep_blocked_count.append(int(np.sum(env.channels['su_blocked'])))
             # Routing-shaping target (Option 1): IRS-favored users → their best IRS.
             _route_tgt, _route_msk = _irs_favored_target(env)
@@ -1758,9 +2282,10 @@ def _train_body(args, run_dir: str, run_id: int,
 
             h_eff   = env.rate_computer.effective_channels_all(
                           phi, proposed_Phi, env.channels)
-            s_power = (np.concatenate([h_eff.real, h_eff.imag])
-                       if getattr(args, 'power_clean_input', False)
-                       else np.concatenate([h_eff.real, h_eff.imag, rep]))   # (2K [+rep],)
+            s_power = _build_power_state(
+                h_eff, None if getattr(args, 'power_clean_input', False) else rep,
+                cfg if getattr(args, 'power_scale_feats', False) else None,
+                getattr(args, 'power_mag_feats', None))  # (2K [+scale] [+mag] [+rep],)
             w_c_vec, w_p, _, power_action = power_net.forward(s_power, active_irs_ids)
 
             partial = env.rate_computer.compute_rates_partial(
@@ -1768,8 +2293,15 @@ def _train_body(args, run_dir: str, run_id: int,
                 active_irs_ids=active_irs_ids)
             s_ck = _build_ck_state(
                 demand, partial['R_private'], partial['R_c_group'], phi, cfg)
-            C_k, _, ck_group_sel = ck_net.forward(
-                s_ck, phi, partial['R_c_group'])
+            if getattr(args, 'closed_form_ck', False):
+                # Solve C_k exactly instead of sampling it. Marking every group
+                # None makes the whole Ck PPO path inert (CkMLP._group_terms
+                # skips None groups) → zero log-prob, zero gradient, no update.
+                C_k = _closed_form_ck(partial, cfg)
+                ck_group_sel = {gid: None for gid in partial['groups']}
+            else:
+                C_k, _, ck_group_sel = ck_net.forward(
+                    s_ck, phi, partial['R_c_group'])
 
             action = {
                 'assignment': phi, 'phase_idx': phase_idx,
@@ -1777,7 +2309,7 @@ def _train_body(args, run_dir: str, run_id: int,
             }
             obs2, reward, _, env_info = env.step(action)
 
-            blocked2 = _compute_blocked(env)
+            blocked2 = _compute_irs_favored(env)
             s_t_next = actor.extract_state(obs2, demand, blocked2)
 
             # ════════════════════════════════════════════════════════════════
@@ -1798,15 +2330,59 @@ def _train_body(args, run_dir: str, run_id: int,
                 'route_tgt':       _route_tgt.copy(),         # Option 1: best IRS id per user (1-based)
                 'route_msk':       _route_msk.copy(),         # Option 1: 1.0 where IRS-favored
                 'cf_rew':          (_cf_rew.copy() if _cf_rew is not None else None),  # Opt2: R_cf (K,M+1)
+                # oracle routing target for --assign-aux-weight (continuous CE teacher)
+                'route_oracle':    (_oracle_assign_env(env).copy()
+                                    if getattr(args, 'assign_aux_weight', 0.0) > 0.0 else None),
+                # oracle phase target for --phase-aux-weight. n_sweeps=0 = the
+                # closed-form per-element alignment only (0.08 ms/state vs 0.56
+                # with ascent) — cheap enough to run every rollout step. Skipped
+                # entirely once the anneal has driven the weight to 0, which is
+                # where most of the anneal's wall-clock saving comes from.
+                # [--phase-aux-sweeps] n_sweeps=0 was the default here and it is
+                # measured HARMFUL: scored on the true channel over 120 states of
+                # r275, the target it produces sits at J 1.7022 against the head's
+                # own 1.7227 — the teacher was pulling the head toward something
+                # WORSE than what the head already did, which is why weight 0.8
+                # cost -0.126 J and why per-element agreement decayed to chance
+                # (25.2% vs 25.0%) despite warm-up reaching 65.7%. One sweep gives
+                # 1.7772 (+0.0545, 56% of the J-oracle's gain) for 0.56 ms/state.
+                # NOT monotone -- 3 sweeps 1.7590, 8 sweeps 1.7565 -- because the
+                # ascent maximises coherent gain, not J, so more of it drifts
+                # further from the objective. Default stays 0 for reproducibility.
+                # [--phase-aux-hspread] log spread of the effective channel. The
+                # phase teacher is redistributed by this: the oracle-phase swap is
+                # worth +0.583 on the states the policy loses and +0.045 on the
+                # ones it wins, and the losers are the high-spread ones
+                # (corr -0.79). Computed here because h_eff is already in hand.
+                'log_hspread':     float(np.log(
+                                       (np.abs(h_eff).max() + 1e-30) /
+                                       (np.abs(h_eff).min() + 1e-30))),
+                'phase_oracle':    (oracle_phase_idx(_po_est(env.channels), phi, cfg,
+                                                     n_sweeps=int(getattr(args, 'phase_aux_sweeps', 0))).copy()
+                                    if _aux_w(args, 'phase', ep, args.episodes) > 0.0 else None),
                 's_phase':         s_phase.copy(),
                 'phase_idx':       phase_idx.copy(),
                 's_power':         s_power.copy(),
                 'active_irs_ids':  list(active_irs_ids),
                 's_ck':            s_ck.copy(),
-                'power_a_split':   int(power_action['split']),
-                'power_a_common':  int(power_action['common']),
-                'power_a_private': int(power_action['private']),
-                'ck_group_sel':    dict(ck_group_sel),
+                # Power/Ck actions are the SAMPLED ALLOCATION VECTORS (Dirichlet
+                # policy, 2026-07-21) — not categorical indices. They must be
+                # copied: the nets return fresh arrays but the buffer outlives
+                # the step, and PPO re-scores exactly these vectors.
+                'power_a_split':   np.asarray(power_action['split'],   float).copy(),
+                'power_a_common':  np.asarray(power_action['common'],  float).copy(),
+                'power_a_private': np.asarray(power_action['private'], float).copy(),
+                'ck_group_sel':    {g: (None if v is None else np.asarray(v, float).copy())
+                                    for g, v in ck_group_sel.items()},
+                # teacher share for --ck-aux-weight (per group, on the simplex)
+                'ck_aux_tgt':      _ck_aux_target(partial, cfg)
+                                   if getattr(args, 'ck_aux_weight', 0.0) > 0.0 else None,
+                # teacher allocation for --power-aux-weight (grid (β*,f*) per state)
+                'power_aux_tgt':   (_power_aux_target(env.rate_computer, phi,
+                                                      proposed_Phi, env.channels,
+                                                      active_irs_ids, h_eff, cfg)
+                                    if getattr(args, 'power_aux_weight', 0.0) > 0.0
+                                    else None),
                 'lp_old_q':        float(lp_old_q),
                 'lp_old_ph':       float(lp_old_ph),
                 'lp_old_pw':       float(lp_old_pw),
@@ -1816,7 +2392,9 @@ def _train_body(args, run_dir: str, run_id: int,
                 'V_t':             V_t_collected,
                 # ── Tier-2 diag fields (read by RL/critic_diag.py) ────────
                 'blocked_n':       int(np.sum(env.channels['su_blocked'])),
-                'sigma2':          float(env_info.get('sigma2', np.nan)),
+                # σ² is PER-USER (K,) since the per-user-noise change; the Tier-2
+                # diag only tracks the ambient level, so log its mean.
+                'sigma2':          float(np.mean(env_info.get('sigma2', np.nan))),
             })
 
             # ── EXP-2 IRS-routing bonus (default OFF) ─────────────────────────
@@ -1967,14 +2545,17 @@ def _train_body(args, run_dir: str, run_id: int,
 
                 _, L_ent_ph, g_phase_acc = phase_net.compute_grads_batch(
                     mini, eff_ph_b, beta,
-                    counterfactual=getattr(args, 'phase_counterfactual', False))
+                    counterfactual=getattr(args, 'phase_counterfactual', False),
+                    aux_w=_aux_w(args, 'phase', ep, args.episodes))
                 _, L_ent_pw, g_power_acc, pw_axis = power_net.compute_grads_batch(
                     mini, eff_pw_b, beta,
-                    beta_entropy_private_extra=P.beta_entropy_pwr_private)
+                    beta_entropy_private_extra=_beta_pwr_priv(args),
+                    aux_w=float(getattr(args, 'power_aux_weight', 0.0) or 0.0))
                 for _k, _v in pw_axis.items():
                     ep_pw_axis_stats.setdefault(_k, []).append(float(_v))
                 _, L_ent_ck, g_ck_acc    = ck_net.compute_grads_batch(
-                    mini, K, eff_ck_b, beta)
+                    mini, K, eff_ck_b, beta,
+                    aux_w=float(getattr(args, 'ck_aux_weight', 0.0) or 0.0))
                 L_ent_b += L_ent_ph + L_ent_pw + L_ent_ck
 
                 # ── Critic batch gradient (vectorised — no Python loop) ────
@@ -2039,10 +2620,33 @@ def _train_body(args, run_dir: str, run_id: int,
 
                 # Apply
                 actor.apply_grads(g_ae_acc, g_qc_acc, g_xi_acc)
+
+                # ── ASSIGNMENT AUX TEACHER (--assign-aux-weight) ──────────────
+                # Continuous CE pull toward the oracle routing (blocked→its-IRS),
+                # applied at EVERY update alongside PPO. Targets the measured
+                # collapse mechanism: routing IDENTITY drifts (r166 ep2000→10000:
+                # mis 0.5→1.8%, blocked→dead-direct 1.1→5.1%) even though the
+                # COUNT stays right — F2 assignment-credit failing at scale
+                # ((M+1)^K). The oracle routing hits QoS 99.7%, so a strong-enough
+                # teacher can pull routing toward it, i.e. bypass the hard credit
+                # problem instead of learning it. Unlike a periodic re-warmup this
+                # never shocks the critic (no burst). Reuses exactly the warm-up
+                # recipe: lp_old set to the current logprob so the PPO ratio is 1
+                # (no clipping) → pure -w·log π(oracle|s).
+                _aw_q = float(getattr(args, 'assign_aux_weight', 0.0) or 0.0)
+                if _aw_q > 0.0:
+                    _s_aux   = [t['s_t'] for t in mini]
+                    _tgt_aux = [t['route_oracle'] for t in mini]
+                    _lp0_aux = actor.compute_logprobs_batch(_s_aux, _tgt_aux)
+                    _ax = actor.compute_logprobs_grads_batch(
+                        _s_aux, _tgt_aux, _lp0_aux,
+                        np.full(len(mini), _aw_q), P.ppo_epsilon, 0.0, 0.0)
+                    actor.apply_grads(_ax[3], _ax[4], _ax[5])
                 if not getattr(args, 'freeze_phase', False):   # EXP-1: freeze-phase skips this
                     phase_net.apply_grads(g_phase_acc)
                 power_net.apply_grads(g_power_acc)
-                ck_net.apply_grads(g_ck_acc)
+                if not getattr(args, 'closed_form_ck', False):
+                    ck_net.apply_grads(g_ck_acc)   # C_k is solved, not learned
                 critic.apply_grads(g_critic_acc)
 
                 L_actor_b = (L_pg_b + P.ae_weight * L_ae_b
@@ -2101,17 +2705,24 @@ def _train_body(args, run_dir: str, run_id: int,
                   (('q', ep_L_pg), ('ph', ep_L_phase), ('pw', ep_L_power), ('ck', ep_L_ck))}
           _edf = '  ⚠ ENTROPY-DOMINATED (↓β)' if max(_ed.values()) > 1.0 else ''
           _acf = '  ⚠ HIGH-VARIANCE' if adv_clip_frac > 0.02 else ''
+          # ⚠ pw/ck use a DIRICHLET entropy, which is differential and routinely
+          # NEGATIVE once the head concentrates — so pw/ck here can be negative
+          # and that is normal, not a fault. Only q/ph are categorical entropies
+          # bounded ≥0; the ENTROPY-DOMINATED check keys on >1.0 and is unaffected.
           _flog(f"  · ent/pg (β·H/|L_pg|): q={_ed['q']:.2f} ph={_ed['ph']:.2f} "
                 f"pw={_ed['pw']:.2f} ck={_ed['ck']:.2f}{_edf}  │ adv-clip {adv_clip_frac*100:.1f}%{_acf}")
-          # [factored PowerMLP] per-axis health: H/Hmax for each axis (1.0 = uniform,
-          # 0 = collapsed); π_split(common) = policy's mean common-share decision
-          # (independent of sampled w_c; bias-init starts at ~73%, PG drifts it).
+          # [Dirichlet PowerMLP] largest MEAN share on each axis, max(α)/Σα.
+          # flat = 1/n (split 50%, private 1/K), fully concentrated = 100%.
+          # Rising private% = the head is learning to concentrate power — which
+          # is what the Pareto measurement says it should do. NOT comparable to
+          # the pre-2026-07-21 categorical H/log(n) figures in older logs.
           if ep_pw_axis_stats:
               _ax = {k: float(np.mean(v)) for k, v in ep_pw_axis_stats.items()}
-              _flog(f"  · pw axis (H/Hmax): split={_ax['H_split_frac']*100:.0f}% "
-                    f"common={_ax['H_common_frac']*100:.0f}% "
-                    f"private={_ax['H_private_frac']*100:.0f}%  │ "
-                    f"π_split(common)={_ax['pi_split_common']*100:.0f}%")
+              _flog(f"  · pw axis (max share): split={_ax['share_split_max']*100:.0f}% "
+                    f"common={_ax['share_common_max']*100:.0f}% "
+                    f"private={_ax['share_private_max']*100:.0f}% "
+                    f"(flat={100.0/max(cfg.K,1):.0f}%)  │ "
+                    f"E[common]={_ax['pi_split_common']*100:.0f}%")
           # [Bước 0] frozen-λ diagnostic: across this update's mini-batch λ grads,
           #   mag = mean |g| (typical push size);  net = mean_c |mean_s g| (directional
           #   component, per-component signed-mean then abs-averaged);  r = net/mag.
@@ -2369,7 +2980,7 @@ def _parse_args() -> argparse.Namespace:
                         choices=['r1', 'single-z', 'nn-zz', 'full-zz'],
                         help='ABLATION (fresh runs only): VQC readout observable design. '
                              'r1=structured per-action (params default); single-z=Z-only (no ZZ); '
-                             'nn-zz=Z+nearest-neighbor ZZ (generic); full-zz=Z+all-pairwise ZZ. '
+                             'nn-zz=Z+nearest-neighbor ZZ (generic); full-zz=Z+cross-block ZZ (every user-IRS pair plus user-block nearest neighbours; NOT all pairwise -- see params._b1_zz_pairs). '
                              'Only the readout differs — every other hyperparameter identical. '
                              'Ignored on --resume (saved actor config wins).')
     parser.add_argument('--no-ae', dest='no_ae', action='store_true',
@@ -2384,6 +2995,117 @@ def _parse_args() -> argparse.Namespace:
                              'results/result_2/checkpoints/ep_00900/agents. '
                              'OR a RUN-DIR (results/result_N) → AUTO-PICK best sweet-spot ckpt '
                              '(pick_resume_ckpt) = chọn agents tốt nhất tự động.')
+    parser.add_argument('--phase-aux-anneal-end', dest='phase_aux_anneal_end',
+                        type=float, default=None,
+                        help='Linearly decay --phase-aux-weight to 0 by this FRACTION of '
+                             'training (e.g. 0.5 = gone by the halfway point); default None '
+                             'keeps it constant. Saves wall-clock two ways: the per-step '
+                             'oracle_phase_idx call is skipped once the weight hits 0, and '
+                             'the phase term leaves every PPO epoch (updates are 58-65%% of '
+                             'run time). Safe candidate because the phase gap is only 5-7%% '
+                             'of the remaining J gap once the head is trained. ⚠ There is '
+                             'deliberately no equivalent for --assign-aux-weight: that '
+                             'teacher is what prevents the routing-identity collapse.')
+    parser.add_argument('--no-entangle', dest='no_entangle', action='store_true',
+                        help='ABLATION: build the variational circuit with NO '
+                             'two-qubit gates -- the nearest-neighbour CZ chain and '
+                             'every cross-block bridge are dropped, leaving a '
+                             'product state. Parameter count is UNCHANGED (CZ '
+                             'carries none) and the R1 readout is untouched, so '
+                             'this is a one-variable test of whether the quantum '
+                             'correlations matter. On a product state the '
+                             'two-qubit observables satisfy <Z_i Z_j>=<Z_i><Z_j> '
+                             'exactly (measured residual 3.3e-07 vs 0.351 with '
+                             'the chain), so R1-b and R1-c -- two thirds of the '
+                             'readout at Case 2 -- become products of R1-a/R1-d '
+                             'rather than vanishing. Answers the question Bowles '
+                             'et al. 2024 raise: removing entanglement often '
+                             'costs nothing, which would make "quantumness" not '
+                             'the operative ingredient.')
+    parser.add_argument('--phase-aux-hspread', dest='phase_aux_hspread',
+                        type=float, default=0.0,
+                        help='Redistribute the --phase-aux-weight teacher toward '
+                             'high channel-spread states, WITHOUT changing its '
+                             'total strength: w_i = w*(1 + gamma*tanh(z_i)) with '
+                             'z the batch-standardised log(max|h|/min|h|). '
+                             'Measured on 120 Case-2 states: the oracle-phase '
+                             'swap is worth +0.045 on states the policy already '
+                             'wins and +0.583 on the 20%% it loses (more than '
+                             "AO's own +0.434 lead there), and the losers are the "
+                             'high-spread ones (corr -0.79). A uniform teacher '
+                             'spends its weight where it buys +0.045, which is '
+                             'why fixing the target alone (r280) moved nothing. '
+                             '0 = uniform, bit-identical to before. Try 0.5-1.0.')
+    parser.add_argument('--phase-aux-sweeps', dest='phase_aux_sweeps',
+                        type=int, default=0,
+                        help='Coordinate-ascent sweeps used to build the '
+                             '--phase-aux-weight target (oracle_phase_idx '
+                             'n_sweeps). Default 0 reproduces every run so far, '
+                             'and is measured HARMFUL: on the true channel that '
+                             'target scores J 1.7022 vs the head own 1.7227, so '
+                             'the teacher aims BELOW the head. 1 gives 1.7772 '
+                             '(+0.0545, 56%% of the J-oracle gain) for 0.56 vs '
+                             '0.09 ms/state. Do not raise it further: 3 and 8 '
+                             'sweeps fall back to 1.7590 and 1.7565, because the '
+                             'ascent maximises coherent gain rather than J.')
+    parser.add_argument('--power-aux-anneal-end', dest='power_aux_anneal_end',
+                        type=float, default=None,
+                        help='Linearly decay --power-aux-weight to 0 by this '
+                             'FRACTION of training (e.g. 0.5 = gone by halfway); '
+                             'default None keeps it constant. The teacher costs '
+                             '12 rate evaluations per rollout step and a term in '
+                             'every PPO epoch, and the power axis has no measured '
+                             'headroom left once oracles are chosen on g-hat and '
+                             'paid on g, so decaying it is a pure wall-clock '
+                             'saving. Same machinery as --phase-aux-anneal-end; '
+                             'as there, --assign-aux-weight can never anneal.')
+    parser.add_argument('--phase-aux-weight', dest='phase_aux_weight', type=float, default=0.0,
+                        help='CONTINUOUS phase teacher: add w·(-log π(oracle_phase|s)) to the '
+                             'PhaseMLP loss at EVERY update. The supervised phase warm-up is applied '
+                             'once and then ERODED by PPO (measured r154: coherent-gain alignment '
+                             '15.6%% → 7.0%% over 1300 ep); this cannot decay. Targets the largest '
+                             'remaining gap once routing is fixed — on r177, swapping in the oracle '
+                             'phase is +0.138 J = 42%% of the whole gap to AO. Costs ~0.08 ms/step '
+                             '(closed-form per-element target, no coordinate ascent). Try 0.1-0.5.')
+    parser.add_argument('--assign-aux-weight', dest='assign_aux_weight', type=float, default=0.0,
+                        help='CONTINUOUS assignment teacher: add w·(-log π(oracle_routing|s)) to the '
+                             'actor loss at EVERY update, alongside PPO. Targets the measured collapse '
+                             'cause — routing IDENTITY drift (count stays right, WHO gets each IRS '
+                             'drifts wrong: r166 mis 0.5→1.8%%, blocked→dead-direct 1.1→5.1%% over '
+                             'training). The oracle routing {blocked→its-IRS} reaches QoS 99.7%%, so a '
+                             'strong teacher can bypass the (M+1)^K credit-assignment problem instead '
+                             'of learning it. Not a periodic re-warmup → never shocks the critic. '
+                             'Try 0.1-0.5; anneal to 0 once routing holds. Keeps the actor LEARNED.')
+    parser.add_argument('--power-aux-weight', dest='power_aux_weight', type=float, default=0.0,
+                        help='AUXILIARY TEACHER for PowerMLP: add w·(-log p(oracle_alloc | α)) to its '
+                             'loss at EVERY update, alongside PPO. Power was the ONLY head without a '
+                             'teacher and it carries essentially the whole remaining gap — measured on '
+                             'r181 @D_k=0.05: routing (taught) 0%%, phase (taught) 9.7%%, POWER 90.5%%. '
+                             '--power-fairness only BLENDS toward uniform, it never teaches the head '
+                             'to concentrate; this does. Target is the (β*,f*) maximising the design-'
+                             'view objective on a 4×3 grid per state (~12 rate evals). Try 0.3-0.5, '
+                             'and pair with a LOW --power-fairness (a high α damps the teacher too, '
+                             'since both act on the same blended concentrations).')
+    parser.add_argument('--ck-aux-weight', dest='ck_aux_weight', type=float, default=0.0,
+                        help='AUXILIARY TEACHER for CkMLP: add w·(-log p(oracle_share | α)) to its '
+                             'loss at EVERY update, alongside PPO. Keeps C_k LEARNED (it still gets '
+                             'the full reward gradient and still adapts) while supplying the credit '
+                             'signal one shared advantage across four heads fails to deliver — the '
+                             'head is provably capable (isolated demand-fill test -0.683 → -0.061) '
+                             'but does not learn it in situ. Unlike a warm-up this cannot be eroded: '
+                             'the phase warm-up decayed 15.6%% → 7.0%% alignment over 1300 ep in '
+                             'r154, because it was only applied once. Try 0.05-0.3 and anneal to 0. '
+                             'Mutually exclusive in spirit with --closed-form-ck (that one removes '
+                             'the head entirely; this one teaches it).')
+    parser.add_argument('--closed-form-ck', dest='closed_form_ck', action='store_true',
+                        help='Replace the learned CkMLP with the exact demand-fill allocator '
+                             '(cheapest-unmet-first, then spend the leftover budget). C_k is the '
+                             'one sub-problem whose optimum is CLOSED FORM and provable, so '
+                             'learning it is pure overhead — unlike assignment ((M+1)^K), phase '
+                             '(L^N) or the power simplex, which stay learned. Measured on r159: '
+                             'learned C_k gives QoS 77.4%% vs 89.7%% for this allocator on the SAME '
+                             'routing/phase/power. Also removes CkMLP from the PPO graph (no '
+                             'log-prob, no gradient, no update).')
     parser.add_argument('--freeze-phase', dest='freeze_phase', action='store_true',
                         help='EXPERIMENT-1: freeze PhaseMLP params (skip its grad apply) so the '
                              'assignment head trains against a STATIONARY phase. Diagnostic for '
@@ -2403,6 +3125,16 @@ def _parse_args() -> argparse.Namespace:
                              'the +59pp live->oracle alignment gap observed at r14 ep_00700 '
                              '(per-IRS index match 26%%, ~= random 1/L -> PhaseMLP picks wrong-of-4 '
                              'index ~75%% of the time). Reduces F2 init bias for assignment training.')
+    parser.add_argument('--assign-warmup-episodes', dest='assign_warmup_episodes', type=int, default=None,
+                        help='Rollout episodes for the ① ORACLE ASSIGNMENT warm-up only. '
+                             'Defaults to --phase-warmup-episodes. Split out because ① trains the '
+                             'VQC ACTOR (~3 min/epoch at K10/M2 — PQC forward over the whole buffer), '
+                             'while 🌡 phase is a cheap classical MLP fit: they want very different budgets.')
+    parser.add_argument('--assign-warmup-epochs', dest='assign_warmup_epochs', type=int, default=None,
+                        help='CE epochs for the ① ORACLE ASSIGNMENT warm-up only. Defaults to '
+                             '--phase-warmup-epochs. ① typically SATURATES at ~100%% match by ~30 '
+                             'epochs (r151), and now exits immediately at ≥99.5%%, so a small cap '
+                             '(30-50) costs nothing and caps the downside.')
     parser.add_argument('--phase-warmup-episodes', dest='phase_warmup_episodes', type=int, default=8,
                         help='Rollout episodes to collect (s_phase, oracle_idx) supervised buffer.')
     parser.add_argument('--phase-warmup-epochs', dest='phase_warmup_epochs', type=int, default=30,
@@ -2420,6 +3152,51 @@ def _parse_args() -> argparse.Namespace:
                         help='Override satellite LoS coverage radius R_LoS (km). Default = params.py '
                              'value (0.2). Curriculum ramps: 0.2 → 0.3 → 0.4 → 0.5 progressively '
                              'increasing blockage. Use with --resume for ramp transition.')
+    parser.add_argument('--power-scale-feats', dest='power_scale_feats',
+                        action='store_true',
+                        help='Append 2K+1 absolute-scale features to the power '
+                             'head input: per-user single-user capacity '
+                             'log2(1+Gamma_k), demand pressure D_k/that, and the '
+                             'mean log SNR. The h-block is rescaled by its own '
+                             'mean to survive LayerNorm, which removes every '
+                             'absolute quantity — so the head currently knows '
+                             'the per-user ranking but not whether anyone can '
+                             'reach D_k, and cannot react to a P_S change at '
+                             'all. Power is 73%% of the remaining gap to the '
+                             'oracle.')
+    parser.add_argument('--power-feat-scale', dest='power_feat_scale',
+                        type=float, default=1.0,
+                        help='Divisor inside the feasibility-margin tanh of '
+                             '--power-scale-feats: tanh(log2(cap/D_k) / s). The '
+                             'raw ratio has sd ~6 and spans -9.5..+7.0, so s=1 '
+                             '(the default, kept for reproducibility) saturates '
+                             '70%% of entries and reduces the margin to a sign '
+                             'bit. s=4 measured 2.2-2.5%% saturation while '
+                             'keeping ~90%% of the variance. No effect unless '
+                             '--power-scale-feats is also given.')
+    parser.add_argument('--power-aux-beta-cap', dest='power_aux_beta_cap',
+                        action='store_true',
+                        help='Restrict the --power-aux-weight teacher grid to '
+                             'beta <= 1 (0, 0.25, 0.5, 1.0) instead of the '
+                             'default (0, 1, 4, 16). Measured on 100 states, '
+                             'choosing on g-hat and scoring on true g: J peaks '
+                             'at beta=1 (1.5765) and collapses at beta=4 '
+                             '(1.3752), below even equal power (1.5312). The '
+                             'default grid therefore teaches over-concentration '
+                             'that only pays on the estimate — the likely cause '
+                             'of the 21 net-harmful power-aux runs.')
+    parser.add_argument('--power-mag-feats', dest='power_mag_feats',
+                        choices=['sq', 'log'], default=None,
+                        help='Append the per-user magnitude ordering (K dims) to '
+                             'the power head input: sq = |h|^2/mean, log = '
+                             'log|h|^2 - mean. The teacher target is private ∝ '
+                             '|h|^{2b} with b up to 16, and from the rescaled '
+                             'Re/Im block alone the head must square its own '
+                             'inputs to get there. Fitting the teacher log-shares '
+                             'by least squares on 600 states: current input R^2 '
+                             '0.245, +|h|^2 0.601, +log|h| 0.559. Independent of '
+                             '--power-scale-feats, which supplies a saturated '
+                             'feasibility flag rather than the magnitude.')
     parser.add_argument('--P-S', dest='P_S_dBm', type=float, default=None,
                         help='Override P_S (satellite TX power, dBm). Default = per-case auto (K≤5:50, '
                              'K≤10:70, else:100). R3 scale-K sweep: FIX P_S=50 across K=5..9 so the '
@@ -2475,7 +3252,22 @@ def _parse_args() -> argparse.Namespace:
                              'recovers +28pp QoS at ~zero sum-rate cost (PowerMLP concentrates power on '
                              'already-served users, starving unmet ~3.3×). 0 = off (learned head); 1 = exact '
                              'equal-split; ~0.6-0.8 = sweet-spot guess. Applied to w_p only (PPO path '
-                             'unchanged). Distinct from beta_entropy_pwr_private (soft entropy, insufficient).')
+                             'unchanged). Distinct from beta_entropy_pwr_private (soft entropy, insufficient). '
+                             'NOTE: drives the SPLIT + COMMON axes; the private axis is driven by '
+                             '--power-fairness-priv (defaults to this value).')
+    parser.add_argument('--power-fairness-priv', dest='power_fairness_priv', type=float, default=None,
+                        help='③b α_priv∈[0,1] for the PRIVATE distribution only. Defaults to '
+                             '--power-fairness (unchanged behaviour). Set LOW (0-0.3) to let the private '
+                             'power CONCENTRATE while --power-fairness still pins the split/common axes: '
+                             'the 07-21 Pareto measurement (per-element physics, oracle C_k) shows a '
+                             'concentrated private distribution buys large sum-rate at ~unchanged QoS, '
+                             'because the common stream carries the QoS. Requires a demand-filling C_k — '
+                             'with equal C_k this COLLAPSES QoS (100%%→60%%).')
+    parser.add_argument('--power-priv-frac', dest='power_priv_frac', type=float, default=0.8,
+                        help='③c target private fraction f for the --power-fairness split blend '
+                             '(split → [1-f, f]). 0.8 (default) was QoS-optimal under EQUAL C_k; with a '
+                             'demand-filling C_k the reward-optimal f is much lower — measured ≈0.68 for '
+                             'K5/M1 and ≈0.28 for K10/M2 at P_S=50dBm, λ_D=1.5, R_LoS=0.5.')
     parser.add_argument('--power-clean-input', dest='power_clean_input', action='store_true',
                         help='Feed PowerMLP ONLY the clean per-user effective channels h_eff (Re+Im, 2K) '
                              'and DROP the o_hat/z_t block. Power/Ck do not train the quantum encoding, so '
@@ -2516,6 +3308,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--beta-entropy', dest='beta_entropy', type=float, default=None,
                         help='Override params.py beta_entropy (initial entropy coeff). Higher = '
                              'more exploration → avoid premature assignment commit (esp. high cases).')
+    parser.add_argument('--beta-entropy-pwr-private', dest='beta_entropy_pwr_private',
+                        type=float, default=None,
+                        help='Extra entropy bonus on the PRIVATE power axis, ON TOP of --beta-entropy '
+                             '(params.py default 0.003 = 4x the global beta on that axis alone). It was '
+                             'a crutch from when PowerMLP could not learn from reward; with the Dirichlet '
+                             'policy it now FIGHTS the head — result_150 showed the private max-share '
+                             'frozen at 29%% (flat 20%%) while split/common moved 43->81%%. Pass 0.0 to drop it.')
     parser.add_argument('--beta-entropy-min', dest='beta_entropy_min', type=float, default=None,
                         help='Override params.py beta_entropy_min (entropy floor after anneal).')
     parser.add_argument('--beta-entropy-anneal-end', dest='beta_entropy_anneal_end',

@@ -142,6 +142,7 @@ class QuantumActor:
                  extra_zz_pairs:   tuple = (),   # B4: cross-block ZZ observable pairs
                  full_zz_pairs:    tuple = (),   # B1: full ZZ set (replaces NN ZZ + extra)
                  readout_mode:     str   = 'generic',  # Δ2: 'generic' | 'r1'
+                 no_entangle:      bool  = False,  # ablation: product-state circuit
                  softmax_head:     bool  = False,       # Δ4: SoftmaxPQC linear+β head
                  softmax_beta_init: float = 1.0,        # Δ4: initial inverse-temperature β
                  no_ae:            bool  = False,       # ablation: drop z_t classical bypass [B]
@@ -205,13 +206,18 @@ class QuantumActor:
         self.EXTRA_CZ_PAIRS = tuple(extra_cz_pairs)  # B3: stored for save/load
         self.EXTRA_ZZ_PAIRS = tuple(extra_zz_pairs)  # B4: stored for save/load
         self.FULL_ZZ_PAIRS  = tuple(full_zz_pairs)   # B1: stored for save/load
+        # Stored like the topology tuples so from_dir() rebuilds the SAME circuit:
+        # loading a no-entangle policy into an entangling circuit would evaluate it
+        # under a model it was never trained on.
+        self.NO_ENTANGLE    = bool(no_entangle)
         self.LAM_MAX        = 1.5          # B6: λ clipping bound (|λ|>1.5 → tanh grad<0.01)
         self.SOFTMAX_BETA_INIT = float(softmax_beta_init)
         self.rng            = np.random.default_rng(seed)
 
         # B3/B4/B1 + Δ2: set circuit topology BEFORE parameter init (head size uses N_QUANTUM)
         configure_topology(extra_cz_pairs, extra_zz_pairs, full_zz_pairs,
-                           readout_mode=self.READOUT_MODE, r1_m=cfg.M)
+                           readout_mode=self.READOUT_MODE, r1_m=cfg.M,
+                           no_entangle=self.NO_ENTANGLE)
 
         self._init_params()
 
@@ -340,13 +346,18 @@ class QuantumActor:
         dict predates the ĝ keys (e.g. a hand-built mock).
         """
         g_sr = obs.get('g_SR_hat', obs['g_SR'])     # (M,) complex — estimated ĝ_SR
-        g_ru = obs.get('g_RU_hat', obs['g_RU'])     # (M, K) complex — estimated ĝ_RU
+        g_ru = obs.get('g_RU_hat', obs['g_RU'])     # (M,N,K) complex — estimated ĝ_RU
         g_su = obs.get('g_SU_hat', obs['g_SU'])     # (K,) complex — estimated ĝ_SU (direct)
         _M, _K = self.B, self.K
 
-        # Affinity a_{k,m} = |ĝ_SR[m]| × |ĝ_RU[m,k]|  (IRS-path quality, estimated CSI)
+        # Affinity a_{k,m} = |ĝ_SR[m]| × Σ_n |ĝ_RU[m,n,k]|  (IRS-path quality, est. CSI)
+        # ĝ_RU is per reflecting element (M,N,K); the coherent sum over n is the
+        # best achievable IRS-path amplitude (what perfectly aligned phases give),
+        # so it is the right routing feature. d_aff is unchanged.
         g_sr_mag = np.abs(g_sr)                     # (M,)
-        g_ru_mag = np.abs(g_ru)                     # (M, K)
+        g_ru_mag = np.abs(g_ru)                     # (M, N, K)  [or (M,K) legacy]
+        if g_ru_mag.ndim == 3:
+            g_ru_mag = g_ru_mag.sum(axis=1)         # (M, K) coherent-combining ceiling
         # a_mat[k, m] = g_sr_mag[m] * g_ru_mag[m, k]
         a_mat    = (g_sr_mag[:, None] * g_ru_mag).T  # (K, M)
 
@@ -1491,6 +1502,7 @@ class QuantumActor:
             'spsa_n_reps':      self.spsa_n_reps,
             'spsa_epsilon':     self.spsa_epsilon,
             'extra_cz_pairs':   [list(p) for p in self.EXTRA_CZ_PAIRS],
+            'no_entangle':      bool(self.NO_ENTANGLE),
             'extra_zz_pairs':   [list(p) for p in self.EXTRA_ZZ_PAIRS],
             'full_zz_pairs':    [list(p) for p in self.FULL_ZZ_PAIRS],
             'readout_mode':     self.READOUT_MODE,
@@ -1528,6 +1540,9 @@ class QuantumActor:
             n_hidden_post=c['n_hidden_post'],
             n_var_layers=c['n_var_layers'],
             n_shots=c['n_shots'],
+            # default False so every checkpoint written before this flag existed
+            # still loads, and loads as the entangling circuit it was trained with
+            no_entangle=bool(c.get('no_entangle', False)),
             lr_ae=c['lr_ae'],
             lr_qc=c['lr_qc'],
             lr_xi=c['lr_xi'],

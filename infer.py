@@ -37,19 +37,34 @@ from RL         import QuantumActor, ClassicalActor, PhaseMLP, PowerMLP, CkMLP
 
 def _build_phase_state(channels: dict, phi: np.ndarray, cfg,
                        z_t: np.ndarray) -> np.ndarray:
-    """Build (M, 2K + n_latent + K) per-IRS state for PhaseMLP (mirror of train.py).
-    row m = [Re(c^SRU_m)(K), Im(c^SRU_m)(K), z_t(n_latent), phi_mask_m(K)]."""
-    M, K     = cfg.M, cfg.K
+    """Build (M, N, 4K + n_latent + K) PER-ELEMENT state for PhaseMLP.
+    ⚠ EXACT MIRROR of train.py::_build_phase_state — any divergence silently
+    changes the policy at eval time. Keep the two in sync.
+
+    Row (m,n) = [Re(c^SRU_{m,n})(K), Im(c^SRU_{m,n})(K),
+                 Re(ĝ_SU)(K), Im(ĝ_SU)(K), z_t(n_latent), phi_mask_m(K)]
+    with c_{m,n,k} = conj(ĝ_SR[m])·ĝ_RU[m,n,k] — element n's OWN cascade channel.
+    ĝ_SU is the direct-link reference the elements must align against
+    (θ_n = arg g_SU − arg c_n); without it the oracle phase is not a function of
+    the state — see the rationale in train.py."""
+    M, N, K  = cfg.M, cfg.N, cfg.K
     n_latent = len(z_t)
-    s        = np.zeros((M, 2 * K + n_latent + K))
+    off_su, off_z, off_mask = 2 * K, 4 * K, 4 * K + n_latent
+    s        = np.zeros((M, N, 5 * K + n_latent))
+    g_su     = channels['g_SU_hat']
+    EPS      = 1e-30
     for k in range(K):
         m = int(phi[k]) - 1
         if m >= 0:
-            c_mk = channels['g_SR_hat'][m].conj() * channels['g_RU_hat'][m, k]
-            s[m, k]                    += c_mk.real
-            s[m, K + k]                += c_mk.imag
-            s[m, 2 * K + n_latent + k]  = 1.0   # phi_mask: user k belongs to IRS m
-    s[:, 2 * K : 2 * K + n_latent] = z_t[None, :]   # broadcast z_t to all IRS rows
+            c_mnk = channels['g_SR_hat'][m].conj() * channels['g_RU_hat'][m, :, k]  # (N,)
+            a_c = np.abs(c_mnk) + EPS                     # UNIT PHASOR — see train.py
+            s[m, :, k]              += c_mnk.real / a_c
+            s[m, :, K + k]          += c_mnk.imag / a_c
+            a_g = abs(g_su[k]) + EPS
+            s[m, :, off_su + k]     += g_su[k].real / a_g
+            s[m, :, off_su + K + k] += g_su[k].imag / a_g
+            s[m, :, off_mask + k]    = 1.0   # phi_mask: user k belongs to IRS m
+    s[:, :, off_z : off_z + n_latent] = z_t[None, None, :]   # broadcast z_t
     return s
 
 
@@ -78,8 +93,12 @@ def _build_ck_state(demand: np.ndarray, R_private: np.ndarray,
     return np.concatenate([demand, R_private, R_c_g, shortfall, phi_float])
 
 
-def _compute_blocked(env: ISTNEnv) -> np.ndarray:
-    """Per-user indicator: True when best IRS path > direct link (estimated CSI)."""
+def _compute_irs_favored(env: ISTNEnv) -> np.ndarray:
+    """Per-user indicator: True when the best IRS path beats the direct link, on
+    ESTIMATED CSI. NOTE: this is *IRS-favoured*, not the physical blockage flag
+    (env.channels['su_blocked']); it also depends on the CURRENT env.Phi. It is
+    currently passed to actor.extract_state() but IGNORED there -- the affinity
+    features encode blockage implicitly (blocked link -> a_{k,m} ~ 0)."""
     ch       = env.channels
     h_direct = np.abs(ch['g_SU_hat'])
     h_irs    = np.array([
@@ -133,9 +152,12 @@ def load_training_cfg(run_dir: str, kappa=None, noise_var_dBW=None,
     )
     # Recover the training-time ramp + spawn geometry from hyperparameters.json
     # (walk up from run_dir; training_config.json does NOT store these).
+    # Check run_dir ITSELF first, then walk up (for a checkpoints/ep_XXXXX subdir).
+    # The previous version called dirname() *before* the check, so a run root was
+    # skipped entirely and R_LoS silently fell back to params.py — a ramp-0.5 policy
+    # was then evaluated at the params.py ramp (0.2). Order matters here.
     _d = os.path.abspath(run_dir)
     for _ in range(5):
-        _d = os.path.dirname(_d)
         _hp = os.path.join(_d, 'hyperparameters.json')
         if os.path.isfile(_hp):
             try:
@@ -147,6 +169,7 @@ def load_training_cfg(run_dir: str, kappa=None, noise_var_dBW=None,
             except Exception:
                 pass
             break
+        _d = os.path.dirname(_d)
     # Test-time overrides (zero-shot env sweep) — applied AFTER the training env.
     if kappa is not None:          ov['kappa']          = float(kappa)
     if noise_var_dBW is not None:  ov['noise_var_dBW']  = float(noise_var_dBW)
@@ -173,6 +196,12 @@ def load_agents(run_dir: str, seed: int = None):
         raise FileNotFoundError(
             f"No agents/ directory found in {run_dir}. "
             f"Run training first with train.py.")
+    # Flat-PPO baseline (train_flat.py) — ONE network holds the whole policy, so
+    # there are no phase/power/Ck nets to load. Signalled by flat_config.json;
+    # the three Nones tell run_hqchac_episode to take the flat path.
+    if os.path.isfile(os.path.join(agents_dir, 'flat_config.json')):
+        from RL.flat_actor import FlatActor
+        return FlatActor.from_dir(agents_dir, seed=seed), None, None, None
     # Detect actor type from saved config: the classical baseline
     # (--actor-mode classical) saves {"mode": "classical"} and must load via
     # ClassicalActor — QuantumActor.from_dir would KeyError on 'n_qubits'.
@@ -190,23 +219,41 @@ def load_agents(run_dir: str, seed: int = None):
     phase_net = PhaseMLP.from_dir(agents_dir, seed=seed)
     power_net = PowerMLP.from_dir(agents_dir, seed=seed)
     ck_net    = CkMLP.from_dir(agents_dir, seed=seed)
-    # power_fairness α is part of the trained policy's action mapping (blends
-    # applied w_p toward equal-split) but is NOT saved in power_config.json.
-    # Restore it from the run's hyperparameters.json (walk up from agents/);
-    # without it the agent reverts to α=0 (concentrated power) → wrong QoS.
-    _af, _d = 0.0, os.path.abspath(agents_dir)
+    # The ③ power-fairness knobs are part of the trained policy's action mapping
+    # (they blend the APPLIED power) but are NOT saved in power_config.json.
+    # Restore all three from the run's hyperparameters.json (walk up from agents/);
+    # missing any of them silently changes the executed policy at eval time:
+    #   power_fairness       → split + common axes
+    #   power_fairness_priv  → private axis (defaults to power_fairness)
+    #   power_priv_frac      → target private split f (defaults to 0.8)
+    _af, _ap, _pf, _d = 0.0, None, 0.8, os.path.abspath(agents_dir)
     for _ in range(5):
         _d = os.path.dirname(_d)
         _hp = os.path.join(_d, 'hyperparameters.json')
         if os.path.isfile(_hp):
             try:
-                _af = float(json.load(open(_hp)).get('power_net', {}).get('power_fairness', 0.0))
+                _pn = json.load(open(_hp)).get('power_net', {})
+                power_net.scale_feats = bool(_pn.get('power_scale_feats', False))
+                # The tanh divisor is part of the input definition, not a
+                # cosmetic knob: evaluating an s=4 policy with s=1 feeds it a
+                # feature it never saw. Runs predating the flag have no field,
+                # and 1.0 is exactly what they trained with.
+                power_net.feat_scale = float(_pn.get('power_feat_scale', 1.0))
+                power_net.mag_feats = _pn.get('power_mag_feats', None)
+                _af = float(_pn.get('power_fairness', 0.0))
+                _ap = _pn.get('power_fairness_priv', None)
+                _ap = _af if _ap is None else float(_ap)
+                _pf = float(_pn.get('power_priv_frac', 0.8))
             except Exception:
-                _af = 0.0
+                _af, _ap, _pf = 0.0, 0.0, 0.8
             break
-    power_net.power_fairness = _af
-    if _af > 0:
-        print(f"  ⚙ power_fairness α={_af:.2f} restored from hyperparameters.json")
+    power_net.power_fairness      = _af
+    power_net.power_fairness_priv = _af if _ap is None else _ap
+    power_net.power_priv_frac     = _pf
+    if _af > 0 or (_ap or 0) > 0:
+        print(f"  ⚙ power_fairness α_split/common={_af:.2f} α_private="
+              f"{power_net.power_fairness_priv:.2f} f={_pf:.2f} "
+              f"restored from hyperparameters.json")
     return actor, phase_net, power_net, ck_net
 
 
@@ -220,6 +267,15 @@ def run_hqchac_episode(env: ISTNEnv,
                        n_steps: int,
                        greedy: bool = True) -> dict:
     """Run one episode with the HQC-HAC agent. Returns per-episode metrics."""
+    # PhaseMLP's weights are N-agnostic (shared across reflecting elements,
+    # d_out = n_levels), but the loaded instance keeps the N it trained at and its
+    # forward loops `range(self.N)`. Evaluating on an array of a different size then
+    # either index-errors (N_eval < N_train) or, worse, SILENTLY leaves the extra
+    # elements at their previous phase (N_eval > N_train) — plausible-looking numbers
+    # for a policy that only steered part of the surface. Retarget at the eval array;
+    # no weight is touched, so this is a no-op whenever N matches.
+    if phase_net is not None and getattr(phase_net, 'N', None) != cfg.N:
+        phase_net.N = cfg.N
     obs = env.reset()
 
     ep_reward   = 0.0
@@ -228,8 +284,43 @@ def run_hqchac_episode(env: ISTNEnv,
     ep_qos_ok   = []
     ep_irs_frac = []
 
+    is_flat = phase_net is None                    # flat-PPO baseline: one net
+    flat_prev = None                               # (r_k, r_0) rate feedback
+
     for _ in range(n_steps):
-        blocked = _compute_blocked(env)
+        blocked = _compute_irs_favored(env)
+        if is_flat:
+            # The whole action comes from ONE forward on the raw state; C_k is
+            # drawn from the SAME logits once the group common rates are known.
+            # State must be built EXACTLY as train_flat.rollout builds it —
+            # combined channel + rate feedback included, and update_norm=False so
+            # evaluation cannot drift the normalisation trained under.
+            h_now = env.rate_computer.effective_channels_all(
+                env.assignment, env.Phi, env.channels)
+            s_t = actor.extract_state(obs, demand, blocked, h_eff=h_now,
+                                      prev_rates=flat_prev, update_norm=False)
+            act, _, fi = actor.forward(s_t, greedy=greedy)
+            phi, phase_idx = act['phi'], act['phase_idx']
+            w_p, w_c_vec = fi['w_p'], fi['w_c_vec']
+            proposed_Phi = env.phase_model.build_phi(
+                env.phase_model.index_to_phase(phase_idx))
+            partial = env.rate_computer.compute_rates_partial(
+                phi, proposed_Phi, env.channels, w_p, w_c_vec,
+                active_irs_ids=act['active_ids'])
+            C_k, _, _, _ = actor.sample_ck(fi['logits'], phi,
+                                           partial['R_c_group'], greedy=greedy)
+            obs, reward, _, info = env.step({'assignment': phi,
+                                             'phase_idx':  phase_idx,
+                                             'w_p':        w_p,
+                                             'w_c_vec':    w_c_vec,
+                                             'C_k':        C_k})
+            flat_prev = (np.asarray(info['R_private']), float(np.mean(C_k)))
+            ep_reward += reward
+            ep_sum_rate.append(float(info['sum_rate']))
+            ep_feasible.append(bool(info['feasible']))
+            ep_qos_ok.append(int(np.sum(info['R_tot'] >= cfg.D_k_bps_hz)))
+            ep_irs_frac.append(float(np.mean(phi > 0)))
+            continue
         s_t     = actor.extract_state(obs, demand, blocked)
         phi, _, actor_info = actor.forward(s_t, greedy=greedy)
         z_t = actor_info['z_t']                       # arch-2 spatial latent (shared by phase/power)
@@ -246,10 +337,26 @@ def run_hqchac_episode(env: ISTNEnv,
         proposed_Phi = env.phase_model.build_phi(phases_rad)
 
         h_eff   = env.rate_computer.effective_channels_all(phi, proposed_Phi, env.channels)
+        # channel block rescaled to survive LayerNorm — see train._build_power_state.
         # [--power-clean-input] auto-detect from the loaded PowerMLP's expected input
-        # dim: a clean PowerMLP reads ONLY h_eff (2K); a normal one also reads the rep
-        # (o_hat|z_t). No flag needed at inference — power_net.d_s tells us.
-        s_power = np.concatenate([h_eff.real, h_eff.imag])
+        # dim: a clean PowerMLP reads ONLY h_eff (2K); a normal one also reads the rep.
+        _hs = float(np.mean(np.abs(h_eff))) + 1e-9
+        s_power = np.concatenate([h_eff.real / _hs, h_eff.imag / _hs])
+        # [--power-scale-feats] absolute-scale block, appended BEFORE the rep so
+        # the layout matches train._build_power_state exactly. Driven by the flag
+        # recorded in hyperparameters.json, not inferred from d_s — with the rep
+        # also optional, d_s alone cannot tell the two blocks apart.
+        if getattr(power_net, 'scale_feats', False):
+            from train import _power_scale_feats
+            cfg.power_feat_scale = getattr(power_net, 'feat_scale', 1.0)
+            s_power = np.concatenate([s_power, _power_scale_feats(h_eff, cfg)])
+        # [--power-mag-feats] appended AFTER the scale block and BEFORE the rep,
+        # matching train._build_power_state's order exactly — the head indexes by
+        # position, so a swapped order feeds it a permuted state it never saw.
+        if getattr(power_net, 'mag_feats', None):
+            from train import _power_mag_feats
+            s_power = np.concatenate(
+                [s_power, _power_mag_feats(h_eff, power_net.mag_feats)])
         if power_net.d_s > s_power.shape[0]:
             s_power = np.concatenate([s_power, rep])
         w_c_vec, w_p, _, _ = power_net.forward(s_power, active_irs_ids)

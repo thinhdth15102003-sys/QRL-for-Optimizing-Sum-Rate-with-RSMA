@@ -6,11 +6,12 @@ Generates all channel coefficients for one episode/step snapshot.
 Channel convention
 ------------------
   g_SR[m]     satellite → IRS_m     TRUE physical channel
-  g_RU[m, k]  IRS_m    → user k     TRUE physical channel
+  g_RU[m,n,k] IRS_m element n → user k   TRUE physical channel (PER-ELEMENT:
+              large-scale terms shared across n, Rayleigh drawn independently)
   g_SU[k]     satellite → user k    TRUE physical channel
 
   g_SR_hat[m]    estimated/imperfect CSI: g_hat = g + Δg,  Δg = κ|g|ε, ε ~ CN(0,1)
-  g_RU_hat[m, k] ditto for IRS→user link
+  g_RU_hat[m,n,k] ditto for IRS→user link
   g_SU_hat[k]    ditto for direct link
 
   Imperfect-CSI split (both views live in the same channels dict):
@@ -51,10 +52,18 @@ class ChannelModel:
     # Internal helpers
     # ------------------------------------------------------------------ #
 
-    def sample_noise_sigma2(self) -> float:
-        """Per-step noise variance from N(noise_mean_dBW, sqrt(noise_var_dBW)) dBW."""
+    def sample_noise_sigma2(self) -> np.ndarray:
+        """PER-USER, per-step noise variance, shape (K,), from
+        N(noise_mean_dBW, sqrt(noise_var_dBW)) dBW.
+
+        Previously a single scalar was shared by all K users, so every user's SINR
+        moved together — fully correlated QoS outcomes and no per-user noise
+        diversity. Each user now draws its own noise floor, matching the usual
+        n_0 ~ CN(0, sigma^2) per receiver.
+        """
         noise_dBW = self.rng.normal(self.cfg.noise_mean_dBW,
-                                    np.sqrt(self.cfg.noise_var_dBW))
+                                    np.sqrt(self.cfg.noise_var_dBW),
+                                    size=self.cfg.K)
         return 10.0 ** (noise_dBW / 10.0)
 
     # ------------------------------------------------------------------ #
@@ -169,21 +178,32 @@ class ChannelModel:
         return g, g_hat
 
     def _sample_g_RU(self, d_IRS_U: np.ndarray):
-        """Sample IRS→user channels. Returns (g (M,K) true, g_hat (M,K) estimated)."""
+        """Sample IRS→user channels, PER REFLECTING ELEMENT.
+
+        Returns (g (M,N,K) true, g_hat (M,N,K) estimated).
+
+        Large-scale terms (path loss, rain) are shared by all N elements of an IRS
+        — element spacing is negligible against the IRS–user distance — while the
+        small-scale Rayleigh fading is drawn INDEPENDENTLY per element. This is
+        what gives the phase vector its degrees of freedom: phi_n can align to
+        element n's own channel, so |sum_n e^{j phi_n} g_n| -> sum_n |g_n| when
+        aligned (mean gain still ~ N E|g|, but now optimisable and lower-variance).
+        """
         cfg      = self.cfg
-        M, K     = cfg.M, cfg.K
+        M, N, K  = cfg.M, cfg.N, cfg.K
         G_U      = 10 ** (cfg.G_U_dBi / 10)
         g_sf_lin = 10 ** (cfg.g_sf_dB / 10)
         pl       = self._irs_user_path_loss(d_IRS_U)   # (M, K)
 
         rain_dB = self.rng.normal(cfg.rain_mean, np.sqrt(cfg.rain_var_RU), size=(M, K))
         eps_RU  = 10.0 ** (-rain_dB / 10.0)
-        g_sf    = (self.rng.standard_normal((M, K))
-                   + 1j * self.rng.standard_normal((M, K))) / np.sqrt(2)
-        g       = np.sqrt(G_U * g_sf_lin * pl * eps_RU) * g_sf
+        scale   = np.sqrt(G_U * g_sf_lin * pl * eps_RU)[:, np.newaxis, :]   # (M,1,K)
+        g_sf    = (self.rng.standard_normal((M, N, K))
+                   + 1j * self.rng.standard_normal((M, N, K))) / np.sqrt(2)
+        g       = scale * g_sf                                              # (M,N,K)
 
-        delta_n = (self.rng.standard_normal((M, K))
-                   + 1j * self.rng.standard_normal((M, K))) / np.sqrt(2)
+        delta_n = (self.rng.standard_normal((M, N, K))
+                   + 1j * self.rng.standard_normal((M, N, K))) / np.sqrt(2)
         g_hat   = g + cfg.kappa * np.abs(g) * delta_n
         return g, g_hat
 
@@ -199,10 +219,10 @@ class ChannelModel:
         -------
         dict with keys:
           g_SR      (M,)  complex   TRUE satellite→IRS channels
-          g_RU      (M,K) complex   TRUE IRS→user channels
+          g_RU      (M,N,K) complex TRUE IRS→user channels (PER-ELEMENT)
           g_SU      (K,)  complex   TRUE satellite→user direct channels
           g_SR_hat  (M,)  complex   estimated (imperfect) counterparts
-          g_RU_hat  (M,K) complex
+          g_RU_hat  (M,N,K) complex
           g_SU_hat  (K,)  complex
           d_SU      (K,)  float
           d_IRS_U   (M,K) float

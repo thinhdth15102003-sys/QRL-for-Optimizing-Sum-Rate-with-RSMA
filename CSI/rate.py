@@ -26,8 +26,10 @@ RSMA grouping  (G+1 common streams, G = active IRS count)
 Effective channel
 -----------------
   IRS user (assignment=m, m ≥ 1):
-      h_k = β_m · Σ_n [ conj(g_SR_hat[m]) · φ_n · g_RU_hat[m,k] ]
-      (g_SR scalar under far-field sat→IRS assumption; φ_n = diag(Φ_m)[n])
+      h_k = β_m · Σ_n [ conj(g_SR_hat[m]) · φ_n · g_RU_hat[m,n,k] ]
+      (g_SR scalar under far-field sat→IRS assumption; φ_n = diag(Φ_m)[n];
+       g_RU is PER-ELEMENT, so the φ_n are a real degree of freedom — aligned
+       phases give Σ_n |g_RU[m,n,k]|, i.e. coherent combining)
   Direct user (assignment=0):
       h_k = g_SU_hat[k]
 
@@ -79,7 +81,7 @@ class RateComputer:
         Compute h[k] for all K users simultaneously.  Returns (K,) complex.
 
         For IRS user k with assignment[k]=m (1-based):
-            h[k] = beta[m-1] * conj(g_SR[m-1]) * sum_n(diag(Phi[m-1])) * g_RU[m-1, k]
+            h[k] = beta[m-1] * conj(g_SR[m-1]) * sum_n Phi[m-1,n,n] * g_RU[m-1, n, k]
         For direct user k with assignment[k]=0:
             h[k] = g_SU[k]
 
@@ -97,14 +99,16 @@ class RateComputer:
         g_RU = channels['g_RU' + sfx]
         g_SU = channels['g_SU' + sfx]
 
-        # sum of diagonal elements for each IRS phase matrix: (M,)
+        # per-element phase of each IRS: (M, N)
         phi_diag = Phi[:, np.arange(N), np.arange(N)]
-        eff_phi  = phi_diag.sum(axis=1)
 
-        # per-IRS coefficient: beta[m] * conj(g_SR[m]) * eff_phi[m]  → (M,)
-        irs_coeff = channels['beta'] * g_SR.conj() * eff_phi
-        # h_irs[m, k] = irs_coeff[m] * g_RU[m, k]  → (M, K)
-        h_irs = irs_coeff[:, np.newaxis] * g_RU
+        # PER-ELEMENT combining: the n-th element reflects with its own phase onto
+        # its own channel, so the phases are a real degree of freedom:
+        #   h_irs[m,k] = beta[m] * conj(g_SR[m]) * sum_n phi_diag[m,n] * g_RU[m,n,k]
+        # (aligned phases give sum_n |g_RU[m,n,k]|, i.e. coherent combining).
+        irs_coeff = channels['beta'] * g_SR.conj()                 # (M,)
+        h_irs = irs_coeff[:, np.newaxis] * np.einsum('mn,mnk->mk',
+                                                     phi_diag, g_RU)
 
         # Select per user: IRS path or direct path
         mask  = assignment > 0                           # (K,) bool
@@ -118,9 +122,11 @@ class RateComputer:
 
     def _sinr_all(self, h: np.ndarray, assignment: np.ndarray,
                   w_p: np.ndarray, w_c_vec: np.ndarray,
-                  wc_map: dict, s2: float):
+                  wc_map: dict, s2):
         """
         Compute private and common SINR for all K users in one pass.
+
+        s2 : float | (K,) ndarray — per-user noise variance, broadcasts against h2.
 
         Returns
         -------
@@ -167,10 +173,13 @@ class RateComputer:
                               w_p: np.ndarray,
                               w_c_vec: np.ndarray,
                               active_irs_ids: Optional[List[int]] = None,
-                              sigma2: Optional[float] = None) -> dict:
+                              sigma2=None) -> dict:
         """
         Compute effective channels, private rates, and per-group common rates
         without making any C_k allocation decision.
+
+        sigma2 : float | (K,) ndarray | None — per-user noise variance;
+                 falls back to the nominal scalar cfg.sigma2 when None.
 
         Returns dict with: R_private, R_c_group, h_eff, SINR_p, SINR_c, groups
         """
@@ -215,7 +224,7 @@ class RateComputer:
                          w_c_vec: np.ndarray,
                          C_k: Optional[np.ndarray] = None,
                          active_irs_ids: Optional[List[int]] = None,
-                         sigma2: Optional[float] = None,
+                         sigma2=None,
                          use_true: bool = False) -> dict:
         """
         Compute achievable sum-rate for all users under multi-group RSMA.
@@ -234,7 +243,8 @@ class RateComputer:
         w_c_vec        : (G+1,) float  common-stream power; G = |active_irs_ids|
         C_k            : (K,) float or None  explicit common-rate share per user
         active_irs_ids : sorted list of physical IRS gids with ≥1 user
-        sigma2         : float or None  per-step noise variance
+        sigma2         : float | (K,) ndarray | None  per-step noise variance;
+                         PER-USER since the per-user-noise change, None → cfg.sigma2
 
         Returns
         -------
@@ -248,11 +258,39 @@ class RateComputer:
         if active_irs_ids is None:
             active_irs_ids = sorted(set(int(a) for a in assignment[:K] if a > 0))
 
-        wc_map = self._make_wc_map(active_irs_ids)
-        h      = self.effective_channels_all(assignment, Phi, channels, use_true=use_true)
-        wp     = w_p[:K]
+        pre = self._sigma_invariants(assignment, Phi, channels, active_irs_ids, use_true)
+        return self._finish_sum_rate(pre, assignment, w_p, w_c_vec, C_k, s2)
 
-        groups = self._build_groups(assignment)
+    # ------------------------------------------------------------------ #
+    # σ²-invariant / σ²-dependent split
+    # ------------------------------------------------------------------ #
+    #
+    # ⚡ 2026-07-21. env.step averages the reward over `reward_noise_avg` (=16)
+    # σ² draws that share ONE channel realisation. h_eff, the user groups and the
+    # common-power map do not depend on σ² at all, yet they were recomputed on
+    # every draw — 36% of compute_sum_rate wasted 15 times over (h_eff alone is
+    # 26%, it runs the einsum over all N reflecting elements).
+    #
+    # Splitting them out is EXACTLY equivalent: same function, same inputs, just
+    # evaluated once. Verified bit-identical against the old path — this is a
+    # pure book-keeping change, no numerical trade whatsoever.
+
+    def _sigma_invariants(self, assignment, Phi, channels, active_irs_ids, use_true):
+        """Everything in compute_sum_rate that does NOT depend on σ²."""
+        return {
+            'wc_map': self._make_wc_map(active_irs_ids),
+            'h':      self.effective_channels_all(assignment, Phi, channels,
+                                                  use_true=use_true),
+            'groups': self._build_groups(assignment),
+            'active_irs_ids': active_irs_ids,
+        }
+
+    def _finish_sum_rate(self, pre, assignment, w_p, w_c_vec, C_k, s2) -> dict:
+        """The σ²-dependent remainder, given precomputed invariants."""
+        cfg = self.cfg
+        K   = cfg.K
+        wc_map, h, groups = pre['wc_map'], pre['h'], pre['groups']
+        wp = w_p[:K]
         sinr_p, sinr_c, _ = self._sinr_all(h, assignment, wp, w_c_vec, wc_map, s2)
 
         R_private = np.log2(1.0 + sinr_p)
@@ -281,7 +319,7 @@ class RateComputer:
 
         R_total  = float(np.sum(C_k_out + R_private))
         rate_ok  = bool(np.all(R_private + C_k_out >= cfg.D_k_bps_hz))
-        power_ok = (float(np.sum(w_c_vec)) + float(np.sum(wp))) <= cfg.P_S * (1 + 1e-9)
+        power_ok = (float(np.sum(w_c_vec)) + float(np.sum(w_p[:K]))) <= cfg.P_S * (1 + 1e-9)
         feasible = rate_ok and power_ok
 
         return {

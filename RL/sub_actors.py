@@ -8,8 +8,10 @@ Pipeline position
   After the quantum actor produces the IRS assignment φ:
 
   1. PhaseMLP  — IRS phase shifts φ_{m,n} ∈ {0,..,n_levels-1}^{M×N}
-                 State: c^SRU_{m,k} = g_SR[m] · g_RU[m,k] for assigned pairs,
-                        zero otherwise.  Input dim = 2·M·K (Re + Im stacked).
+                 State: c^SRU_{m,n,k} = conj(g_SR[m]) · g_RU[m,n,k] for assigned
+                        pairs, zero otherwise. Shared-weight head applied PER
+                        ELEMENT: one (2K + n_latent + K) row per (m,n), output
+                        n_levels. Each element picks its own level.
 
   2. PowerMLP  — power allocation [w_c_vec, w_p] summing to P_S
                  State: |h_eff[k]| for all K users (effective channel magnitudes
@@ -38,6 +40,17 @@ Hidden layers
 import os
 import json
 import numpy as np
+
+from . import dirichlet as _dir
+
+
+def _scatter(mask: np.ndarray, vals: np.ndarray) -> np.ndarray:
+    """Place `vals` (len = mask.sum()) into a zero array of len(mask)."""
+    out = np.zeros(mask.shape[0])
+    out[mask] = vals
+    return out
+
+
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -212,6 +225,80 @@ def _mlp_forward_batch(X: np.ndarray, Ws: list, bs: list):
     return pre_acts, acts, logits
 
 
+# ── Optional CuPy backend for the BATCH matmuls only (opt-in) ────────────────
+#
+# Set QRL_GPU_MLP=1 to run PhaseMLP's batched layer-norm / forward / backward on
+# the GPU. Motivation is CPU RELIEF, not speed: PhaseMLP's compute_grads_batch is
+# ~129 ms of the ~156 ms of sub-actor gradient work per minibatch, which is ~71%
+# of a DNN run's PPO-update CPU (only ~8% of a VQC run's, where Python overhead
+# around the quantum circuit dominates). Moving it off the CPU frees roughly a
+# core per DNN run, so more runs fit on the 8-core box.
+#
+# ⚠ DELIBERATELY NARROW, to protect result quality:
+#   · only the two BATCH methods are affected; forward()/_forward_irs and ALL
+#     RNG stay on NumPy ⇒ the rollout is bit-identical to the CPU path, same
+#     seed ⇒ same actions ⇒ same trajectory.
+#   · float64 throughout — no precision trade (the 4090's FP64 is 1/64 of FP32,
+#     so float32 would be far faster, but that is a quality trade and is not done).
+#   · the small (T, N, L) softmax / one-hot / log work stays on CPU: 6k elements,
+#     not worth a kernel launch.
+# Gradients still differ from NumPy in the last ULPs (cuBLAS vs OpenBLAS
+# summation order) — verified to ~1e-12 relative, i.e. rounding, not a bug.
+_GPU_MLP = os.environ.get('QRL_GPU_MLP', '0') not in ('0', '', 'false', 'False')
+_cp = None
+if _GPU_MLP:
+    try:
+        import cupy as _cp
+        _cp.cuda.Device(0).use()
+    except Exception:                                   # no GPU → silent fallback
+        _cp, _GPU_MLP = None, False
+
+
+def gpu_mlp_enabled() -> bool:
+    return bool(_GPU_MLP and _cp is not None)
+
+
+def _gpu_forward(X: np.ndarray, Ws: list, bs: list):
+    """layer-norm + MLP forward on GPU. Returns (gpu_state, logits as NumPy)."""
+    Xg = _cp.asarray(X)
+    mu = Xg.mean(axis=1, keepdims=True)
+    sd = Xg.std(axis=1, keepdims=True) + 1e-6
+    Xn = (Xg - mu) / sd
+    Wg = [_cp.asarray(W) for W in Ws]
+    bg = [_cp.asarray(b) for b in bs]
+    pre_acts, acts = [], []
+    x = Xn
+    for W, b in zip(Wg[:-1], bg[:-1]):
+        pre = x @ W + b
+        h = _cp.maximum(0.0, pre)
+        pre_acts.append(pre); acts.append(h)
+        x = h
+    logits = x @ Wg[-1] + bg[-1]
+    return (Xn, pre_acts, acts, Wg), _cp.asnumpy(logits)
+
+
+def _gpu_backward(state, dL_dlogits: np.ndarray) -> dict:
+    """Backward on GPU for a state from _gpu_forward. Returns NumPy grads.
+    Mirrors _mlp_backward_batch exactly, including the /B normalisation."""
+    Xn, pre_acts, acts, Wg = state
+    B = Xn.shape[0]
+    n = len(Wg)
+    grads = {}
+    d_out = _cp.asarray(dL_dlogits) / B
+    x_in = acts[-1] if acts else Xn
+    grads[f'W{n-1}'] = _cp.asnumpy(x_in.T @ d_out)
+    grads[f'b{n-1}'] = _cp.asnumpy(d_out.sum(axis=0))
+    delta = d_out @ Wg[-1].T
+    for i in range(n - 2, -1, -1):
+        dpre = delta * (pre_acts[i] > 0)
+        x_in = acts[i - 1] if i > 0 else Xn
+        grads[f'W{i}'] = _cp.asnumpy(x_in.T @ dpre)
+        grads[f'b{i}'] = _cp.asnumpy(dpre.sum(axis=0))
+        if i > 0:
+            delta = dpre @ Wg[i].T
+    return grads
+
+
 def _mlp_backward_batch(X: np.ndarray,
                         pre_acts: list, acts: list,
                         Ws: list,
@@ -250,20 +337,22 @@ def _mlp_backward_batch(X: np.ndarray,
 
 class PhaseMLP:
     """
-    Per-IRS discrete phase-shift policy with shared weights.
+    Per-ELEMENT discrete phase-shift policy with shared weights.
 
-    The same MLP processes each ACTIVE IRS independently.  Inactive IRS
-    (no users assigned after IRS-selection) are skipped — their phase_idx
-    defaults to 0 and receive no gradient.
+    The same MLP processes each ACTIVE IRS independently, and within an IRS is
+    applied to each of the N elements as a batch — so every element picks its
+    own level from its own channel row (required now that g_RU is per-element).
+    Inactive IRS (no users assigned after IRS-selection) are skipped — their
+    phase_idx defaults to 0 and receives no gradient.
 
-    Input per IRS
-    -------------
-    c^SRU_{m,k} = g_SR[m] · g_RU[m,k]  for IRS m, all K users.
-    Stacked as [Re(c_m), Im(c_m)], shape (2·K,).
+    Input per (IRS m, element n)
+    ----------------------------
+    c^SRU_{m,n,k} = conj(g_SR[m]) · g_RU[m,n,k]  for the users routed to m.
+    Row = [Re(c), Im(c), z_t, routed-mask], shape (2·K + n_latent + K,).
 
     Parameters
     ----------
-    d_s      : int             input dim per IRS = 2·K
+    d_s      : int             input dim per element = 2·K + n_latent + K
     M        : int             total IRS panels (for output shape only)
     N        : int             elements per IRS
     n_levels : int             discrete phase levels = 2^bits
@@ -278,7 +367,11 @@ class PhaseMLP:
         self.N        = N
         self.n_levels = n_levels
         self.d_s      = d_s           # 2·K per IRS
-        d_out         = N * n_levels  # logits per IRS
+        # PER-ELEMENT head: the net is applied once per reflecting element with
+        # SHARED weights, so it emits n_levels logits for that element (not N*L
+        # logits for the whole panel). This is what makes phi_n a real decision:
+        # each element sees its own cascade channel c_{m,n,k} and aligns to it.
+        d_out         = n_levels      # logits per reflecting element
 
         rng = np.random.default_rng(seed)
         self.rng = rng
@@ -293,10 +386,15 @@ class PhaseMLP:
     # ── Internal: process one IRS ─────────────────────────────────────────
 
     def _forward_irs(self, s_m: np.ndarray, greedy: bool):
-        """Forward for one IRS panel. Returns (idx (N,), log_prob, probs (N, n_levels))."""
-        s_m = _layer_norm(s_m)
-        _, _, logits = _mlp_forward(s_m, self.Ws, self.bs)
-        probs = _softmax_rows(logits.reshape(self.N, self.n_levels))  # (N, n_levels)
+        """Forward for one IRS panel, batched over its N reflecting elements.
+
+        s_m : (N, d_s) — row n is element n's own state (its cascade channel
+              c_{m,n,k}, the shared latent, and the panel's user mask).
+        Returns (idx (N,), log_prob, probs (N, n_levels)).
+        """
+        s_m = _layer_norm_batch(np.atleast_2d(s_m))
+        _, _, logits = _mlp_forward_batch(s_m, self.Ws, self.bs)  # (N, n_levels)
+        probs = _softmax_rows(logits)                             # (N, n_levels)
         if greedy:
             idx = probs.argmax(axis=1)
         else:
@@ -357,9 +455,11 @@ class PhaseMLP:
         grads: dict  = {}
 
         for m in active_irs:
-            s_m  = _layer_norm(s_phase_mat[m])
-            pres, hs, logits = _mlp_forward(s_m, self.Ws, self.bs)
-            probs = _softmax_rows(logits.reshape(self.N, self.n_levels))  # (N, n_levels)
+            # PER-ELEMENT batch: s_phase_mat[m] is (N, d_s), one row per element,
+            # so the N elements form the batch for the shared-weight head.
+            s_m  = _layer_norm_batch(np.atleast_2d(s_phase_mat[m]))
+            pres, hs, logits = _mlp_forward_batch(s_m, self.Ws, self.bs)
+            probs = _softmax_rows(logits)                                 # (N, n_levels)
 
             idx_n   = phase_idx[m]                    # (N,) int
             one_hot = np.zeros_like(probs)
@@ -376,8 +476,8 @@ class PhaseMLP:
             L_ent     += -beta_entropy * float(np.sum(H_per_elem))
             dL_ent     = beta_entropy * probs * (log_probs + H_per_elem)
 
-            dL_dlogits = (dL_pg + dL_ent).flatten()
-            g_m = _mlp_backward(s_m, pres, hs, self.Ws, dL_dlogits)
+            dL_dlogits = dL_pg + dL_ent                # (N, n_levels) — batched
+            g_m = _mlp_backward_batch(s_m, pres, hs, self.Ws, dL_dlogits)
 
             # Accumulate into shared weight gradients
             if not grads:
@@ -393,8 +493,9 @@ class PhaseMLP:
         """Log π(phase_idx|s) under current policy. Used for PPO ratio."""
         log_prob = 0.0
         for m in active_irs:
-            _, _, logits = _mlp_forward(_layer_norm(s_phase_mat[m]), self.Ws, self.bs)
-            probs = _softmax_rows(logits.reshape(self.N, self.n_levels))
+            _, _, logits = _mlp_forward_batch(
+                _layer_norm_batch(np.atleast_2d(s_phase_mat[m])), self.Ws, self.bs)
+            probs = _softmax_rows(logits)                      # (N, n_levels)
             log_prob += float(sum(
                 np.log(probs[n, phase_idx[m, n]] + 1e-10) for n in range(self.N)
             ))
@@ -414,13 +515,13 @@ class PhaseMLP:
         B    = len(trans_list)
         lp_b = np.zeros(B)
 
-        panels_s   = []   # layer-normed inputs, each (d_s,)
+        panels_s   = []   # raw per-element inputs, each (N, d_s)
         panels_idx = []   # phase_idx per panel, each (N,) int
         sample_ids = []   # which transition each panel belongs to
 
         for b, trans in enumerate(trans_list):
             for m in _active_irs_from_phi(trans['phi']):
-                panels_s.append(_layer_norm(trans['s_phase'][m]))
+                panels_s.append(np.atleast_2d(trans['s_phase'][m]))   # (N, d_s)
                 panels_idx.append(trans['phase_idx'][m])
                 sample_ids.append(b)
 
@@ -428,13 +529,18 @@ class PhaseMLP:
             return lp_b   # no active IRS in any transition
 
         T        = len(panels_s)
-        X        = np.stack(panels_s)    # (T, d_s)
+        X        = np.stack(panels_s)    # (T, N, d_s)
         idx_all  = np.stack(panels_idx)  # (T, N) int
 
-        _, _, logits = _mlp_forward_batch(X, self.Ws, self.bs)   # (T, N*L)
-        probs_3d = _softmax_rows(
-            logits.reshape(T * self.N, self.n_levels)
-        ).reshape(T, self.N, self.n_levels)                       # (T, N, L)
+        # The head is PER ELEMENT with shared weights, so flatten the element axis
+        # into the batch: each of the T*N element rows is one sample.
+        Xr = X.reshape(T * self.N, -1)
+        if gpu_mlp_enabled():
+            _, logits = _gpu_forward(Xr, self.Ws, self.bs)         # (T*N, L)
+        else:
+            Xb = _layer_norm_batch(Xr)                             # (T*N, d_s)
+            _, _, logits = _mlp_forward_batch(Xb, self.Ws, self.bs)
+        probs_3d = _softmax_rows(logits).reshape(T, self.N, self.n_levels)
 
         log_p_elem   = np.log(
             probs_3d[np.arange(T)[:, None],
@@ -448,9 +554,21 @@ class PhaseMLP:
     def compute_grads_batch(self, trans_list: list,
                             eff_adv_b: np.ndarray,
                             beta_entropy: float = 0.0,
-                            counterfactual: bool = False) -> tuple:
+                            counterfactual: bool = False,
+                            aux_w: float = 0.0) -> tuple:
         """
         Vectorised REINFORCE+PPO gradient for PhaseMLP over a mini-batch.
+
+        aux_w — OPTIONAL continuous teacher (--phase-aux-weight). Adds
+        w·(-log π(oracle_phase|s)) at EVERY update, using trans['phase_oracle'].
+        Same idea as the assignment teacher: the supervised warm-up is applied
+        once and then eroded by PPO (measured r154: coherent-gain alignment
+        15.6% → 7.0% over 1300 ep), whereas this is always present so it cannot
+        decay. Gradient form is identical to the PG term with advantage = w
+        evaluated at the ORACLE index instead of the sampled one.
+        Worth it because the phase gap is large once routing is fixed: on r177
+        swapping in the oracle phase is +0.138 J = 42% of the whole remaining
+        gap to AO.
 
         Builds a super-batch of all (transition, active-IRS) panels, runs a
         single batched forward/backward, and returns the B-averaged gradient.
@@ -471,8 +589,10 @@ class PhaseMLP:
 
         panels_s   = []
         panels_idx = []
+        panels_or  = []   # oracle phase index per panel (for --phase-aux-weight)
         sample_ids = []
         panel_w    = []   # Δ7: per-panel occupancy weight (1.0 unless counterfactual)
+        panel_hs   = []   # [--phase-aux-hspread] per-panel log channel spread
 
         for b, trans in enumerate(trans_list):
             act = _active_irs_from_phi(trans['phi'])
@@ -488,23 +608,32 @@ class PhaseMLP:
             else:
                 w_act = np.ones(len(act), dtype=float)
             for m, w in zip(act, w_act):
-                panels_s.append(_layer_norm(trans['s_phase'][m]))
+                panels_s.append(np.atleast_2d(trans['s_phase'][m]))   # (N, d_s)
                 panels_idx.append(trans['phase_idx'][m])
+                _po = trans.get('phase_oracle')
+                panels_or.append(None if _po is None else _po[m])     # (N,) oracle idx
                 sample_ids.append(b)
                 panel_w.append(float(w))
+                panel_hs.append(float(trans.get('log_hspread', 0.0)))
 
         if not panels_s:
             return 0.0, 0.0, {}
 
         T          = len(panels_s)
         sample_ids = np.array(sample_ids, dtype=int)   # (T,)
-        X          = np.stack(panels_s)                # (T, d_s)
+        X          = np.stack(panels_s)                # (T, N, d_s)
         idx_all    = np.stack(panels_idx)              # (T, N) int
 
-        pre_acts, acts, logits = _mlp_forward_batch(X, self.Ws, self.bs)  # (T, N*L)
-        probs_3d = _softmax_rows(
-            logits.reshape(T * self.N, self.n_levels)
-        ).reshape(T, self.N, self.n_levels)                    # (T, N, L)
+        # PER-ELEMENT head with shared weights → flatten the element axis into the
+        # batch, so the super-batch has T*N rows (one per reflecting element).
+        Xr = X.reshape(T * self.N, -1)
+        _gpu_state = None
+        if gpu_mlp_enabled():
+            _gpu_state, logits = _gpu_forward(Xr, self.Ws, self.bs)        # (T*N, L)
+        else:
+            Xb = _layer_norm_batch(Xr)                                     # (T*N, d_s)
+            pre_acts, acts, logits = _mlp_forward_batch(Xb, self.Ws, self.bs)
+        probs_3d = _softmax_rows(logits).reshape(T, self.N, self.n_levels)  # (T, N, L)
 
         one_hot_3d = np.eye(self.n_levels)[idx_all]            # (T, N, L)
         eff_t      = eff_adv_b[sample_ids] * np.asarray(panel_w)  # (T,) Δ7 occupancy-weighted
@@ -514,11 +643,42 @@ class PhaseMLP:
         H_3d      = -(probs_3d * log_p_3d).sum(axis=2, keepdims=True) # (T, N, 1)
         dL_ent_3d = beta_entropy * probs_3d * (log_p_3d + H_3d)      # (T, N, L)
 
-        dL_dlogits = (dL_pg_3d + dL_ent_3d).reshape(T, -1)    # (T, N*L)
+        # continuous phase teacher: same form as the PG term with advantage = w,
+        # evaluated at the ORACLE index (see aux_w in the docstring)
+        dL_aux_3d = 0.0
+        if aux_w > 0.0 and all(p is not None for p in panels_or):
+            or_all     = np.stack(panels_or)                          # (T, N) int
+            one_hot_or = np.eye(self.n_levels)[or_all]                # (T, N, L)
+            # [--phase-aux-hspread] REDISTRIBUTE the teacher, do not strengthen it.
+            # Measured on 120 Case-2 states: swapping in the oracle phase is worth
+            # +0.045 on the states the policy already wins and +0.583 on the 20%
+            # it loses — more, there, than AO's own +0.434 lead. A uniform teacher
+            # spends most of its weight where it buys +0.045, which is why fixing
+            # the target (r280, n_sweeps=1) moved nothing. The losing states are
+            # the high-spread ones (corr(delta, hspread) = -0.79), so tilt toward
+            # them. Standardised WITHIN the batch and mean-preserving: total
+            # teaching is unchanged, only its distribution moves. gamma=0 is
+            # bit-identical to the uniform teacher.
+            w_aux = aux_w
+            g_hs = float(getattr(self, 'aux_hspread_gamma', 0.0) or 0.0)
+            if g_hs > 0.0:
+                hs = np.asarray(panel_hs, dtype=float)                # (T,)
+                sd = hs.std()
+                if sd > 1e-9:
+                    t = (hs - hs.mean()) / sd
+                    w_aux = aux_w * (1.0 + g_hs * np.tanh(t))[:, None, None]
+            dL_aux_3d  = -w_aux * (one_hot_or - probs_3d)             # (T, N, L)
 
-        # _mlp_backward_batch divides by T; scale by T/B to get B-normalised grads
-        grads = _mlp_backward_batch(X, pre_acts, acts, self.Ws,
-                                    dL_dlogits * (T / B))
+        dL_dlogits = (dL_pg_3d + dL_ent_3d + dL_aux_3d).reshape(T * self.N, self.n_levels)
+
+        # _mlp_backward_batch divides by its ROW count, which is now T*N (one row per
+        # reflecting element), not T. Scale by (T*N)/B so the result stays normalised
+        # per transition exactly as before the per-element refactor.
+        _dL_scaled = dL_dlogits * ((T * self.N) / B)
+        if _gpu_state is not None:
+            grads = _gpu_backward(_gpu_state, _dL_scaled)
+        else:
+            grads = _mlp_backward_batch(Xb, pre_acts, acts, self.Ws, _dL_scaled)
 
         # ── losses (diagnostics, B-averaged) ──────────────────────────────
         log_p_elem   = log_p_3d[np.arange(T)[:, None],
@@ -581,7 +741,22 @@ class PhaseMLP:
             c = json.load(f)
         obj = cls(d_s=c['d_s'], M=c['M'], N=c['N'], n_levels=c['n_levels'],
                   hidden=c['hidden'], lr=c['lr'], seed=seed)
-        obj.set_params(dict(np.load(os.path.join(path, 'phase_params.npz'))))
+        params = dict(np.load(os.path.join(path, 'phase_params.npz')))
+        # Pre-per-element checkpoints emitted ONE joint distribution over all N
+        # elements (d_out = N*n_levels); the head is now shared and applied per
+        # element (d_out = n_levels). The weights are not convertible.
+        w_idx  = [int(k[1:]) for k in params if k.startswith('W') and k[1:].isdigit()]
+        w_last = params[f'W{max(w_idx)}'] if w_idx else None
+        if w_last is not None and w_last.shape[-1] == c['N'] * c['n_levels'] \
+                and obj.Ws[-1].shape[-1] == c['n_levels']:
+            raise ValueError(
+                f"PhaseMLP at {path} is a PRE-PER-ELEMENT checkpoint: its output "
+                f"layer is {w_last.shape[-1]} = N*n_levels ({c['N']}*{c['n_levels']}), "
+                f"but the per-element head needs {c['n_levels']}. These weights "
+                f"encode a policy for the OLD scalar-g_RU physics (one phase per "
+                f"IRS) and cannot be converted — the run must be retrained. See "
+                f"analysis/phase_oracle.py for what changed.")
+        obj.set_params(params)
         return obj
 
 
@@ -630,17 +805,34 @@ class PowerMLP:
 
     def __init__(self, d_s: int, K: int, M: int, P_S: float,
                  hidden=64, lr: float = 3e-4, seed: int = None,
-                 power_fairness: float = 0.0):
+                 power_fairness: float = 0.0,
+                 power_priv_frac: float = 0.8,
+                 power_fairness_priv: float = None):
         self.d_s = d_s
         self.K   = K
         self.M   = M
         self.P_S = P_S
-        # ③ power-fairness α∈[0,1]: blend the EXECUTED power toward the QoS-optimal
+        # ③ power-fairness α∈[0,1]: blend the EXECUTED power toward a QoS-safe
         # allocation (split + common-dist + private-dist) in forward(). 0 = learned head.
-        # (set per-run via --power-fairness.) power_priv_frac = target private split f
-        # (probe_oracle_alloc: ~0.8 is QoS-optimal at P50; sweep R3≈R2 around it).
+        #
+        # α is applied PER AXIS: `power_fairness` drives split + common, while
+        # `power_fairness_priv` drives the private distribution (defaults to the
+        # same α → unchanged behaviour). They are separated because the two axes
+        # want OPPOSITE things once C_k is allocated well: the Pareto measurement
+        # (07-21, per-element physics) shows the reward-optimal point is a LOW
+        # private fraction f with a CONCENTRATED private distribution — common
+        # stream carries QoS, private power chases rate on the strong links.
+        # Forcing private→uniform (α_priv high) caps sum-rate; see
+        # per-element-physics-refactor / Pareto notes.
+        #
+        # power_priv_frac = target private split f. 0.8 was measured QoS-optimal
+        # under EQUAL C_k; with a demand-filling C_k the optimum drops a long way
+        # (≈0.68 for K5/M1, ≈0.28 for K10/M2 at P50/λ1.5).
         self.power_fairness  = float(max(0.0, min(1.0, power_fairness)))
-        self.power_priv_frac = 0.8
+        self.power_fairness_priv = (self.power_fairness
+                                    if power_fairness_priv is None
+                                    else float(max(0.0, min(1.0, power_fairness_priv))))
+        self.power_priv_frac = float(max(0.0, min(1.0, power_priv_frac)))
         self._n_split   = 2
         self._n_common  = M + 1
         self._n_private = K
@@ -680,8 +872,76 @@ class PowerMLP:
         self.bs[-1][0] = 0.3
         self.bs[-1][1] = 0.0
         self._params      = _make_params(self.Ws, self.bs)
+
+        # ── PER-USER PRIVATE HEAD (permutation-equivariant, 2026-07-25) ──────────
+        # A flat MLP [h_1..h_K] → [w_1..w_K] cannot learn w_k ∝ |h_k|: it must
+        # discover K independent input→output alignments, and even with the
+        # rescale-fix input and the clean-β teacher it stayed at 15% argmax
+        # agreement over 10k episodes (r210-217). This shared per-user head — the
+        # PhaseMLP per-element pattern applied to users — processes EACH user's own
+        # scale-free channel features and emits ONE private logit, so "large |h_k|
+        # → large logit" is a single shared map it can actually learn. Added as a
+        # RESIDUAL to the flat MLP's private slots (flat path unchanged; if the
+        # per-user head learns nothing we degrade to the old behaviour, no worse).
+        self._pu_feat_dim = 3        # [h_k.real/hs, h_k.imag/hs, |h_k/hs|^2]
+        pu_hidden = _parse_hidden([32, 16])
+        self._pu_hidden = pu_hidden
+        self.Wpu, self.bpu = _build_layers(self._pu_feat_dim, 1, pu_hidden, rng)
+        for i, (W, b) in enumerate(zip(self.Wpu, self.bpu)):
+            self._params[f'pu_W{i}'] = W
+            self._params[f'pu_b{i}'] = b
+
         self.opt          = _Adam(lr=lr)
         self.architecture = _arch_str(d_s, hidden_sizes, d_out)
+
+    # ── Per-user private head helpers ─────────────────────────────────────
+    def _peruser_feat(self, s_t: np.ndarray) -> np.ndarray:
+        """(K, 3) scale-free per-user channel features from s_power[:2K].
+        s_power[:K]=h.real/hs, s_power[K:2K]=h.imag/hs already (see
+        train._build_power_state), so magnitude ranking survives here."""
+        hr = np.asarray(s_t[:self.K], dtype=float)
+        hi = np.asarray(s_t[self.K:2 * self.K], dtype=float)
+        return np.stack([hr, hi, hr * hr + hi * hi], axis=1)
+
+    def _peruser_bias(self, s_t: np.ndarray) -> np.ndarray:
+        """(K,) private-logit residual from the shared per-user head (no LN — the
+        features are already scale-free; a per-user LN would erase magnitude)."""
+        _, _, pu = _mlp_forward_batch(self._peruser_feat(s_t), self.Wpu, self.bpu)
+        return pu[:, 0]
+
+    def _full_logits(self, s_t: np.ndarray) -> np.ndarray:
+        """Flat MLP logits with the per-user private residual added in."""
+        _, _, logits = _mlp_forward(_layer_norm(s_t), self.Ws, self.bs)
+        logits = logits.copy()
+        logits[self._sl_private] = logits[self._sl_private] + self._peruser_bias(s_t)
+        return logits
+
+    def _peruser_feat_batch(self, S: np.ndarray) -> np.ndarray:
+        """(B, K, 3) per-user features for a batch of raw states S (B, d_s)."""
+        hr = S[:, :self.K]; hi = S[:, self.K:2 * self.K]
+        return np.stack([hr, hi, hr * hr + hi * hi], axis=2)
+
+    def _peruser_bias_batch(self, S: np.ndarray) -> np.ndarray:
+        """(B, K) per-user private residual for a batch of states."""
+        B = S.shape[0]
+        feat = self._peruser_feat_batch(S).reshape(B * self.K, self._pu_feat_dim)
+        _, _, pu = _mlp_forward_batch(feat, self.Wpu, self.bpu)   # (B*K, 1)
+        return pu.reshape(B, self.K)
+
+    def _peruser_grads_batch(self, S: np.ndarray, dL_private: np.ndarray) -> dict:
+        """Backprop the private-logit residual through the shared per-user head.
+
+        dL_private : (B, K) gradient of the loss w.r.t. each per-user residual.
+        Scaled by K so the internal /(B·K) normalisation of _mlp_backward_batch
+        yields a /B-normalised gradient (sum over users, mean over transitions),
+        matching the flat MLP path. Returns {'pu_W{i}','pu_b{i}'} grads.
+        """
+        B = S.shape[0]
+        feat = self._peruser_feat_batch(S).reshape(B * self.K, self._pu_feat_dim)
+        pre, acts, _ = _mlp_forward_batch(feat, self.Wpu, self.bpu)
+        dL = (dL_private.reshape(B * self.K, 1)) * float(self.K)
+        g = _mlp_backward_batch(feat, pre, acts, self.Wpu, dL)
+        return {f'pu_{k}': v for k, v in g.items()}
 
     # ── Mask & softmax helpers ────────────────────────────────────────────
 
@@ -722,6 +982,66 @@ class PowerMLP:
 
     # ── Public forward ────────────────────────────────────────────────────
 
+    # ── Dirichlet concentrations (the policy parameters) ──────────────────
+    #
+    # ⭐ 2026-07-21 PHANTOM-ACTION FIX. The action of this head is an ALLOCATION
+    # on a simplex, so it is now drawn from a Dirichlet whose concentration the
+    # network produces — and the DRAWN VECTOR IS WHAT GETS EXECUTED.
+    #
+    # Previously the head executed softmax(logits)·budget while PPO scored a
+    # separately-sampled categorical INDEX that never entered the executed
+    # power. The reward was therefore independent of the scored action, making
+    # E_a[∇log π(a|s)] identically zero: the head could only be moved by the
+    # entropy bonus. See RL/dirichlet.py for the measurement and the maths.
+
+    def _conc(self, logits: np.ndarray, mask: np.ndarray) -> tuple:
+        """
+        (α_split, α_common_active, α_private) from raw logits.
+
+        ③ power-fairness is applied HERE, in DISTRIBUTION space — blending the
+        concentration, not the executed action. Writing
+            α_eff = (1-a)·α + a·α₀·t          (α₀ = Σα, t = target mean)
+        gives mean[x] = (1-a)·mean_learned + a·t, i.e. exactly the old blend
+        semantics, while keeping sampled == executed. Blending the executed
+        vector instead would re-introduce the phantom-action bug.
+        """
+        l_s, l_c, l_p = self._split_logits(logits)
+        a_s = _dir.logits_to_conc(l_s)
+        a_c = _dir.logits_to_conc(l_c[mask])
+        a_p = _dir.logits_to_conc(l_p)
+
+        a_fair = float(getattr(self, 'power_fairness', 0.0))
+        a_priv = float(getattr(self, 'power_fairness_priv', a_fair))
+        if a_fair > 0.0:
+            f   = float(getattr(self, 'power_priv_frac', 0.8))
+            n_c = a_c.shape[0]
+            a_s = (1.0 - a_fair) * a_s + a_fair * a_s.sum() * np.array([1.0 - f, f])
+            a_c = (1.0 - a_fair) * a_c + a_fair * a_c.sum() / n_c
+        if a_priv > 0.0:
+            a_p = (1.0 - a_priv) * a_p + a_priv * a_p.sum() / self._n_private
+        return a_s, a_c, a_p
+
+    def _dconc_blend(self, g_s, g_c, g_p):
+        """
+        Pull a gradient w.r.t. the BLENDED concentrations back to the raw ones.
+
+        With α_eff = (1-a)·α + a·(Σα)·t the Jacobian is (1-a)·I + a·t·1ᵀ, so
+            dL/dα_j = (1-a)·dL/dα_eff_j + a·Σ_i t_i·dL/dα_eff_i .
+        """
+        a_fair = float(getattr(self, 'power_fairness', 0.0))
+        a_priv = float(getattr(self, 'power_fairness_priv', a_fair))
+        if a_fair > 0.0:
+            f   = float(getattr(self, 'power_priv_frac', 0.8))
+            t_s = np.array([1.0 - f, f])
+            g_s = (1.0 - a_fair) * g_s + a_fair * float(g_s @ t_s)
+            n_c = g_c.shape[0]
+            g_c = (1.0 - a_fair) * g_c + a_fair * float(g_c.sum()) / n_c
+        if a_priv > 0.0:
+            g_p = (1.0 - a_priv) * g_p + a_priv * float(g_p.sum()) / self._n_private
+        return g_s, g_c, g_p
+
+    # ── Public forward ────────────────────────────────────────────────────
+
     def forward(self, s_t: np.ndarray,
                 active_irs_ids: list) -> tuple:
         """
@@ -729,47 +1049,32 @@ class PowerMLP:
         -------
         w_c_vec : (G+1,) float
         w_p     : (K,)   float
-        probs   : dict {'split','common','private'} — full distributions (diagnostic)
-        action  : dict {'split': int, 'common': int (M+1 idx), 'private': int (K idx)}
+        probs   : dict {'split','common','private'} — mean allocations (diagnostic)
+        action  : dict {'split': (2,), 'common': (M+1,), 'private': (K,)} float
+                  — the SAMPLED allocation vectors, which are exactly what is
+                  executed below. 'common' is zero-padded at inactive slots.
         """
-        s_n          = _layer_norm(s_t)
-        _, _, logits = _mlp_forward(s_n, self.Ws, self.bs)
+        logits = self._full_logits(s_t)
         mask = self._common_mask(active_irs_ids)
-        p_s, p_c, p_p = self._probs_from_logits(logits, mask)
+        a_s, a_c, a_p = self._conc(logits, mask)
 
-        # ③ power-fairness α∈[0,1]: blend the EXECUTED power toward the QoS-optimal
-        # allocation across ALL THREE axes — split, common-dist, private-dist.
-        # probe_oracle_alloc (result_47/ep_00100, R_LoS0.2 P50) showed the agent's QoS
-        # gap 56→96% is the FULL power allocation, NOT just the private distribution:
-        # blending p_p alone (the original ③) left R0=56% even at α=0.8 because the
-        # SPLIT (agent ~49% private vs QoS-optimal ~80%) and the COMMON distribution
-        # were never touched. Equalising all three → 95-96% (and dissolves the CkMLP
-        # shortfall that drove ck-collapse [K]: users then clear D_k on private rate, so
-        # common-rate demand → ~0). Targets: split→[1−f, f] (f=power_priv_frac≈0.8),
-        # common→uniform over active groups, private→uniform. The categorical ACTION /
-        # probs / PPO log-prob below stay the TRUE softmax → policy-gradient unchanged.
-        a_fair = float(getattr(self, 'power_fairness', 0.0))
-        if a_fair > 0.0:
-            f       = float(getattr(self, 'power_priv_frac', 0.8))
-            p_s_eff = (1.0 - a_fair) * p_s + a_fair * np.array([1.0 - f, f])
-            unif_c  = mask.astype(float) / max(int(mask.sum()), 1)
-            p_c_eff = (1.0 - a_fair) * p_c + a_fair * unif_c
-            p_p_eff = (1.0 - a_fair) * p_p + a_fair / self._n_private
-        else:
-            p_s_eff, p_c_eff, p_p_eff = p_s, p_c, p_p
-        w_c_total = float(p_s_eff[0]) * self.P_S
-        w_p_total = float(p_s_eff[1]) * self.P_S
-        w_c_full  = p_c_eff * w_c_total                            # (M+1,)
-        w_p       = p_p_eff * w_p_total                            # (K,)
+        x_s = _dir.sample(self.rng, a_s)                 # [common_frac, priv_frac]
+        x_c_act = _dir.sample(self.rng, a_c)             # over ACTIVE slots only
+        x_p = _dir.sample(self.rng, a_p)                 # over K users
+
+        x_c = np.zeros(self._n_common)
+        x_c[mask] = x_c_act
+
+        w_c_total = float(x_s[0]) * self.P_S
+        w_p_total = float(x_s[1]) * self.P_S
+        w_c_full  = x_c * w_c_total                                # (M+1,)
+        w_p       = x_p * w_p_total                                # (K,)
         w_c_vec   = self._extract_wc(w_c_full, active_irs_ids)     # (G+1,)
 
-        a_split   = int(self.rng.choice(self._n_split,   p=p_s))
-        valid_c   = np.where(p_c > 0)[0]
-        a_common  = int(self.rng.choice(valid_c, p=p_c[valid_c] / p_c[valid_c].sum()))
-        a_private = int(self.rng.choice(self._n_private, p=p_p))
-
-        action = {'split': a_split, 'common': a_common, 'private': a_private}
-        probs  = {'split': p_s, 'common': p_c, 'private': p_p}
+        action = {'split': x_s, 'common': x_c, 'private': x_p}
+        probs  = {'split':   a_s / a_s.sum(),
+                  'common':  _scatter(mask, a_c / a_c.sum()),
+                  'private': a_p / a_p.sum()}
         return w_c_vec, w_p, probs, action
 
     # ── Log-prob (single + batch) ─────────────────────────────────────────
@@ -778,31 +1083,38 @@ class PowerMLP:
                          active_irs_ids: list,
                          action) -> float:
         """Log π(a|s) = sum of 3 axis log-probs. Used for PPO ratio."""
-        _, _, logits = _mlp_forward(_layer_norm(s_t), self.Ws, self.bs)
+        logits = self._full_logits(s_t)
         mask = self._common_mask(active_irs_ids)
-        p_s, p_c, p_p = self._probs_from_logits(logits, mask)
-        return float(
-            np.log(p_s[action['split']]   + 1e-10)
-          + np.log(p_c[action['common']]  + 1e-10)
-          + np.log(p_p[action['private']] + 1e-10)
-        )
+        return self._logp_from_logits(logits, mask, action)
+
+    def _logp_from_logits(self, logits, mask, action) -> float:
+        """Σ of the 3 Dirichlet log-densities at the stored allocation vectors."""
+        a_s, a_c, a_p = self._conc(logits, mask)
+        return float(_dir.log_prob(action['split'], a_s)
+                   + _dir.log_prob(np.asarray(action['common'])[mask], a_c)
+                   + _dir.log_prob(action['private'], a_p))
 
     def compute_log_prob_batch(self, trans_list: list) -> np.ndarray:
         """
         Each transition dict must contain 's_power', 'active_irs_ids',
-        and the 3 action fields 'power_a_split' / 'power_a_common' / 'power_a_private'.
+        and the 3 action fields 'power_a_split' / 'power_a_common' /
+        'power_a_private' — now the sampled ALLOCATION VECTORS, not indices.
         """
         B = len(trans_list)
-        X = _layer_norm_batch(np.stack([t['s_power'] for t in trans_list]))
+        S = np.stack([t['s_power'] for t in trans_list])
+        X = _layer_norm_batch(S)
         _, _, logits = _mlp_forward_batch(X, self.Ws, self.bs)   # (B, d_out)
+        logits = logits.copy()
+        logits[:, self._sl_private] += self._peruser_bias_batch(S)   # (B, K) residual
 
         lp_b = np.zeros(B)
         for b, trans in enumerate(trans_list):
             mask = self._common_mask(trans['active_irs_ids'])
-            p_s, p_c, p_p = self._probs_from_logits(logits[b], mask)
-            lp_b[b] = (np.log(p_s[trans['power_a_split']]   + 1e-10)
-                     + np.log(p_c[trans['power_a_common']]  + 1e-10)
-                     + np.log(p_p[trans['power_a_private']] + 1e-10))
+            lp_b[b] = self._logp_from_logits(
+                logits[b], mask,
+                {'split':   trans['power_a_split'],
+                 'common':  trans['power_a_common'],
+                 'private': trans['power_a_private']})
         return lp_b
 
     # ── Gradient (single + batch) ─────────────────────────────────────────
@@ -816,144 +1128,167 @@ class PowerMLP:
         """Single-transition gradient. Returns (L_pg, L_ent, grads)."""
         s_n              = _layer_norm(s_t)
         pres, hs, logits = _mlp_forward(s_n, self.Ws, self.bs)
+        logits = logits.copy()
+        logits[self._sl_private] = logits[self._sl_private] + self._peruser_bias(s_t)
         mask = self._common_mask(active_irs_ids)
-        p_s, p_c, p_p = self._probs_from_logits(logits, mask)
 
-        if action is None:
-            valid_c = np.where(p_c > 0)[0]
-            action  = {
-                'split':   int(self.rng.choice(self._n_split, p=p_s)),
-                'common':  int(self.rng.choice(
-                    valid_c, p=p_c[valid_c] / p_c[valid_c].sum())),
-                'private': int(self.rng.choice(self._n_private, p=p_p)),
-            }
+        if action is None:                       # resample from the current policy
+            a_s0, a_c0, a_p0 = self._conc(logits, mask)
+            action = {'split':   _dir.sample(self.rng, a_s0),
+                      'common':  _scatter(mask, _dir.sample(self.rng, a_c0)),
+                      'private': _dir.sample(self.rng, a_p0)}
 
-        a_s, a_c, a_p = action['split'], action['common'], action['private']
-        adv = float(advantage)
-
-        L_pg = -adv * float(
-              np.log(p_s[a_s] + 1e-10)
-            + np.log(p_c[a_c] + 1e-10)
-            + np.log(p_p[a_p] + 1e-10)
-        )
-
-        oh_s = np.zeros(self._n_split);   oh_s[a_s] = 1.0
-        oh_c = np.zeros(self._n_common);  oh_c[a_c] = 1.0
-        oh_p = np.zeros(self._n_private); oh_p[a_p] = 1.0
-
-        d_s = -adv * (oh_s - p_s)
-        d_c = -adv * (oh_c - p_c)
-        d_p = -adv * (oh_p - p_p)
-
-        beta_p = beta_entropy + beta_entropy_private_extra
-
-        log_s  = np.log(p_s + 1e-10)
-        log_c  = np.log(p_c + 1e-10)
-        log_pp = np.log(p_p + 1e-10)
-        H_s = -float(np.sum(p_s * log_s))
-        H_c = -float(np.sum(np.where(mask, p_c * log_c, 0.0)))
-        H_p = -float(np.sum(p_p * log_pp))
-        L_ent = -(beta_entropy * (H_s + H_c) + beta_p * H_p)
-
-        d_s += beta_entropy * p_s * (log_s + H_s)
-        d_c += beta_entropy * np.where(mask, p_c * (log_c + H_c), 0.0)
-        d_p += beta_p       * p_p * (log_pp + H_p)
-
-        dL = np.zeros(self._d_out)
-        dL[self._sl_split]   = d_s
-        dL[self._sl_common]  = d_c
-        dL[self._sl_private] = d_p
-        for g in range(self._n_common):
-            if not mask[g]:
-                dL[self._n_split + g] = 0.0
-
+        dL, L_pg, L_ent = self._dlogits(
+            logits, mask, action, float(advantage),
+            beta_entropy, beta_entropy_private_extra)
         grads = _mlp_backward(s_n, pres, hs, self.Ws, dL)
+        # per-user head residual (dL/dbias = dL/dprivate_logit); flat path unchanged
+        grads.update(self._peruser_grads_batch(
+            s_t[None, :], dL[self._sl_private][None, :]))
         return float(L_pg), float(L_ent), grads
+
+    def _dlogits(self, logits, mask, action, adv,
+                 beta_entropy, beta_entropy_private_extra,
+                 aux_w: float = 0.0, aux_tgt: dict = None):
+        """
+        dL/dlogits for one transition under the Dirichlet policy.
+
+        Chain: dL/dlogit = dL/dα_eff · (dα_eff/dα) · (dα/dlogit)
+                         = _dconc_blend(dL/dα_eff) * sigmoid(logit)
+
+        aux_w / aux_tgt — OPTIONAL continuous teacher (--power-aux-weight), the
+        same device already used by CkMLP and PhaseMLP. Adds
+            L_aux = -w · Σ_axis log p(x_oracle_axis | α_axis)
+        where the target is the (β*, f*) allocation that maximises the design-view
+        objective for this state. Power was the only head WITHOUT a teacher, and
+        it accounted for ~90% of the remaining gap to the oracle while routing
+        (taught) sat at 0% — see docs/Dk-Noise-Calibration.md.
+
+        The teacher is evaluated on the BLENDED concentrations and pulled back
+        through _dconc_blend, exactly like the PG term, so it teaches what is
+        actually executed. A large power-fairness therefore damps the teacher as
+        well — which is correct: with α high the head is pinned to uniform and
+        no target can move it.
+        """
+        a_s, a_c, a_p = self._conc(logits, mask)
+        x_s = np.asarray(action['split'],   dtype=float)
+        x_c = np.asarray(action['common'],  dtype=float)[mask]
+        x_p = np.asarray(action['private'], dtype=float)
+
+        lp_s = _dir.log_prob(x_s, a_s)
+        lp_c = _dir.log_prob(x_c, a_c)
+        lp_p = _dir.log_prob(x_p, a_p)
+        L_pg = -adv * (lp_s + lp_c + lp_p)
+
+        # policy-gradient part: ∂(-adv·log π)/∂α = -adv · ∂log p/∂α
+        g_s = -adv * _dir.dlogp_dconc(x_s, a_s)
+        g_c = -adv * _dir.dlogp_dconc(x_c, a_c)
+        g_p = -adv * _dir.dlogp_dconc(x_p, a_p)
+
+        # entropy bonus: L_ent = -β·H, so ∂L_ent/∂α = -β·∂H/∂α
+        beta_p = beta_entropy + beta_entropy_private_extra
+        H_s, H_c, H_p = (_dir.entropy(a_s), _dir.entropy(a_c), _dir.entropy(a_p))
+        L_ent = -(beta_entropy * (H_s + H_c) + beta_p * H_p)
+        g_s += -beta_entropy * _dir.dentropy_dconc(a_s)
+        g_c += -beta_entropy * _dir.dentropy_dconc(a_c)
+        g_p += -beta_p       * _dir.dentropy_dconc(a_p)
+
+        # continuous oracle teacher — same form as the PG term with "advantage =
+        # aux_w", evaluated at the oracle allocation instead of the sampled one
+        if aux_w > 0.0 and aux_tgt:
+            for key, conc, gref in (('split', a_s, 's'),
+                                    ('common', a_c, 'c'),
+                                    ('private', a_p, 'p')):
+                t = aux_tgt.get(key)
+                if t is None:
+                    continue
+                t = np.asarray(t, dtype=float)
+                if key == 'common':
+                    t = t[mask]
+                if t.shape != conc.shape:
+                    continue
+                t = np.maximum(t, _dir.X_MIN)
+                t = t / t.sum()
+                L_ent += -aux_w * _dir.log_prob(t, conc)
+                g_aux = -aux_w * _dir.dlogp_dconc(t, conc)
+                if   gref == 's': g_s = g_s + g_aux
+                elif gref == 'c': g_c = g_c + g_aux
+                else:             g_p = g_p + g_aux
+
+        g_s, g_c, g_p = self._dconc_blend(g_s, g_c, g_p)
+
+        # α = softplus(logit) + α_min  →  dα/dlogit = sigmoid(logit)
+        l_s, l_c, l_p = self._split_logits(logits)
+        dL = np.zeros(self._d_out)
+        dL[self._sl_split]   = g_s * _dir.dconc_dlogits(l_s)
+        # inactive common slots get no gradient (they are not in the Dirichlet)
+        dL[self._sl_common]  = _scatter(mask, g_c * _dir.dconc_dlogits(l_c[mask]))
+        dL[self._sl_private] = g_p * _dir.dconc_dlogits(l_p)
+        return dL, L_pg, L_ent
 
     def compute_grads_batch(self, trans_list: list,
                             eff_adv_b: np.ndarray,
                             beta_entropy: float = 0.0,
-                            beta_entropy_private_extra: float = 0.0) -> tuple:
+                            beta_entropy_private_extra: float = 0.0,
+                            aux_w: float = 0.0) -> tuple:
         """
         Vectorised PPO+entropy gradient over a mini-batch.
         Returns (L_pg, L_ent, grads, axis_stats)  — all B-averaged.
 
-        axis_stats : per-axis health (fractions of max entropy + policy split bias),
-                     used by the train.py diag panel to monitor the factored heads.
-            'H_split_frac'    : H(π_split)   / log(2)        ∈ [0,1]
-            'H_common_frac'   : H(π_common)  / log(G+1)      ∈ [0,1]  (per-sample G)
-            'H_private_frac'  : H(π_private) / log(K)        ∈ [0,1]
-            'pi_split_common' : mean π_split[0] (common-share decided by policy) ∈ [0,1]
+        axis_stats : per-axis health, used by the train.py diag panel.
+            'share_split_max'   : max_i E[x_i] on the split axis    ∈ [1/2, 1]
+            'share_common_max'  : ditto, common axis (per-sample G) ∈ [1/G', 1]
+            'share_private_max' : ditto, private axis               ∈ [1/K, 1]
+            'pi_split_common'   : mean common-share E[x_split[0]]   ∈ [0, 1]
+
+        The share_*_max are the LARGEST MEAN ALLOCATION on each axis,
+        max(α)/Σα. Flat = 1/n, fully concentrated = 1. Chosen over an entropy
+        ratio because the Dirichlet entropy is DIFFERENTIAL (can be negative),
+        which makes a normalised-entropy diagnostic change sign and mislead.
+        ⚠ Not comparable to the pre-2026-07-21 categorical H/log(n) in old logs.
         """
         B = len(trans_list)
-        X = _layer_norm_batch(np.stack([t['s_power'] for t in trans_list]))
+        S = np.stack([t['s_power'] for t in trans_list])
+        X = _layer_norm_batch(S)
         pre_acts, acts, logits = _mlp_forward_batch(X, self.Ws, self.bs)  # (B, d_out)
+        logits = logits.copy()
+        logits[:, self._sl_private] += self._peruser_bias_batch(S)   # (B, K) residual
 
         dL_dlogits_b = np.zeros((B, self._d_out))
         L_pg  = 0.0
         L_ent = 0.0
-        beta_p = beta_entropy + beta_entropy_private_extra
         Hs_sum = Hcf_sum = Hp_sum = pi_s0_sum = 0.0
-        log_s_max = np.log(self._n_split)         # = log(2)
-        log_p_max = np.log(self._n_private)       # = log(K)
 
         for b, trans in enumerate(trans_list):
-            mask = self._common_mask(trans['active_irs_ids'])
-            p_s, p_c, p_p = self._probs_from_logits(logits[b], mask)
-            a_s = trans['power_a_split']
-            a_c = trans['power_a_common']
-            a_p = trans['power_a_private']
-            adv = float(eff_adv_b[b])
+            mask   = self._common_mask(trans['active_irs_ids'])
+            action = {'split':   trans['power_a_split'],
+                      'common':  trans['power_a_common'],
+                      'private': trans['power_a_private']}
+            row, lpg, lent = self._dlogits(
+                logits[b], mask, action, float(eff_adv_b[b]),
+                beta_entropy, beta_entropy_private_extra,
+                aux_w=aux_w, aux_tgt=trans.get('power_aux_tgt'))
+            dL_dlogits_b[b] = row
+            L_pg  += lpg
+            L_ent += lent
 
-            L_pg += -adv * float(
-                  np.log(p_s[a_s] + 1e-10)
-                + np.log(p_c[a_c] + 1e-10)
-                + np.log(p_p[a_p] + 1e-10)
-            )
-
-            oh_s = np.zeros(self._n_split);   oh_s[a_s] = 1.0
-            oh_c = np.zeros(self._n_common);  oh_c[a_c] = 1.0
-            oh_p = np.zeros(self._n_private); oh_p[a_p] = 1.0
-
-            d_s = -adv * (oh_s - p_s)
-            d_c = -adv * (oh_c - p_c)
-            d_p = -adv * (oh_p - p_p)
-
-            log_s  = np.log(p_s + 1e-10)
-            log_c  = np.log(p_c + 1e-10)
-            log_pp = np.log(p_p + 1e-10)
-            H_s = -float(np.sum(p_s * log_s))
-            H_c = -float(np.sum(np.where(mask, p_c * log_c, 0.0)))
-            H_p = -float(np.sum(p_p * log_pp))
-            L_ent += -(beta_entropy * (H_s + H_c) + beta_p * H_p)
-
-            d_s += beta_entropy * p_s * (log_s + H_s)
-            d_c += beta_entropy * np.where(mask, p_c * (log_c + H_c), 0.0)
-            d_p += beta_p       * p_p * (log_pp + H_p)
-
-            row = dL_dlogits_b[b]
-            row[self._sl_split]   = d_s
-            row[self._sl_common]  = d_c
-            row[self._sl_private] = d_p
-            for g in range(self._n_common):
-                if not mask[g]:
-                    row[self._n_split + g] = 0.0
-
-            # axis-level diagnostics (fractions of max-entropy)
-            Hs_sum    += H_s / log_s_max
-            n_active_c = int(mask.sum())
-            if n_active_c >= 2:
-                Hcf_sum += H_c / np.log(n_active_c)
-            # else G+1=1 (only direct) → H_c ≡ 0; contributes 0 to numerator (skip)
-            Hp_sum    += H_p / log_p_max
-            pi_s0_sum += float(p_s[0])
+            # axis-level diagnostics: largest MEAN share on each axis
+            a_s, a_c, a_p = self._conc(logits[b], mask)
+            Hs_sum += float(a_s.max() / a_s.sum())
+            if int(mask.sum()) >= 2:
+                Hcf_sum += float(a_c.max() / a_c.sum())
+            Hp_sum    += float(a_p.max() / a_p.sum())
+            pi_s0_sum += float(a_s[0] / a_s.sum())
 
         grads = _mlp_backward_batch(X, pre_acts, acts, self.Ws, dL_dlogits_b)
+        # per-user head gets the private-logit gradient (residual: dL/dbias =
+        # dL/dprivate_logit). The flat MLP above still gets the full dL unchanged.
+        grads.update(self._peruser_grads_batch(S, dL_dlogits_b[:, self._sl_private]))
         axis_stats = {
-            'H_split_frac':    Hs_sum    / B,
-            'H_common_frac':   Hcf_sum   / B,
-            'H_private_frac':  Hp_sum    / B,
-            'pi_split_common': pi_s0_sum / B,
+            'share_split_max':   Hs_sum    / B,
+            'share_common_max':  Hcf_sum   / B,
+            'share_private_max': Hp_sum    / B,
+            'pi_split_common':   pi_s0_sum / B,
         }
         return L_pg / B, L_ent / B, grads, axis_stats
 
@@ -1092,10 +1427,19 @@ class CkMLP:
         -------
         C_k       : (K,) float
         alpha_k   : (K,) float    within-group softmax fractions
-        group_sel : dict {gid: int}
-                    Per-group sampled local index (index into members list).
-                    Stored in ep_buf; passed back to compute_grads/compute_log_prob
-                    so PPO uses the action that was actually taken.
+        group_sel : dict {gid: (len(members),) float  |  None}
+                    Per-group SAMPLED SHARE VECTOR — exactly the fractions used
+                    to build C_k below. None marks a group whose common budget
+                    was ~0, i.e. a deterministic (unsampled) group that must be
+                    skipped by log-prob/gradient. Stored in ep_buf and passed
+                    back to compute_grads/compute_log_prob.
+
+        ⭐ 2026-07-21 PHANTOM-ACTION FIX (same defect as PowerMLP): this used to
+        execute the softmax vector while PPO scored a separately-sampled member
+        INDEX that never entered C_k, so the reward was independent of the
+        scored action and the expected policy gradient was exactly zero. The
+        shares are now drawn from a Dirichlet and the DRAW is what is executed.
+        See RL/dirichlet.py.
         """
         _, _, logits = _mlp_forward(_layer_norm(s_t), self.Ws, self.bs)
 
@@ -1107,18 +1451,34 @@ class CkMLP:
         groups = self._build_groups(phi[:K_used])
         for gid, members in groups.items():
             R_c_g = float(R_c_group.get(gid, 0.0))
-            if R_c_g < 1e-12:
+            if R_c_g < 1e-12 or len(members) < 1:
                 alpha_k[members] = 1.0 / max(len(members), 1)
-                group_sel[gid]   = 0
+                group_sel[gid]   = None        # nothing was sampled here
                 continue
-            logits_g = logits[members]
-            alpha_g  = _ck_group_softmax(logits_g)
-            alpha_k[members] = alpha_g
-            C_k[members]     = alpha_g * R_c_g
-            # Sample representative member for policy gradient / PPO
-            group_sel[gid] = int(self.rng.choice(len(members), p=alpha_g))
+            conc_g = _dir.logits_to_conc(logits[members])
+            x_g    = _dir.sample(self.rng, conc_g)
+            alpha_k[members] = x_g
+            C_k[members]     = x_g * R_c_g     # executed == sampled
+            group_sel[gid]   = x_g
 
         return C_k, alpha_k, group_sel
+
+    # ── shared per-group term (used by log-prob and both gradient paths) ──
+
+    def _group_terms(self, logits, groups, group_sel):
+        """Yield (members, conc_g, x_g) for every group that was actually
+        sampled. Groups stored as None had a ~0 common budget and were
+        deterministic — they contribute no log-prob and no gradient."""
+        for gid, members in groups.items():
+            if len(members) < 1:
+                continue
+            x_g = None if group_sel is None else group_sel.get(gid, None)
+            if x_g is None:
+                continue
+            x_g = np.asarray(x_g, dtype=float)
+            if x_g.shape[0] != len(members):
+                continue                       # stale/mismatched buffer entry
+            yield members, _dir.logits_to_conc(logits[members]), x_g
 
     def compute_grads(self, s_t: np.ndarray,
                       phi: np.ndarray,
@@ -1131,48 +1491,66 @@ class CkMLP:
 
         Parameters
         ----------
-        group_sel : dict {gid: int} or None
-            Per-group sampled local index from forward() (PPO: stored action).
-            If None, resamples from the current policy (backward-compat fallback).
+        group_sel : dict {gid: share vector | None}
+            Per-group sampled shares from forward() (PPO: the stored action).
+            Groups mapped to None had a ~0 budget and are skipped.
         """
         s_t = _layer_norm(s_t)
         pres, hs, logits = _mlp_forward(s_t, self.Ws, self.bs)
 
-        K_used      = K_active if K_active is not None else self.K
-        groups      = self._build_groups(phi[:K_used])
-        dL_dlogits  = np.zeros(self.K)
-        L_pg_total  = 0.0
-        L_ent_total = 0.0
-
-        for gid, members in groups.items():
-            if len(members) < 1:
-                continue
-
-            logits_g = logits[members]
-            alpha_g  = _ck_group_softmax(logits_g)   # current-policy fractions
-
-            # Use stored action or resample from current policy
-            if group_sel is not None and gid in group_sel:
-                idx_sel = int(group_sel[gid])
-            else:
-                idx_sel = int(self.rng.choice(len(members), p=alpha_g))
-
-            L_pg_total += float(-advantage * np.log(alpha_g[idx_sel] + 1e-10))
-
-            one_hot_g     = np.zeros(len(members))
-            one_hot_g[idx_sel] = 1.0
-            pg_per_member = -advantage * (one_hot_g - alpha_g)
-
-            log_alpha_g    = np.log(alpha_g + 1e-10)
-            H_g            = -float(np.sum(alpha_g * log_alpha_g))
-            L_ent_total   += -beta_entropy * H_g
-            ent_per_member = beta_entropy * alpha_g * (log_alpha_g + H_g)
-
-            for i, k in enumerate(members):
-                dL_dlogits[k] += pg_per_member[i] + ent_per_member[i]
+        K_used = K_active if K_active is not None else self.K
+        groups = self._build_groups(phi[:K_used])
+        dL_dlogits, L_pg_total, L_ent_total = self._dlogits(
+            logits, groups, group_sel, float(advantage), beta_entropy)
 
         grads = _mlp_backward(s_t, pres, hs, self.Ws, dL_dlogits)
         return float(L_pg_total), float(L_ent_total), grads
+
+    def _dlogits(self, logits, groups, group_sel, advantage, beta_entropy,
+                 aux_w: float = 0.0, aux_tgt: dict = None):
+        """
+        dL/dlogits for one transition; shared by the single and batch paths.
+
+        aux_w / aux_tgt — OPTIONAL auxiliary teacher (--ck-aux-weight). Adds
+            L_aux = -w · log p(x_oracle | α)
+        i.e. a maximum-likelihood pull toward the demand-fill allocation, on TOP
+        of the PPO term. It is NOT a warm-up: it is present at every update, so
+        PPO cannot erode it the way it eroded the phase warm-up (alignment
+        15.6% → 7.0% over 1300 ep in result_154). The head still receives the
+        full reward gradient and still adapts; the teacher only supplies the
+        credit signal that a single shared advantage across four heads fails to
+        deliver. Anneal w → 0 once the head tracks the target on its own.
+
+        Same functional form as the PG term with "advantage = w" evaluated at
+        the ORACLE share instead of the sampled one, so it reuses dlogp_dconc.
+        """
+        dL_dlogits  = np.zeros(self.K)
+        L_pg_total  = 0.0
+        L_ent_total = 0.0
+        L_aux_total = 0.0
+        for members, conc_g, x_g in self._group_terms(logits, groups, group_sel):
+            L_pg_total += -advantage * _dir.log_prob(x_g, conc_g)
+            g = -advantage * _dir.dlogp_dconc(x_g, conc_g)
+
+            L_ent_total += -beta_entropy * _dir.entropy(conc_g)
+            g += -beta_entropy * _dir.dentropy_dconc(conc_g)
+
+            # α = softplus(logit) + α_min  →  dα/dlogit = sigmoid(logit)
+            dL_dlogits[members] += g * _dir.dconc_dlogits(logits[members])
+
+        if aux_w > 0.0 and aux_tgt:
+            for gid, members in groups.items():
+                t = aux_tgt.get(gid)
+                if t is None or len(members) < 1:
+                    continue
+                t = np.asarray(t, dtype=float)
+                if t.shape[0] != len(members):
+                    continue
+                conc_g = _dir.logits_to_conc(logits[members])
+                L_aux_total += -aux_w * _dir.log_prob(t, conc_g)
+                g_aux = -aux_w * _dir.dlogp_dconc(t, conc_g)
+                dL_dlogits[members] += g_aux * _dir.dconc_dlogits(logits[members])
+        return dL_dlogits, float(L_pg_total), float(L_ent_total + L_aux_total)
 
     def compute_log_prob(self, s_t: np.ndarray,
                          phi: np.ndarray,
@@ -1182,13 +1560,8 @@ class CkMLP:
         _, _, logits = _mlp_forward(_layer_norm(s_t), self.Ws, self.bs)
         K_used  = K_active if K_active is not None else self.K
         groups  = self._build_groups(phi[:K_used])
-        log_prob = 0.0
-        for gid, members in groups.items():
-            logits_g = logits[members]
-            alpha_g  = _ck_group_softmax(logits_g)
-            idx_sel  = int(group_sel.get(gid, 0))
-            log_prob += float(np.log(alpha_g[idx_sel] + 1e-10))
-        return log_prob
+        return float(sum(_dir.log_prob(x_g, conc_g) for _, conc_g, x_g
+                         in self._group_terms(logits, groups, group_sel)))
 
     def compute_log_prob_batch(self, trans_list: list, K: int) -> np.ndarray:
         """
@@ -1209,16 +1582,15 @@ class CkMLP:
         lp_b = np.zeros(B)
         for b, trans in enumerate(trans_list):
             groups = self._build_groups(trans['phi'][:K])
-            for gid, members in groups.items():
-                logits_g = logits[b, members]
-                alpha_g  = _ck_group_softmax(logits_g)
-                idx_sel  = int(trans['ck_group_sel'].get(gid, 0))
-                lp_b[b] += float(np.log(alpha_g[idx_sel] + 1e-10))
+            lp_b[b] = sum(_dir.log_prob(x_g, conc_g) for _, conc_g, x_g
+                          in self._group_terms(logits[b], groups,
+                                               trans['ck_group_sel']))
         return lp_b
 
     def compute_grads_batch(self, trans_list: list, K: int,
                             eff_adv_b: np.ndarray,
-                            beta_entropy: float = 0.0) -> tuple:
+                            beta_entropy: float = 0.0,
+                            aux_w: float = 0.0) -> tuple:
         """
         Vectorised PPO gradient for CkMLP over a mini-batch.
 
@@ -1239,24 +1611,13 @@ class CkMLP:
 
         for b, trans in enumerate(trans_list):
             groups = self._build_groups(trans['phi'][:K])
-            for gid, members in groups.items():
-                logits_g = logits[b, members]
-                alpha_g  = _ck_group_softmax(logits_g)
-                idx_sel  = int(trans['ck_group_sel'].get(gid, 0))
-
-                L_pg += float(-eff_adv_b[b] * np.log(alpha_g[idx_sel] + 1e-10))
-
-                one_hot_g = np.zeros(len(members))
-                one_hot_g[idx_sel] = 1.0
-                pg_m  = -eff_adv_b[b] * (one_hot_g - alpha_g)
-
-                log_a = np.log(alpha_g + 1e-10)
-                H_g   = -float(np.sum(alpha_g * log_a))
-                L_ent += -beta_entropy * H_g
-                ent_m  = beta_entropy * alpha_g * (log_a + H_g)
-
-                for i, k in enumerate(members):
-                    dL_dlogits_b[b, k] += pg_m[i] + ent_m[i]
+            row, lpg, lent = self._dlogits(
+                logits[b], groups, trans['ck_group_sel'],
+                float(eff_adv_b[b]), beta_entropy,
+                aux_w=aux_w, aux_tgt=trans.get('ck_aux_tgt'))
+            dL_dlogits_b[b] = row
+            L_pg  += lpg
+            L_ent += lent
 
         grads = _mlp_backward_batch(X, pre_acts, acts, self.Ws, dL_dlogits_b)
         return L_pg / B, L_ent / B, grads

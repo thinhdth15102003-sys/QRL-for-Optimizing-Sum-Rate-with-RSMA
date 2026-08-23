@@ -37,6 +37,7 @@ FAIL  = "\033[31mFAIL\033[0m"
 
 # ── Case 2 architecture dimensions ──────────────────────────────────────────
 K, M, nq, n_latent = 10, 2, 12, 24
+N = 24    # IRS elements — g_RU is PER-ELEMENT (M,N,K)
 B_s = 8   # mini-batch size for batch tests
 N_HIDDEN_AE   = [256, 128, 64]
 N_HIDDEN_POST = [256, 128]
@@ -73,7 +74,8 @@ def make_cfg(k, m):
 
 def mock_obs(rng):
     g_sr = rng.standard_normal(M) + 1j * rng.standard_normal(M)
-    g_ru = rng.standard_normal((M, K)) + 1j * rng.standard_normal((M, K))
+    g_ru = (rng.standard_normal((M, N, K))
+            + 1j * rng.standard_normal((M, N, K)))     # PER-ELEMENT (M,N,K)
     g_su = rng.standard_normal(K) + 1j * rng.standard_normal(K)
     # extract_state now decides on estimated CSI (ĝ); provide the *_hat keys too.
     return {

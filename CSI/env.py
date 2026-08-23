@@ -32,7 +32,7 @@ provided they must be consistent (w_c_vec.shape[0] == G+1 for the NEW assignment
 Observation dict (from _get_obs)
 ----------------------------------
   'g_SR'        (M,)   complex  TRUE satellite→IRS channels
-  'g_RU'        (M, K) complex  TRUE IRS→user channels
+  'g_RU'        (M,N,K) complex TRUE IRS→user channels (PER-ELEMENT)
   'g_SU'        (K,)   complex  TRUE satellite→user channels
   'beta'        (M,)   float    per-IRS reflection efficiency
   'Phi_angle'   (M, N) float    current IRS phase angles (radians)
@@ -181,14 +181,18 @@ class ISTNEnv:
         R_tot_acc   = np.zeros(K)
         sigma2_acc  = 0.0
         result      = None
+        # ⚡ h_eff / groups / wc_map do not depend on σ², so hoist them out of the
+        # averaging loop: 36% of compute_sum_rate (h_eff alone 26% — the einsum
+        # over all N elements) was being recomputed on every one of the R_avg
+        # draws. Same function, same inputs, evaluated once ⇒ bit-identical.
+        _pre = self.rate_computer._sigma_invariants(
+            self.assignment, self.Phi, self.channels,
+            self.active_irs_ids, True)          # use_true=True (achieved rate)
         for _ in range(R_avg):
             sigma2_step = self.channel_model.sample_noise_sigma2()
-            res = self.rate_computer.compute_sum_rate(
-                self.assignment, self.Phi, self.channels,
-                self.w_p, self.w_c_vec, C_k=self.C_k,
-                active_irs_ids=self.active_irs_ids,
-                sigma2=sigma2_step,
-                use_true=True,           # achieved rate on the true physical channel
+            res = self.rate_computer._finish_sum_rate(
+                _pre, self.assignment, self.w_p, self.w_c_vec,
+                self.C_k, sigma2_step,
             )
             R_tot_r    = res['R_private'] + res['C_k']             # (K,)
             shortfall  = np.maximum(0.0, D_k - R_tot_r)
@@ -311,7 +315,8 @@ class ISTNEnv:
 
         Layout (total = state_dim):
           Re/Im g_SR    : 2M        TRUE sat→IRS channel Re and Im parts
-          Re/Im g_RU    : 2×M×K    TRUE IRS→user channel Re and Im parts
+          Re/Im g_RU    : 2×M×N×K   TRUE IRS→user channel Re and Im parts
+                                    (PER-ELEMENT since the (M,K)→(M,N,K) change)
           Re/Im g_SU    : 2K        TRUE sat→user channel Re and Im parts
           beta          : M         IRS reflection efficiency
           cos(Phi_angle): M×N  ┐   circular encoding of IRS phase angles
@@ -320,7 +325,7 @@ class ISTNEnv:
         """
         obs = self._get_obs()
         g_sr = obs['g_SR']                       # (M,) complex
-        g_ru = obs['g_RU']                       # (M, K) complex
+        g_ru = obs['g_RU']                       # (M, N, K) complex
         g_su = obs['g_SU']                       # (K,) complex
         phi  = obs['Phi_angle']                  # (M, N)
         return np.concatenate([
@@ -336,10 +341,10 @@ class ISTNEnv:
     @property
     def state_dim(self) -> int:
         cfg = self.cfg
-        # 2M (g_SR Re+Im) + 2MK (g_RU Re+Im) + 2K (g_SU Re+Im)
+        # 2M (g_SR Re+Im) + 2MNK (g_RU Re+Im, PER-ELEMENT) + 2K (g_SU Re+Im)
         # + M (beta) + 2MN (cos/sin Phi) + K (assignment)
         return (2 * cfg.M
-              + 2 * cfg.M * cfg.K
+              + 2 * cfg.M * cfg.N * cfg.K
               + 2 * cfg.K
               + cfg.M
               + 2 * cfg.M * cfg.N

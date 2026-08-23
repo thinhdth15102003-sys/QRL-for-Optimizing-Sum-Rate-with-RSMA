@@ -1,0 +1,21 @@
+# Line endings are normalised to LF in the repository. The project is developed
+# from Windows but trained under WSL, so without this the same file commits
+# differently depending on which side touched it last.
+* text=auto eol=lf
+
+# Shell scripts are executed by WSL bash; CRLF would break the shebang line.
+*.sh   text eol=lf
+
+# Windows-only helpers keep CRLF in the working tree.
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary: never normalise, never diff as text.
+*.npz  binary
+*.npy  binary
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gz   binary
+*.zip  binary

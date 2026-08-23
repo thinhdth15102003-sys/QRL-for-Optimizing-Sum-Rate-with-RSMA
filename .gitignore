@@ -12,12 +12,15 @@ telegram_secrets.py
 .claude/scheduled_tasks.lock
 .claude/*.lock
 
-# ── Training run outputs (large / reproducible artifacts) ───────────────
-# Keeps results/oracle_sweep_*.txt/.csv + results/probe_*.txt/.json (evidence).
-results/result_*/
-results/Training-Case 1/
-results/claude_inbox.jsonl
+# ── Training run outputs ─────────────────────────────────────
+# The whole tree stays local. The checkpoints behind the reported numbers are
+# published under checkpoints/ instead, which is why *.npz is re-included there.
+results/
 *.npz
+!checkpoints/**/*.npz
+
+# ── Telegram training monitor: operational, not part of the method ─────
+comms/
 
 # ── LaTeX build intermediates (keep .tex/.bib/.pdf/images) ──────────────
 *.aux
@@ -33,9 +36,7 @@ results/claude_inbox.jsonl
 *.log
 .DS_Store
 Thumbs.db
-results/Training-Case 2/
 params_*_backup.py
-results/phase_b_feasibility_*.txt
 
 # ── Third-party papers: copyrighted, kept locally for reference only ────
 # The repo is public; redistributing publisher PDFs is not ours to do.

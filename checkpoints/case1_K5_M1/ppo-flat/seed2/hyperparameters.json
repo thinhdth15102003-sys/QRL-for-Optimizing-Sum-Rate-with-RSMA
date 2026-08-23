@@ -1,0 +1,43 @@
+{
+  "actor": {
+    "actor_mode": "flat",
+    "hidden": [
+      512,
+      256
+    ],
+    "d_s": 278,
+    "d_out": 120,
+    "num_params": 305016,
+    "baseline_of": "Meng et al. 2024 (method port, not system)"
+  },
+  "power_net": {
+    "power_fairness": 0.0,
+    "power_fairness_priv": 0.0,
+    "power_priv_frac": 0.8
+  },
+  "env": {
+    "K": 5,
+    "M": 1,
+    "N": 24,
+    "D_k_bps_hz": 0.05,
+    "lambda_D": 1.5,
+    "R_LoS_km": 0.5,
+    "kappa": 0.05,
+    "noise_mean_dBW": -30.0,
+    "P_S_dBm": 50.0
+  },
+  "training": {
+    "n_episodes": 20000,
+    "n_steps_per_ep": 200,
+    "gamma": 0.95,
+    "gae_lambda": 0.9,
+    "lr_actor": 0.0003,
+    "lr_critic": 0.0003,
+    "ppo_epsilon": 0.2,
+    "ppo_epochs": 6,
+    "target_kl": 0.05,
+    "n_rollout_episodes": 12,
+    "batch_size": 64
+  },
+  "seed": 2
+}

@@ -1,3 +1,9 @@
+# conda env create -f environment.yml && conda activate IRS_QRL
+#
+# The variational circuit is a hand-written state-vector simulator in numpy, so
+# there is no quantum-framework dependency. cupy is optional and only used by
+# the QRL_GPU_MLP=1 path for the phase sub-actor; on an 8-qubit register the CPU
+# simulator is the faster of the two, so the default path needs no GPU.
 name: IRS_QRL
 
 channels:
@@ -7,4 +13,5 @@ channels:
 dependencies:
   - python=3.11
   - numpy>=1.26
+  - scipy>=1.11
   - matplotlib>=3.8

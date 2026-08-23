@@ -7,10 +7,11 @@ __pycache__/
 # ── Secrets (Telegram bot token) — NEVER push ───────────────────────────
 telegram_secrets.py
 
-# ── Local Claude config (KEEP .claude/skills/, drop local settings/state) ─
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
-.claude/*.lock
+# ── Local Claude config and skills: authoring aids, not project code ───
+.claude/
+
+# ── Unit tests: kept locally, not published ───────────────────────
+tests/
 
 # ── Training run outputs ─────────────────────────────────────
 # The whole tree stays local. The checkpoints behind the reported numbers are

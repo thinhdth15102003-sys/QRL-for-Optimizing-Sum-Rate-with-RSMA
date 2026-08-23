@@ -60,7 +60,26 @@ seeds. See `analysis/data/TABLE-PROVENANCE.md`.
 
 ## Loading
 
-Each directory has the same `agents/` layout the training code writes, so it can
-be passed straight to `infer.py`. The configuration files travel with the
-weights, so the architecture is recovered from the directory rather than from
-`params.py`, which has since moved on.
+Each seed directory has the layout `infer.py` expects, so it can be passed
+straight in:
+
+```bash
+python infer.py checkpoints/case2_K10_M2/hqc-hac-vqc/seed0 --episodes 3 --steps 200 --seed 42
+```
+
+Two files make that work and are worth knowing about.
+
+`agents/*_config.json` travels with the weights, so the architecture is
+recovered from the directory rather than from `params.py`. That matters: the
+reported runs used an 8-qubit register while `params.py` now defaults to 12.
+
+`hyperparameters.json` sits beside `agents/` because `infer.py` walks up from the
+run directory to find it, and uses it to restore the line-of-sight radius and
+the spawn geometry. Without it those fall back to `params.py` **silently**, and a
+policy trained at one ramp gets scored at another. Check the `eval env:` line
+printed at start-up.
+
+One caveat on that file: `train.py` rebuilds it from the loaded actors on
+`--resume`, so on a resumed run its sub-actor widths can disagree with what was
+really used. The ground truth for architecture is always
+`agents/{phase,power,ck}_config.json`.

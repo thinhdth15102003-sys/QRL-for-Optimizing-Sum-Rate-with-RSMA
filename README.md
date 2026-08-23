@@ -283,11 +283,15 @@ reading. Critic weights are omitted because `infer.py` never loads them.
 | `analysis/` | roughly 50 probes indexed by `analysis/PROBES.md`, plus the figure scripts |
 | `analysis/data/` | probe output and the launch provenance logs |
 | `docs/` | per-case training logs and the symptom-to-fix notes |
-| `Research Paper/` | manuscript source, figures, and `build_manuscript.py` |
+| `Research Paper/` | `manuscript.pdf`, the submitted version |
 
-Two things are deliberately absent. `results/` is the full run tree, roughly 20 MB tracked
-and far more on disk, of which the reported slice is published under `checkpoints/`. The
-Telegram training monitor is operational tooling with no bearing on the method.
+Some things are deliberately absent. `results/` is the full run tree, of which the reported
+slice is published under `checkpoints/`. The LaTeX sources, figures and bibliography are not
+published either, only the compiled `manuscript.pdf`. The Telegram training monitor and the
+unit tests are kept locally.
+
+The figure scripts under `analysis/` still write into `Research Paper/figures/`, so running
+one creates that directory. It is ignored rather than tracked.
 
 ## Reproducing a reported number
 
@@ -303,14 +307,7 @@ penalised objective $J = \sum_k R_k - \lambda_D \sum_k (\text{shortfall}_k / D_k
 than on sum rate alone, since a rate obtained by underserving users is not comparable with
 one that meets the demand.
 
-## Building the paper
+## The paper
 
-```bash
-python "Research Paper/build_manuscript.py"
-```
-
-One source carries both a reading version and the submission version behind an `\iffull`
-switch. The script copies the source, flips the switch and the document class, compiles, and
-reports pages, errors, undefined references and overfull boxes. `--full` builds the reading
-version instead. It keeps the `.aux`, which is the only reliable record of what each version
-actually typeset.
+`Research Paper/manuscript.pdf` is the submitted version. Section and table numbers quoted
+throughout this README and in `checkpoints/README.md` refer to it.

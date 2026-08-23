@@ -43,9 +43,11 @@ params_*_backup.py
 # The repo is public; redistributing publisher PDFs is not ours to do.
 Previous Paper/
 
-# ── LaTeX scratch build dirs + editor backups ───────────────────────────
-Research Paper/.ob_*/
-Research Paper/.build_*/
+# ────────── Paper working tree: only the submitted PDF is published ──────────
+# Sources, figures, the bibliography, the build script, the review notes and
+# the LaTeX scratch dirs all stay local.
+Research Paper/*
+!Research Paper/manuscript.pdf
 *.tex.bak*
 
 # ── Transient launcher state (superseded by the .meta provenance logs) ──

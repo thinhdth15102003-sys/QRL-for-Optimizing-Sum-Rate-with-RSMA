@@ -36,3 +36,19 @@ Thumbs.db
 results/Training-Case 2/
 params_*_backup.py
 results/phase_b_feasibility_*.txt
+
+# ── Third-party papers: copyrighted, kept locally for reference only ────
+# The repo is public; redistributing publisher PDFs is not ours to do.
+Previous Paper/
+
+# ── LaTeX scratch build dirs + editor backups ───────────────────────────
+Research Paper/.ob_*/
+Research Paper/.build_*/
+*.tex.bak*
+
+# ── Transient launcher state (superseded by the .meta provenance logs) ──
+analysis/data/*.heartbeat
+analysis/data/*.gpu-aborted
+
+# ── Windows "2>nul" artifact ────────────────────────────────────────────
+nul

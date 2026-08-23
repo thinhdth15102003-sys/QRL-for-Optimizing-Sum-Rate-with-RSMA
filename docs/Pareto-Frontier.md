@@ -8,7 +8,49 @@
 
 > ⭐ **REFRESH 07-11 (paper-anchor regimes)** — probe re-run tại đúng env bảng chính:
 > `vstar_c1_ramp03_500states.txt` (r111/ep1000) + `vstar_c2_ramp05_500states.txt` (r110/ep1600).
-> KEY: V*_rate 10.963/11.723 (formula ≡ oracle, verify_vstar_formulas UPDATED) · R*(K) 3.11/1.61 ·
+> KEY: ## ⭐⭐⭐ TRUE (QoS, R_tot) FRONTIER — MEASURED 2026-07-22, post-refactor
+
+Tool: `analysis/probe_true_frontier.py --K .. --M .. --P 50 --R-LoS 0.5`
+Method: routing **coordinate ascent** (started from the AO solution, soft-constrained)
++ per-element oracle phase + **(β, f) power sweep** + demand-fill C_k,
+maximising R_tot **subject to QoS ≥ t**. Scored like `env.step`
+(decide on ĝ, score on true g, 16 σ² draws).
+
+⚠ Why this and not the AO probe: `probe_ao_rate` is **structurally limited** — it only
+sweeps the split `f` and always uses EQUAL private power (β=0), and its `oracle_ck_met`
+is hard-coded QoS-first. That is why sweeping λ_D from 0 → 8 gives AO the *same* point
+every time: it cannot enter the rate-heavy region at all. It is a strong baseline, not a
+ceiling.
+
+| QoS ≥ | **Case 1** (K5/M1) max R_tot | vs AO 1.847 | **Case 2** (K10/M2) max R_tot | vs AO 1.651 |
+|---|---|---|---|---|
+| 100% | **2.714** | **+0.867 (+47%)** | **1.662** | **+0.011 (+0.7%)** |
+| 99%  | 2.714 | +0.867 | 1.662 | +0.011 |
+| 95%  | 2.714 | +0.867 | 1.662 | +0.011 |
+| 90%  | 2.714 | +0.867 | 1.688 | +0.037 |
+| 80%  | 2.956 | +1.110 | 1.773 | +0.122 |
+| 50%  | 3.362 | +1.515 | 2.094 | +0.443 |
+| 0%   | 5.271 | +3.425 | 5.089 | +3.438 |
+
+### The two cases are qualitatively different — this drives paper strategy
+- **Case 1: AO leaves 47% on the table.** Huge headroom at full QoS. Matches the
+  exhaustive check (all 2^5=32 assignments): AO's greedy routing ascent found the true
+  optimum in **0% of states**. This is where "the learned policy beats the per-state
+  solver" can be claimed strongly.
+- **Case 2: AO is within 0.7% of the ceiling.** Almost nothing to win on rate at high QoS.
+  Realistic claim here is *parity with AO at ~1000× faster inference*, not "beats AO".
+
+### Shape: hyperbolic, but FLAT in the high-QoS region
+Both cases: R_tot climbs steeply only once QoS is allowed to fall below ~80%
+(C2: 1.662 → 5.089 as QoS 100% → 0%). Between QoS 95% and 100% the frontier is
+essentially flat. Physical reason: the link is **interference-limited** — concentrating
+power barely raises SINR (interference rises with it) while starving weak users collapses
+QoS immediately.
+
+⇒ **A target of "AO + 0.2 R_tot at comparable QoS" is infeasible for Case 2**
+(ceiling is AO + 0.011) but is **easily inside the frontier for Case 1** (AO + 0.867).
+
+V*_rate 10.963/11.723 (formula ≡ oracle, verify_vstar_formulas UPDATED) · R*(K) 3.11/1.61 ·
 > **λ_crit 2.00/1.15 → "2 phía của λ=1.5" GIỮ NGUYÊN ở regime mới** · identity C2: 1.520+0.090=1.610
 > (khớp 3 chữ số) · attainment matched-QoS ĐỔI: C1 ≈70%/70% (frontier ramp0.3 CAO hơn: 2.546@99.7 vs
 > agent 1.79 — gap vẫn trục power-concentration) · C2 95%/94% (row 1.610@99.3). Paper tab:abl_pareto

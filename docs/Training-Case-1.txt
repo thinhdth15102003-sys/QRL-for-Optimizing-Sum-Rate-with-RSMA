@@ -244,6 +244,18 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
 ================================================================================
   NHẬT KÝ RUN (Case 1)  —  điền tiếp khi có run mới
 ================================================================================
+  ⭐⭐⭐ BASELINE + TRẦN THẬT (đo 2026-07-22, post-refactor, R_LoS 0.5, P_S 50)
+    AO per-state (probe_ao_rate)      : R_tot 1.847 @ QoS 100%  ·  117 ms/state
+      AO++ (3.6× compute)             : 1.845  ⟹ AO đã hội tụ TRONG thuật toán của nó
+    TRẦN THẬT (probe_true_frontier)   : R_tot 2.714 @ QoS ≥ 95-100%  ⟹ **AO bỏ lỡ +47%**
+      QoS≥80% → 2.956 · QoS≥50% → 3.362 · QoS≥0% → 5.271 (frontier hyperbol)
+    Exhaustive 32 assignment (đã đo)  : AO đạt optimum ở **0%** state ⟹ greedy routing
+      của AO kẹt cực trị địa phương. ĐÂY là chỗ agent có thể vượt AO MẠNH.
+  ⚠ Case 1 KHÁC HẲN Case 2: C2 trần chỉ hơn AO +0.7%, C1 hơn +47%.
+    ⟹ Claim "vượt per-state solver" nên dựng trên CASE 1.
+  ⚠ Mọi số trên đo bằng use_true=True + 16 σ² draw (giống env.step). Số cũ dùng
+    use_true=False bị thổi lên — xem memory compare-agent-vs-baseline-use-J.
+
   result_3  R_LoS0.2 λ_D3 gae0 fresh        → QoS54% (dừng sớm ep500)
   result_4  R_LoS0.3 λ_D3 gae0 ←r3          → QoS81%
   result_5  R_LoS0.4 λ_D3 gae0 ←r4          → QoS85%→63% (collapse)
@@ -255,6 +267,32 @@ lambda_D = THEO RAMP (xem bảng dưới — đây là knob quan trọng nhất 
   result_11 R_LoS0.5  λ_D4.5 gae0.9 β0.001 ←r9/ep400 → ep254 QoS83% rồi GPU-hang; có ep_200
   result_15 R_LoS0.3 LAGRANGIAN(lr0.05) gae0.9 ←r5/ep_00900 (đĩa r8) → QoS78→70% drift; PARETO-DOMINATED; ckpt ep_00600
   result_16 R_LoS0.3 λ_D2.5 gae0.9 ←r5/ep_00900 (đĩa r8) → ep~1271 P1(0-910)improve-both 77→87%/2.15→2.65, P2(910-1150)Pareto-improve 84%/3.05, P3(1150-)PARETO-DEGRADE+reward DROP 76%/3.18 514→496. ⚠ overshoot R_tot. PICK ep_01000 (sweet-spot, ent_ph 46% adapt-ready). NOT-AT-CEILING: sensitivity ep_01000 oracle 2.18/72% vs live 1.08/59% IRS28→59 = F1 BASIN HARD-CONFIRMED.
+  result_148 R_LoS0.5 λ_D1.5 gae0.9 α=0 fresh VQC nq12 (đĩa: results/result_150) — ⭐ POST-DIRICHLET-FIX, POST-PER-ELEMENT-PHYSICS (mọi số trước 07-21 KHÔNG so được)
+            → @ep1020/10000 (đang chạy): R_tot 1.43→2.11 · QoS 75→94→85% (đỉnh 94% @ep~350) · reward 157→397
+            → ⭐⭐ VƯỢT AO — XÁC NHẬN, nhưng con số phải đo bằng J (sửa 2026-07-21).
+               Từ diag r150: R̄=2.249−qp0.155 → J=2.094 · R̄=2.209−qp0.162 → J=2.047 ·
+               R̄=2.055−qp0.144 → J=1.911  ⇒  J_agent ≈ 2.02
+               AO Case 1: R_tot 1.8387 @ QoS 100% → penalty≈0 → J = 1.839
+               ⇒ agent VƯỢT AO +0.18 trên J ≈ **+10%** (KHÔNG phải +16% — con số đó đo trên R_tot đơn lẻ,
+                 vô nghĩa vì agent ở QoS 83% còn AO ở 100%).
+               ⚠ QUY TẮC: mọi so sánh agent-vs-baseline dùng J = ΣR − λ_D·Σ(short/D_k)², không dùng R_tot.
+               ⚠ Và điều này đạt được với PHASE NGẪU NHIÊN (alignment −0.5%) — r150 chạy trước bản sửa
+                 unit-phasor/g_SU. Run mới có phase hoạt động phải kỳ vọng CAO HƠN 2.02.
+               (Lỗi đo thứ hai đã sửa: các số oracle/Pareto cũ chấm bằng use_true=False → trên ĝ chứ không
+                phải g → mức tuyệt đối bị thổi lên; chỉ Δ giữa các hàng dùng được.)
+            → Head: q(VQC) HỘI TỤ ent 0.14, routing ĐÚNG LUẬT [N] (irs=3.0 == Blk=3.0/5) · power HỌC MẠNH ở
+               split/common (E[common] 43→81%, max-share split 57→81% common 55→85%) nhưng PRIVATE gần như
+               ĐỨNG (28-29% vs flat 20%) · ck TRẢI (Ck top=42%, chưa demand-fill) · λ_quantum FROZEN [E] (r=0.07, vô hại)
+            → PhaseMLP IDLE [F]: ent_ph 27.2→26.6 / max 33.3 = 82→80% PHẲNG+CAO, ‖∇ph‖=10.4 lớn. NGUYÊN NHÂN:
+               entropy-domination trên phase (ent/pg ph 7.4→17.5→…→0.90) CHỈ VỪA hết ở diag cuối → phase chưa
+               từng có cơ hội học. ⚠ R_tot 2.11 đạt được VỚI PHASE GẦN NGẪU NHIÊN → còn headroom RẤT lớn
+               (oracle phase = |h|² ×11 dưới physics per-element).
+            → Critic OK-borderline: explVar 0.43↔0.60 (dao động quanh 0.5), corr(V,ret) 0.66-0.78, ‖∇‖V μ=10
+               clipfrac 0% (KHÔNG phải [B-2b] plateau-large). ⚠ critic dead-ReLU cao: layer1/2/3 = 82/80/77%.
+            → ACTION: KEEP TRAINING (mới 10% budget; phase vừa được mở khoá). CHƯA đụng λ_D.
+               ⚠ CẢNH BÁO ĐÃ BIẾT: QoS 94→85% lặp lại đúng pattern r42 "OVER-DROP vì λ1.5-too-low @ramp cao";
+               ramp 0.5 trước đây dùng λ_D=2.0 (r45→91%). NẾU QoS trượt <80% và ổn định ở đó → cân nhắc λ_D 2.0.
+               Nhưng theo PRIORITY [Part5#8] phase > QoS: để phase học trước rồi mới đánh giá lại QoS.
   ── CURRICULUM 0.2→0.5 (2026-06-16/18, recipe fresh-α + ramp resume, P50) ──
   result_39 R_LoS0.2 λ_D1.5 gae0.9 α0.5 FRESH       → QoS 59→95% CONVERGED (CANONICAL, −3pp trần)
   result_42 R_LoS0.4 λ_D1.5 gae0.9 α0.6 ←r41(ramp0.3) → QoS peak96%@ep300 → drift82% (best ckpt ep_00300)

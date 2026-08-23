@@ -325,3 +325,74 @@ $(R_k^{\min}-R_p(\Gamma_k))^+$ → clash. Đổi shortfall thành $\varsigma_k$ 
 `tab:abl_readout` counts (12/23/33-41/34-42) · system-model (SINR/rate/channel/noise) · GAE/PopArt critic.
 
 **Chưa đụng (domain user):** Related Works, Intro.
+
+---
+
+## ⑭ Bảng so sánh — cột "Steer. Vec." của dòng **Proposed**  (Intro/Background, ~tex:263)
+
+**Reality:** code KHÔNG có steering vector / array-response. `istn/channel.py::_sample_g_RU`
+lấy fading Rayleigh **i.i.d. theo từng phần tử** với large-scale term dùng chung cho cả N phần tử
+("element spacing is negligible against the IRS-user distance"). Bậc tự do của pha đến từ fading
+độc lập mỗi phần tử, KHÔNG từ đáp ứng mảng `a(θ) = [1, e^{jπsinθ}, ...]`. Paper cũng không định
+nghĩa steering vector ở đâu (grep toàn file: chỉ có động từ "steer" ở Fig.1 caption và §Related Works).
+Các dòng khác trong bảng (dong2022intelligent, asif2024transmissive, han2025weighted) đánh ✓ theo
+nghĩa array-response, nên để ✓ cho dòng mình là so lệch chuẩn.
+
+**ĐÃ XỬ 2026-08-11 — giải pháp khác cả hai phương án đề xuất: BỎ HẲN CỘT.**
+User chốt bỏ cột `Steer. Vec.` khỏi bảng thay vì đổi ✓ thành --, vì định nghĩa cột
+vốn đã mơ hồ giữa "array-response vector" và "lái búp sóng nói chung", và đổi riêng
+ô của mình sẽ để lại một cột mà các dòng khác cũng chưa chắc nhất quán.
+Thực hiện: colspec 12→11 cột · `\cline{7-9}`→`\cline{6-8}` · gỡ ô thứ 5 khỏi cả 14 hàng.
+Đã kiểm: mọi hàng còn đúng 11 ô (multicolumn tính vào). Câu novelty (~tex:299) không
+liệt kê steering vector nên giữ nguyên.
+
+Prose đi kèm cũng đã sửa cùng đợt (¶4 Intro + caption Fig.1): `coherently steered
+toward` → `combine coherently at`, khớp `_sample_g_RU` (Rayleigh i.i.d. mỗi phần tử,
+cộng pha đồng bộ tại máy thu, KHÔNG có đáp ứng mảng).
+
+---
+
+<details><summary>Nội dung gốc của mục (giữ để tham chiếu)</summary>
+
+OLD (dòng Proposed, ô cột 5):
+```
+& \checkmark      % Steer. Vec.
+```
+NEW — chọn 1 trong 2:
+```
+& --               % Steer. Vec.  (nếu cột nghĩa là array-response vector)
+```
+hoặc giữ ✓ và đổi tên cột thành "Per-element phase" / "Elem.-wise CSI", rồi kiểm lại ✓/-- của
+MỌI dòng khác theo định nghĩa mới.
+
+⚠ Đây là ô trong bảng novelty về chính đóng góp của mình — reviewer kiểm cột này trước tiên.
+
+</details>
+
+<details>
+<summary><b>#18 — QoS demand R_k^min: paper ghi 0.1, code chạy 0.05</b> (tex 1264 + 1309)</summary>
+
+`params.py:112  D_k_bps_hz = 0.05`, và **mọi** `results/result_*/hyperparameters.json` đều ghi
+`"D_k_bps_hz": 0.05`. Không có flag CLI nào override.
+
+OLD (dòng 1264, prose Simulation Setup):
+```
+Each episode runs $200$ steps under the per-user demand $R_k^{\min}=0.1$~bps/Hz.
+```
+NEW:
+```
+Each episode runs $200$ steps under the per-user demand $R_k^{\min}=0.05$~bps/Hz.
+```
+
+OLD (dòng 1309, tab:hyper):
+```
+QoS demand $R_k^{\min}$ & $0.1$ bps/Hz &
+```
+NEW:
+```
+QoS demand $R_k^{\min}$ & $0.05$ bps/Hz &
+```
+
+⚠ Đổi số này KHÔNG đổi kết quả (chỉ là ghi sai giá trị đã dùng), nhưng nó là mẫu số của
+penalty tương đối `((R_k^min − R_k)/R_k^min)²` nên reviewer nào tự tính lại J sẽ lệch 2×.
+</details>

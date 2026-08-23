@@ -900,6 +900,189 @@ lambda_D = THEO SCHEDULE BÊN DƯỚI  # đừng bê thẳng 4.5 từ Case 1 —
 ================================================================================
   NHẬT KÝ RUN (Case 2)  —  điền khi có run đầu tiên
 ================================================================================
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ⭐⭐⭐ SCOUT SPRINT r150-r188 (2026-07-21/22) — POST-REFACTOR, DNN, R_LoS 0.5 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  ⚠ MỌI số trước 07-21 KHÔNG so được: per-element g_RU + σ²(K,) + Dirichlet
+    power/Ck + unit-phasor phase state. Xem memory: per-element-physics-refactor,
+    dirichlet-phantom-action-fix, phase-state-layernorm-fix.
+  ⚠ Đo bằng J = ΣR − λ_D·Σ(short/D)²  (reward_ep = J×200). KHÔNG so R_tot đơn lẻ.
+  BASELINE PHẢI VƯỢT:  AO per-state = J 1.651 @ QoS 100% (reward 330), 246 ms/state.
+    Direct-only J −6.32 · All-IRS J −10.29 · AO++ (3.6× compute) = AO +0.1% (AO đã hội tụ).
+
+  ⭐⭐⭐ TRẦN THẬT Case 2 (probe_true_frontier, 2026-07-22): R_tot **1.662** @ QoS ≥ 95-100%
+    ⟹ chỉ hơn AO **+0.011 (+0.7%)**. QoS≥90%→1.688 · ≥80%→1.773 · ≥50%→2.094 · 0%→5.089.
+    ⟹ **Ở QoS cao, AO GẦN NHƯ TỐI ƯU cho Case 2.** Target "AO + 0.2 R_tot" là BẤT KHẢ THI
+      (muốn 1.85 phải hạ QoS xuống ~75-80%). Claim thực tế cho C2 = NGANG AO với inference
+      nhanh ~1000× (agent ~ms vs AO 246 ms/state), KHÔNG phải "vượt AO".
+    ⟹ Muốn claim "vượt per-state solver" thì dùng **CASE 1** (trần 2.714 vs AO 1.847 = +47%).
+    Lý do vật lý: interference-limited → tập trung power không nâng SINR bao nhiêu (nhiễu
+    tăng cùng) nhưng bỏ đói user yếu thì QoS sập ngay → frontier PHẲNG ở vùng QoS cao.
+
+  ── GIAI ĐOẠN 1 (r150-r168): tìm lever, TẤT CẢ COLLAPSE ────────────────────────
+  Recipe nền: --oracle-warmup + assign-wu 16×30 + phase-wu 16×1500 + α=0.90 f=0.80.
+  r150/151  α=0 (bỏ power-fairness)          → C1 J≈2.02 (r150, ĐÃ MẤT ckpt); C2 kém
+  r154      α=0 fresh                        → đỉnh QoS 72% @ep2000 → tụt
+  r158      + --freeze-phase                 → xoá 128 KL_ph signal NHƯNG reward KHÔNG đổi
+                                               ⟹ phase KHÔNG phải nguồn bất ổn
+  r159      + α_priv 0 + f 0.28 (Pareto)     → reward −265 (tệ hơn −174) ⟹ thả private
+                                               KHI C_k hỏng = SẬP. Pareto cần C_k trước.
+  r162      α0.90, C_k học                   → đỉnh 83% → cuối 40%
+  r165      + --ck-aux-weight 0.2            → đỉnh 86% → cuối 56%
+  r166      + --closed-form-ck               → đỉnh 90% → cuối 65%   ← C_k đóng +7-8pp BỀN
+  r167      cf + f 0.65                      → đỉnh 88%, dao động 3× mạnh hơn ⟹ f 0.80 tốt hơn
+  r163/164  β thấp / α 0.5   ⚠ phase-wu YẾU  → ≤61%, confounded, KHÔNG kết luận được
+  r168      f 0.65 + phase-wu yếu            → confounded
+  ⟹ MỌI run collapse: đỉnh ~ep2500 rồi tụt về 40-65% @ep10000.
+
+  ── ROOT CAUSE COLLAPSE (đo, không đoán) ──────────────────────────────────────
+  LOẠI được: entropy-drift (private giữ 11%, α ghim) · [A] common-sink (wc giữ 23%) ·
+             critic (explVar 0.5-0.9 khoẻ suốt) · routing COUNT (Σirs≈Blk suốt) ·
+             λ_D (r178 λ=2.0 vẫn collapse y hệt λ=1.5)
+  ROOT   = ROUTING IDENTITY DRIFT. probe_assignment_quality r166 ep2000→ep10000:
+             mis 0.5→1.8% · blocked→direct-chết 1.1→5.1%. Đếm đúng, chọn SAI NGƯỜI.
+           = F2 assignment-credit fail-at-scale ((M+1)^K = 3^10).
+
+  ── GIAI ĐOẠN 2 (r169-r178): FIX = --assign-aux-weight (teacher liên tục) ──────
+  Cơ chế: cộng w·(−log π(oracle_routing|s)) vào loss actor MỌI update. Khác warm-up
+  (một lần, bị PPO bào mòn — phase alignment đo được 15.6%→7.0%/1300ep).
+  ⟹ COLLAPSE GIẢI QUYẾT:
+     có aux : mis 0.0%  over 0.8-1.2%   reward cuối +244..+264  QoS 88-96%
+     ko aux : mis 3.7-4.1% over 13-15%  reward cuối −501..−565  QoS 62-71%
+  r170/171/178  không aux                      → collapse (178 = λ2.0, bác H-λ)
+  r172/173/174  aux + closed-form-ck α_priv0.9 → QoS 90-91%, reward +256..264
+  r175/176      aux + C_k HỌC     α_priv0.9    → QoS 88-89%  ⟹ GIỮ AI chỉ mất ~2pp
+  ⭐ r177       aux + cf + α_priv 0.4          → QoS 96%, R_tot 1.46, reward 256 (J 1.325)
+                                                 = TỐT NHẤT. α_priv 0.4 > 0.9 (+5pp QoS).
+
+  ── GAP DECOMPOSITION r177 @ep10000 (J, decide-ĝ/score-g, 16 σ²) ──────────────
+    A agent                     R 1.453  QoS 96.7%  J 1.325   (−0.325 vs AO)
+    B + oracle PHASE            R 1.514  QoS 98.3%  J 1.463   ΔJ +0.138  = 42% gap
+    C + oracle ROUTING          R 1.509  QoS 98.9%  J 1.480   ΔJ +0.017  =  5% gap
+    D + oracle POWER+Ck         R 1.699  QoS 86.5%  J 1.654   ΔJ +0.174  = 54% gap
+    AO                          R 1.650  QoS 100%   J 1.650
+  ⟹ ROUTING ĐÃ ĐÓNG (aux teacher xong việc). Còn PHASE 42% + POWER 54%.
+  ⚠ hàng D có QoS 86.5% < agent 96.7% mà J cao hơn ⟹ ở λ=1.5 tối ưu KHÔNG phải
+    max-QoS; agent đang "quá an toàn" → thả α_priv là đúng hướng.
+
+  ── GIAI ĐOẠN 3 (r179-r188, ĐANG CHẠY) ────────────────────────────────────────
+  Nền chung: --oracle-warmup 16×30 + phase-wu 16×1500 + assign-aux 0.3 + α 0.90 f 0.80.
+  MỚI: --phase-aux-weight (teacher cho phase, nhắm 42% gap; unit-test 24.9%→100%).
+    r179  cf + phase-aux 0.3 + α_priv 0.4          (= r177 + phase teacher)
+    r180  ck-aux 0.2 + phase-aux 0.3 + α_priv 0.4  (FULL NEURAL)
+    r181  ck-aux 0.3 + phase-aux 0.5 + α_priv 0.4  (full neural, teacher mạnh)
+    r182  cf + phase-aux 0.3 + α_priv 0.2
+    r183  cf + phase-aux 0.3 + α_priv 0.2          (lặp r182)
+    r184  cf + phase-aux 0.3 + α_priv 0.0          (thả private HẲN)
+    r185  ck-aux 0.2 + phase-aux 0.3 + α_priv 0.4  (lặp r180)
+    r186  phase-aux 0.3 + α_priv 0.4, C_k HỌC      (giữ AI tối giản, 2 teacher)
+    r187  cf + phase-aux 0.5, KHÔNG phase-warm-up  (teacher thay warm-up?)
+    r188  cf + phase-aux 0.3 + α_priv 0.0          (lặp r184)
+  ⚠ r182≈r183, r180≈r185, r184≈r188 TRÙNG cấu hình → dùng làm seed-variance, không
+    phải lever mới. Còn trống chưa test: assign-aux ≠0.3, f≠0.80 ở cấu hình mới.
+
+  ── KẾT QUẢ r179-r188 @ep10000 (2026-07-24) — KHÔNG RUN NÀO COLLAPSE ──────────
+  fin ≈ peak ở MỌI run (95 vs 96) ⟹ --assign-aux-weight là fix COLLAPSE BỀN VỮNG,
+  xác nhận qua 10 run độc lập (trước đó mọi run tụt 40-65%).
+    CF + apriv 0.2-0.4  r179/182/183/187 → peak 96% fin 95%  reward 246-247  R_tot 1.43
+    ck-aux 0.2/0.3      r180/181/185     → peak 93% fin 92%  reward 246-247  R_tot 1.43
+    C_k học thuần       r186             → peak 91% fin 89%  reward 242
+    CF + apriv 0.0      r184/188         → peak 94% fin 89%  reward 137 ❌ R_tot 1.46
+  ⭐ GIỮ AI GẦN NHƯ KHÔNG MẤT GÌ: closed-form reward 246.9 vs ck-aux 246.8 (chênh 0.1,
+    trong nhiễu); chỉ QoS thấp hơn 2-3pp. Khoảng cách 15pp thấy ở ep~900 ĐÃ ĐÓNG LẠI
+    — C_k học chậm hơn nhưng tới nơi. ⟹ --ck-aux-weight 0.2 là lựa chọn full-neural OK.
+  ⚠ apriv 0.0 HỎNG: reward 137 vs 247 dù R_tot cao nhất → đổi quá nhiều QoS lấy rate.
+    Điểm tối ưu apriv = 0.2-0.4.
+  ⚠ --phase-aux-weight GẦN NHƯ KHÔNG ĂN: r177(không) J 1.325 → r187(có, w0.5) J 1.347,
+    chỉ +0.022. Teacher kéo được INDEX về oracle (unit test 100%) nhưng không chuyển
+    thành coherent gain thật (match ≠ alignment).
+
+  GAP DECOMP r187 @ep10000: A 1.458/96.7%/J1.347 · B+phase J1.466(+0.120) ·
+    C+routing J1.487(+0.020) · D+power J1.654(+0.167) · AO J1.650
+    ⟹ Gap: phase 39% · power 55% · routing 7%. Cách AO −0.304 J.
+
+  ── ⭐ TRUY NGUỒN CHÊNH LỆCH VỚI PAPER TAN (AO mình 1.847 vs Tan Fig.4 ~1.5) ────
+  Đối chiếu Section V.A của Tan: MỌI tham số họ NÊU đều KHỚP params.py —
+    K=5 · N=24 · P_S=50dBm · f=1.58GHz · h_SR=800km · G_S=G_U=60dBi ·
+    ε_SR=ε_SU~N(4,0.1) · g^RU=10dB · ε tolerances 0.001.
+  ĐÃ LOẠI bằng ĐO (không phải suy luận):
+    · noise: Tan ghi "n_0~N(0,10)[dB]". Nếu dBW → σ²=1W → AO 0.259 (quá thấp vs 1.5).
+      Diễn giải dBm (−30dBW, đang dùng) → 1.846. ⟹ dBm ĐÚNG, noise không phải nguồn.
+      Sweep: −30→1.846 · −20→1.349 · −10→0.623 · 0→0.259
+    · imperfect CSI κ=0.05→0      : 1.846 → 1.846 (KHÔNG đổi)
+    · phase 2-bit → 6-bit         : 1.846 → 1.847 (KHÔNG đổi)
+    · R_LoS 0.5→10km (path loss)  : 1.846 ở MỌI giá trị (KHÔNG đổi)
+    · C_k demand-fill vs equal    : 1.801 vs 1.801 (KHÔNG đổi ở K=5, QoS dễ đạt)
+    · grid split vs f cố định     : 1.801 vs 1.728 (chỉ +4%)
+    · D_k/R_kp^min 0.1→0.3        : AO giữ 1.847 (KHÔNG đổi)
+    LÝ DO chung: hệ INTERFERENCE-LIMITED (h²I/σ² ≈ 200-300) → h triệt tiêu trong
+    SINR = h²w/(h²I+σ²) → cải thiện kênh/công suất/khoảng cách đều vô hiệu.
+  ⟹ KẾT LUẬN: chênh lệch KHÔNG giải thích được bằng bất kỳ tham số nào Tan NÊU.
+    Nguồn còn lại: (a) SOLVER — Tan dùng SDR + rank-1 extraction (relaxation gap) +
+    RMCG + SA, mình dùng closed-form demand-fill C_k + exhaustive (β,f) grid +
+    coordinate ascent; (b) tham số Tan KHÔNG NÊU (mô hình blockage, phân bố user).
+  ⚠ KHÔNG chứng minh được (a) mà không implement SDR của họ — nêu giới hạn này trong paper.
+  NEO: trần thật Case 1 = 2.777 → cả Tan 1.5 lẫn AO mình 1.847 đều DƯỚI trần ⟹ không
+    mâu thuẫn, chỉ là hai solver đạt hai mức. AO mình MẠNH HƠN baseline của họ.
+
+  ── D_k SWEEP (2026-07-24) ────────────────────────────────────────────────────
+  Case 1 (K5/M1) — AO KHÔNG đổi 1.847 từ D_k 0.1→0.3 (QoS 100% dễ đạt):
+    D_k 0.10 → trần 2.777, dư địa +50%  ← TỐT NHẤT, giữ mặc định
+    D_k 0.20 → trần 2.156, dư địa +17%
+    D_k 0.30 → trần 1.925, dư địa +4%
+    D_k 0.40 → AO 1.814@49%, trần 2.156, +19%   · D_k 0.50 → QoS 0% = ARTIFACT
+    ⟹ Case 1 KHÔNG cần đổi D_k. Dư địa GIẢM khi D_k tăng (ngược Case 2).
+  Case 2 (K10/M2): D_k 0.10 → +0.4% · 0.155 → AO 1.573@61% trần 1.670 = **+6%** ·
+    ≥0.165 → QoS≈0 = ARTIFACT. Khe "phải chọn drop ai" rộng < 0.01 → mong manh.
+
+  ── 10 RUN MỚI ĐANG CHẠY (r189-r198, launch 2026-07-24) ───────────────────────
+  Case 1 (K5/M1, D_k 0.1, KHÔNG oracle-warmup — oracle routing làm GIẢM R_tot ở C1):
+    r198 CF apriv0.4 α0.90   · r191 CF apriv0.2 α0.90
+    r190 ck-aux0.2 apriv0.4  · r189 CF apriv0.2 α0.50
+  Case 2 D_k=0.155 (vùng phải-chọn-drop):
+    r193 CF apriv0.4 · r195 CF apriv0.2 · r196 ck-aux0.2 apriv0.4
+  Case 2 D_k=0.10 (tinh chỉnh quanh điểm thắng):
+    r197 CF apriv0.3 · r194 CF apriv0.3 ap0.5 · r192 CF apriv0.4 aq0.5
+  ⚠ BUG gặp phải: launch song song → race tạo cùng result dir → 1 run crash
+    (FileExistsError). Đã relaunch. Lần sau nên stagger launch vài giây.
+
+  ── RECIPE TỐT NHẤT HIỆN TẠI (chốt theo dữ liệu, chờ r179-188 xác nhận) ────────
+    --actor-mode classical --oracle-warmup
+    --assign-warmup-episodes 16 --assign-warmup-epochs 30
+    --phase-warmup-episodes 16 --phase-warmup-epochs 1500
+    --assign-aux-weight 0.3 --phase-aux-weight 0.3
+    --closed-form-ck  (hoặc --ck-aux-weight 0.2 nếu cần giữ AI, −2pp)
+    --power-fairness 0.90 --power-fairness-priv 0.4
+  BẮT BUỘC: pick best-by-QoS-CHECKPOINT, KHÔNG lấy reward cuối.
+  ĐÃ LOẠI (đừng lặp): --freeze-phase · α_priv thấp KHI C_k hỏng · λ_D 2.0 ·
+    f 0.65 (bản trước aux) · β thấp · --beta-entropy-pwr-private (inert khi α cao).
+
+  ⭐⭐⭐ result_149 (đĩa: results/result_151) R_LoS0.5 λ_D1.5 α=0 oracle-warmup fresh VQC nq12
+        — POST-DIRICHLET-FIX + POST-PER-ELEMENT-PHYSICS (mọi số trước 07-21 KHÔNG so được;
+          metric alignment cũ |Σe^{jθ}|/N đã bị thay bằng coherent-gain q — xem dưới)
+     @ep634/10000: QoS 43→57% đơn điệu · R_tot 1.31→1.42 · reward −626→−111 · floor(2-baseline)=70%
+     CRITIC KHOẺ: explVar 0.66-0.85 ổn định, V̄ bám return, ‖∇‖V 1.2-1.6.
+     q(VQC) HỘI TỤ ent 0.78-1.08/max10.99; assign warm-up 38.6→100%.
+     power: split 63→66%, common 46→55% (flat 33%) HỌC; private 16-19% (flat 10%) GẦN ĐỨNG.
+     ck: Ck tot 0.48→0.41 GIẢM, E[common] 37→34% GIẢM → rời xa common stream (ngược Pareto cho C2).
+     ⚠ over-assign nhẹ: Σirs=7.0 vs Blk=5.6 (luật [N] nói nên ≈).
+     🔴🔴 PHASE IDLE TUYỆT ĐỐI — probe_phase_quality @ep_00600: coherent-gain q=0.204 vs
+          random 0.203 → alignment 0.1%. Phase KHÔNG PHÂN BIỆT ĐƯỢC VỚI NGẪU NHIÊN.
+     🔴🔴 ROOT CAUSE TÌM RA = PHASE STATE THIẾU g_SU (KHÔNG phải entropy, KHÔNG phải capacity):
+          phase warm-up hội tụ CE 1.376 vs ln(4)=1.386 → chỉ hơn bộ dự đoán UNIFORM 0.010 nat;
+          match 29.2% vs chance 25%. Đây là supervised fit thuần (3200 mẫu, không dính entropy)
+          → target BẤT KHẢ HỌC. Vì oracle target θ_n = arg(g_SU[k]) − arg(c_{n,k}) mà state chỉ
+          có c_{n,k}; arg(g_SU) là GÓC XOAY TOÀN CỤC đổi theo state và KHÔNG có trong input
+          → target không phải hàm của state → fit tối ưu CHÍNH LÀ uniform. Khớp đúng quan sát.
+     ⓘ entropy-dom [C] có thật (ent/pg ph 1.5-408, cờ ⚠ mọi diag) nhưng KHÔNG phải root:
+          nó tự tắt quanh ep1000 (anneal_end0.1×10000, y hệt r150 7.4→0.90), và warm-up
+          supervised đã fail KHI KHÔNG CÓ entropy.
+     → FIX ĐÃ APPLY 2026-07-21: thêm Re/Im g_SU vào phase state (d_s 3K+rep → 5K+rep;
+        state (M,N,2K+nl+K) → (M,N,4K+nl+K)), train.py + infer.py song song. LEVER MỚI —
+        không nằm trong bảng đã thử (Δ7 / β0.3 / N=48 / phase-counterfactual).
+     ⚠ r151 CHẠY TRÊN CODE CŨ (chưa có g_SU) → nó bị chặn cứng khỏi lever phase (|h|²×11).
+
   (R_LoS=0.2, các lần thử ở ramp đầu — fix critic mù dai dẳng)
   L1 (result_1): λ_D3.0 β0.002 fresh → STUCK QoS54%, critic mù explVar~0.1 [B/I-2]; λ_D quá cao. FIX: hạ λ_D.
   L2 (result_1): λ_D1.5 β0.002 fresh → reward bớt âm, QoS~60%, critic VẪN mù (explVar0.07) +

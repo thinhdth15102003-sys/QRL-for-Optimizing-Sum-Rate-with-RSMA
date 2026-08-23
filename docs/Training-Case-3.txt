@@ -3,8 +3,9 @@
 ================================================================================
   Kiến thức chung (cơ chế, bảng tra lỗi, tín hiệu) → Common-Knowledge.txt.
   Per-case Case 1 → Training-Case-1.txt · Case 2 → Training-Case-2.txt.
-  Cập nhật lần cuối: 2026-06-21 (result_55 DNN α0.6 P_S50: gap 39pp = OPTIMIZATION (routing 37% wrong-IRS
-    + phase + power), KHÔNG P_S-starved — trần thật @P50=62.7%; β-optimal≈0.5 KHÔNG equal. trước: 2026-06-13 TẠO MỚI result_30).
+  Cập nhật lần cuối: 2026-07-20 (result_146 routing-shape SCOUT ❌ over-assign IRS10→14.7 QoS↓16%; routing-shape
+    LOẠI cho Case-3, gap routing = IDENTITY-37%-wrong KHÔNG count → next=cf-assign. r144 no-shaping giữ oracle-count
+    10/15 suốt → routing count KHÔNG drift). trước: 2026-06-21 (r55 gap 39pp OPTIMIZATION, trần@P50=62.7%, β≈0.5).
 
 # ── CẤU HÌNH CASE 3 (params.py ACTIVE CASE = K15/M3) ────────────────────────────
 K=15, M=3, N=24, nq=12 (UNIFIED), n_latent=24.  P_S_dBm=100 (auto tier K>10, D1 chốt).
@@ -22,6 +23,30 @@ Max-entropy baselines: q=K·ln(M+1)=15·ln4≈20.8 · phase=M·N·ln4=3·24·ln4
 ⚠ balanced_blocked_spawn=True bắt buộc (M=3 binomial = IRS-load lệch = non-stationary cho pipeline shaky).
 
 # ── BẢNG TÓM TẮT RUN ─────────────────────────────────────────────────────────────
+  ❌ result_147 (đĩa result_147) R0.2 λ1.5 FRESH DNN(classical) full-③ α0.5 oracle-warmup
+     + COUNTERFACTUAL-ASSIGN cf0.3 anneal0.5 — 2026-07-20 SCOUT (ep~630):
+    LEVER MỚI vs r146: cf-assign thay routing-shape (fix routing-CREDIT, discourage crowding, KHÔNG thổi count).
+    RESULT: ✅ IRS/K GIỮ 10.0/15 ROCK-SOLID suốt (cf LÀM ĐÚNG cơ chế, khác r146 thổi 14.7) → cf = ĐÚNG tool
+      cho over-assign. ❌ NHƯNG QoS KHÔNG lên: rolling 12% (< r144 24%, r146 16%), best kẹt 280ep, R_tot 0.88,
+      critic explVar 0.43-0.50 borderline.
+    ⟹ 3 SCOUT (r144 baseline 24% / r146 shape 16% / r147 cf 12%) ĐỀU kẹt ~12-24% ≪ oracle 85%. ROUTING-CREDIT
+      KHÔNG đóng được gap Case-3 (count đã đúng sẵn; Ck + PHASE co-dominant, reward penalty-dom kháng credit-learn).
+      oracle-Ck warmup (lever +12-24pp CHƯA test, cần code) là hướng còn lại.
+    → KHUYẾN NGHỊ: KILL, pivot compute sang nq14 Case-2 (paper deliverable); Case-3 để future-work + oracle-decomp
+      giải thích gap. [DON'T-REPEAT: routing-credit (shape/cf) KHÔNG lift Case-3 QoS — cần Ck/phase, không phải routing.]
+
+  ❌ result_146 (đĩa result_146) R0.2 λ1.5 FRESH DNN(classical) full-③ α0.5 oracle-warmup
+     + ROUTING-SHAPE coef0.1 — 2026-07-20 SCOUT (killed ~ep470):
+    LEVER MỚI vs r55: routing-shape (--routing-shape-coef 0.1) neo routing xuyên PPO. α0.5 (vs r55 0.6).
+    RESULT: ❌ HẠI — QoS rolling-50 ↓16% (< r55/r144 ~24%), R_tot 0.9. IRS/K leo 10→14.7/15 = OVER-ASSIGN
+      (r144 no-shaping giữ ĐÚNG 10.0/15 suốt 2000ep → routing-shape CHÍNH LÀ thủ phạm). Ck trải 14.9/15 user.
+    ROOT: _irs_favored_target mask=(IRS-path>direct); 65.7% blocked → mask≈ALL user → shaping đẩy gần hết
+      15 user lên 3 IRS → loãng common-stream → vùng All-IRS 0%. Sửa hướng-IRS nhưng PHÁ count.
+    ⟹ routing-shape = SAI TOOL cho Case-3 (gap routing là IDENTITY 37%-wrong, KHÔNG phải count; shaping thổi count).
+    → NEXT: --counterfactual-assign (cf-coef0.3 anneal0.5) thay routing-shape — cf discourage crowding
+      (R_cf thấp khi nhồi IRS bận, train.py:225) → sửa 37% wrong-IRS KHÔNG thổi count. = fix#1 "assignment-credit".
+    [DON'T-REPEAT: routing-shape LOẠI cho Case-3 R0.2 — over-assign. Dùng cf-assign cho routing-identity.]
+
   ⚠⚠ result_55 (đĩa result_55) R0.2 λ1.5 FRESH DNN(classical) full-③ α0.6 oracle-warmup
      **P_S=50 dBm (USER-OVERRIDE)** — 2026-06-20, 2000ep DONE:
     LEVER MỚI vs r26: actor=DNN, α0.6, P_S=50 dBm.

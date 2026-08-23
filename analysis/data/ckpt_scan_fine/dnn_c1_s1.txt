@@ -1,0 +1,820 @@
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    0        reward   295.99  R_tot 1.8336  QoS  85.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    100      reward   372.37  R_tot 2.0195  QoS  92.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    200      reward   405.49  R_tot 2.2021  QoS  91.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    300      reward   426.21  R_tot 2.2820  QoS  91.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    400      reward   429.99  R_tot 2.2786  QoS  91.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    500      reward   434.69  R_tot 2.2999  QoS  92.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    600      reward   414.80  R_tot 2.1680  QoS  93.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    700      reward   445.37  R_tot 2.3324  QoS  92.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    800      reward   426.56  R_tot 2.2463  QoS  91.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    900      reward   429.71  R_tot 2.2329  QoS  92.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1000     reward   434.71  R_tot 2.2388  QoS  93.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1100     reward   455.29  R_tot 2.3439  QoS  92.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1200     reward   462.16  R_tot 2.3891  QoS  92.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1300     reward   465.04  R_tot 2.4009  QoS  92.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1400     reward   466.30  R_tot 2.4090  QoS  91.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1500     reward   449.41  R_tot 2.3156  QoS  92.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1600     reward   463.80  R_tot 2.3929  QoS  92.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1700     reward   468.50  R_tot 2.4072  QoS  92.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1800     reward   474.06  R_tot 2.4410  QoS  92.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1900     reward   479.38  R_tot 2.4542  QoS  93.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2000     reward   467.83  R_tot 2.3922  QoS  93.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2100     reward   479.37  R_tot 2.4562  QoS  92.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2200     reward   476.48  R_tot 2.4325  QoS  93.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2300     reward   464.21  R_tot 2.3665  QoS  93.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2400     reward   466.07  R_tot 2.3808  QoS  93.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2500     reward   468.32  R_tot 2.3902  QoS  93.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2600     reward   463.44  R_tot 2.3707  QoS  94.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2700     reward   486.16  R_tot 2.4767  QoS  94.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2800     reward   472.77  R_tot 2.4090  QoS  94.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2900     reward   466.87  R_tot 2.3712  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3000     reward   474.20  R_tot 2.4222  QoS  93.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3100     reward   476.87  R_tot 2.4279  QoS  94.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3200     reward   478.35  R_tot 2.4295  QoS  94.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3300     reward   481.41  R_tot 2.4446  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3400     reward   478.49  R_tot 2.4305  QoS  93.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3500     reward   485.09  R_tot 2.4647  QoS  93.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3600     reward   469.15  R_tot 2.3863  QoS  94.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3700     reward   486.76  R_tot 2.4685  QoS  94.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3800     reward   468.81  R_tot 2.3750  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3900     reward   469.03  R_tot 2.3878  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4000     reward   475.78  R_tot 2.4187  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4100     reward   473.91  R_tot 2.4113  QoS  94.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4200     reward   474.41  R_tot 2.4158  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4300     reward   486.20  R_tot 2.4617  QoS  94.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4400     reward   492.92  R_tot 2.5020  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4500     reward   485.01  R_tot 2.4597  QoS  94.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4600     reward   466.97  R_tot 2.3679  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4700     reward   466.20  R_tot 2.3720  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4800     reward   490.62  R_tot 2.4973  QoS  94.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4900     reward   483.68  R_tot 2.4501  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5000     reward   489.69  R_tot 2.4851  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5100     reward   483.28  R_tot 2.4484  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5200     reward   490.83  R_tot 2.4905  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5300     reward   483.16  R_tot 2.4469  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5400     reward   487.44  R_tot 2.4688  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5500     reward   490.35  R_tot 2.4794  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5600     reward   469.34  R_tot 2.3858  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5700     reward   485.33  R_tot 2.4565  QoS  94.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5800     reward   489.94  R_tot 2.4905  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5900     reward   496.31  R_tot 2.5139  QoS  94.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6000     reward   472.75  R_tot 2.4040  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6100     reward   486.23  R_tot 2.4634  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6200     reward   494.65  R_tot 2.4981  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6300     reward   493.36  R_tot 2.4933  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6400     reward   488.63  R_tot 2.4679  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6500     reward   498.23  R_tot 2.5089  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6600     reward   481.16  R_tot 2.4339  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6700     reward   485.71  R_tot 2.4535  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6800     reward   491.92  R_tot 2.4846  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6900     reward   488.01  R_tot 2.4701  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7000     reward   477.13  R_tot 2.4188  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7100     reward   471.56  R_tot 2.4053  QoS  93.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7200     reward   480.35  R_tot 2.4385  QoS  94.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7300     reward   482.60  R_tot 2.4394  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7400     reward   486.59  R_tot 2.4609  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7500     reward   494.28  R_tot 2.5050  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7600     reward   473.74  R_tot 2.4037  QoS  94.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7700     reward   473.04  R_tot 2.3996  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7800     reward   476.26  R_tot 2.4104  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7900     reward   492.95  R_tot 2.4910  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8000     reward   482.85  R_tot 2.4522  QoS  94.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8100     reward   496.14  R_tot 2.5082  QoS  94.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8200     reward   493.49  R_tot 2.4896  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8300     reward   497.53  R_tot 2.5144  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8400     reward   487.13  R_tot 2.4677  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8500     reward   475.78  R_tot 2.4129  QoS  94.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8600     reward   471.45  R_tot 2.3968  QoS  93.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8700     reward   483.47  R_tot 2.4436  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8800     reward   491.94  R_tot 2.4839  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8900     reward   489.44  R_tot 2.4774  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9000     reward   484.49  R_tot 2.4516  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9100     reward   491.22  R_tot 2.4769  QoS  95.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9200     reward   485.35  R_tot 2.4536  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9300     reward   482.87  R_tot 2.4377  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9400     reward   469.10  R_tot 2.3802  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9500     reward   486.83  R_tot 2.4651  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9600     reward   490.00  R_tot 2.4780  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9700     reward   483.36  R_tot 2.4493  QoS  94.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9800     reward   487.56  R_tot 2.4668  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9900     reward   501.87  R_tot 2.5369  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10000    reward   494.17  R_tot 2.4921  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10100    reward   486.88  R_tot 2.4540  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10200    reward   491.96  R_tot 2.4870  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10300    reward   484.78  R_tot 2.4475  QoS  95.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10400    reward   482.84  R_tot 2.4390  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10500    reward   497.22  R_tot 2.5100  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10600    reward   485.15  R_tot 2.4488  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10700    reward   506.52  R_tot 2.5546  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10800    reward   495.62  R_tot 2.4979  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10900    reward   494.49  R_tot 2.5026  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11000    reward   485.56  R_tot 2.4557  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11100    reward   478.12  R_tot 2.4217  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11200    reward   483.03  R_tot 2.4428  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11300    reward   476.11  R_tot 2.4002  QoS  96.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11400    reward   477.40  R_tot 2.4141  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11500    reward   488.92  R_tot 2.4737  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11600    reward   492.04  R_tot 2.4897  QoS  94.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11700    reward   490.48  R_tot 2.4778  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11800    reward   489.04  R_tot 2.4736  QoS  94.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11900    reward   486.96  R_tot 2.4639  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12000    reward   475.99  R_tot 2.4048  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12100    reward   506.91  R_tot 2.5655  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12200    reward   478.75  R_tot 2.4247  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12300    reward   476.60  R_tot 2.4107  QoS  95.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12400    reward   488.25  R_tot 2.4644  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12500    reward   481.74  R_tot 2.4310  QoS  96.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12600    reward   481.96  R_tot 2.4376  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12700    reward   492.53  R_tot 2.4883  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12800    reward   489.13  R_tot 2.4713  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12900    reward   498.22  R_tot 2.5071  QoS  96.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13000    reward   492.15  R_tot 2.4761  QoS  96.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13100    reward   495.48  R_tot 2.5027  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13200    reward   484.51  R_tot 2.4492  QoS  96.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13300    reward   480.75  R_tot 2.4255  QoS  95.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13400    reward   488.14  R_tot 2.4616  QoS  95.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13500    reward   480.26  R_tot 2.4236  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13600    reward   477.97  R_tot 2.4237  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13700    reward   497.04  R_tot 2.5067  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13800    reward   478.02  R_tot 2.4161  QoS  95.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13900    reward   492.06  R_tot 2.4858  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14000    reward   494.93  R_tot 2.5048  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14100    reward   498.79  R_tot 2.5234  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14200    reward   487.59  R_tot 2.4629  QoS  95.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14300    reward   497.17  R_tot 2.5118  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14400    reward   479.97  R_tot 2.4257  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14500    reward   492.79  R_tot 2.4889  QoS  95.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14600    reward   491.63  R_tot 2.4789  QoS  96.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14700    reward   488.53  R_tot 2.4707  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14800    reward   480.11  R_tot 2.4318  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14900    reward   500.01  R_tot 2.5264  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15000    reward   492.02  R_tot 2.4930  QoS  94.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15100    reward   489.80  R_tot 2.4735  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15200    reward   481.98  R_tot 2.4422  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15300    reward   473.32  R_tot 2.3991  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15400    reward   482.00  R_tot 2.4349  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15500    reward   481.46  R_tot 2.4369  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15600    reward   487.16  R_tot 2.4603  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15700    reward   482.62  R_tot 2.4392  QoS  96.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15800    reward   490.30  R_tot 2.4728  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15900    reward   490.24  R_tot 2.4718  QoS  96.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16000    reward   496.48  R_tot 2.5027  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16100    reward   491.67  R_tot 2.4796  QoS  96.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16200    reward   486.94  R_tot 2.4580  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16300    reward   489.50  R_tot 2.4737  QoS  95.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16400    reward   480.68  R_tot 2.4275  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16500    reward   486.75  R_tot 2.4614  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16600    reward   488.67  R_tot 2.4744  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16700    reward   483.82  R_tot 2.4486  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16800    reward   492.83  R_tot 2.4865  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16900    reward   489.00  R_tot 2.4640  QoS  95.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17000    reward   493.04  R_tot 2.4914  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17100    reward   498.10  R_tot 2.5107  QoS  95.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17200    reward   483.06  R_tot 2.4374  QoS  96.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17300    reward   492.22  R_tot 2.4848  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17400    reward   485.92  R_tot 2.4557  QoS  95.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17500    reward   482.79  R_tot 2.4324  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17600    reward   493.42  R_tot 2.4868  QoS  96.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17700    reward   490.00  R_tot 2.4642  QoS  96.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17800    reward   469.05  R_tot 2.3749  QoS  96.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17900    reward   491.31  R_tot 2.4802  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18000    reward   486.56  R_tot 2.4572  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18100    reward   476.85  R_tot 2.4096  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18200    reward   480.22  R_tot 2.4212  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18300    reward   491.11  R_tot 2.4836  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18400    reward   475.78  R_tot 2.4017  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18500    reward   495.62  R_tot 2.5059  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18600    reward   491.15  R_tot 2.4745  QoS  96.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18700    reward   490.13  R_tot 2.4726  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18800    reward   484.73  R_tot 2.4451  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18900    reward   499.72  R_tot 2.5177  QoS  96.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19000    reward   485.46  R_tot 2.4544  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19100    reward   498.39  R_tot 2.5114  QoS  95.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19200    reward   488.71  R_tot 2.4626  QoS  95.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19300    reward   490.28  R_tot 2.4731  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19400    reward   499.08  R_tot 2.5140  QoS  96.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19500    reward   483.81  R_tot 2.4467  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19600    reward   500.16  R_tot 2.5198  QoS  95.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19700    reward   475.00  R_tot 2.4003  QoS  96.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19800    reward   484.83  R_tot 2.4486  QoS  95.4%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19900    reward   493.39  R_tot 2.4889  QoS  95.7%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    20000    reward   492.24  R_tot 2.4845  QoS  95.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    best     reward   489.63  R_tot 2.4790  QoS  94.9%
+
+====================================================================================
+  PICK CHECKPOINT · results/result_238 · env reward, greedy, policy's OWN C_k
+  2 episodes x 3 env seeds x 200 steps
+====================================================================================
+  ckpt          reward       sd    R_tot     QoS
+  0             295.99    19.63   1.8336   85.4%
+  100           372.37     5.06   2.0195   92.1%
+  200           405.49    11.92   2.2021   91.2%
+  300           426.21    15.03   2.2820   91.6%
+  400           429.99     8.76   2.2786   91.7%
+  500           434.69     5.94   2.2999   92.4%
+  600           414.80     8.99   2.1680   93.8%
+  700           445.37    16.50   2.3324   92.5%
+  800           426.56    16.22   2.2463   91.8%
+  900           429.71    11.67   2.2329   92.9%
+  1000          434.71    15.14   2.2388   93.8%
+  1100          455.29    14.04   2.3439   92.9%
+  1200          462.16    13.70   2.3891   92.4%
+  1300          465.04    14.10   2.4009   92.0%
+  1400          466.30    12.30   2.4090   91.7%
+  1500          449.41    11.67   2.3156   92.5%
+  1600          463.80    10.43   2.3929   92.2%
+  1700          468.50    15.27   2.4072   92.9%
+  1800          474.06    14.42   2.4410   92.0%
+  1900          479.38    11.61   2.4542   93.2%
+  2000          467.83     8.23   2.3922   93.9%
+  2100          479.37    15.96   2.4562   92.7%
+  2200          476.48    11.76   2.4325   93.4%
+  2300          464.21    11.21   2.3665   93.6%
+  2400          466.07    13.80   2.3808   93.9%
+  2500          468.32    12.45   2.3902   93.4%
+  2600          463.44    10.85   2.3707   94.2%
+  2700          486.16     8.73   2.4767   94.0%
+  2800          472.77    11.74   2.4090   94.2%
+  2900          466.87    18.05   2.3712   94.5%
+  3000          474.20    18.26   2.4222   93.5%
+  3100          476.87    15.13   2.4279   94.1%
+  3200          478.35    15.21   2.4295   94.6%
+  3300          481.41    16.09   2.4446   94.5%
+  3400          478.49     9.40   2.4305   93.8%
+  3500          485.09    15.91   2.4647   93.9%
+  3600          469.15    10.25   2.3863   94.1%
+  3700          486.76     7.48   2.4685   94.6%
+  3800          468.81    18.23   2.3750   95.3%
+  3900          469.03    12.51   2.3878   94.5%
+  4000          475.78     9.26   2.4187   94.5%
+  4100          473.91    11.86   2.4113   94.2%
+  4200          474.41    11.30   2.4158   94.5%
+  4300          486.20    10.39   2.4617   94.7%
+  4400          492.92    13.33   2.5020   94.8%
+  4500          485.01    11.80   2.4597   94.2%
+  4600          466.97    13.64   2.3679   94.5%
+  4700          466.20    18.48   2.3720   95.0%
+  4800          490.62    10.67   2.4973   94.0%
+  4900          483.68     9.12   2.4501   95.0%
+  5000          489.69    17.01   2.4851   94.8%
+  5100          483.28    11.99   2.4484   94.8%
+  5200          490.83    12.01   2.4905   95.0%
+  5300          483.16    11.76   2.4469   95.0%
+  5400          487.44    11.84   2.4688   94.8%
+  5500          490.35     7.28   2.4794   94.5%
+  5600          469.34    14.02   2.3858   94.8%
+  5700          485.33    12.78   2.4565   94.6%
+  5800          489.94    13.03   2.4905   94.8%
+  5900          496.31     7.26   2.5139   94.4%
+  6000          472.75    12.68   2.4040   94.8%
+  6100          486.23     8.35   2.4634   94.9%
+  6200          494.65    18.02   2.4981   95.2%
+  6300          493.36    14.12   2.4933   95.2%
+  6400          488.63     7.36   2.4679   95.5%
+  6500          498.23    18.14   2.5089   95.8%
+  6600          481.16    13.14   2.4339   95.5%
+  6700          485.71    14.94   2.4535   95.5%
+  6800          491.92    14.13   2.4846   95.6%
+  6900          488.01    11.60   2.4701   95.1%
+  7000          477.13    11.97   2.4188   95.2%
+  7100          471.56    10.72   2.4053   93.8%
+  7200          480.35    15.10   2.4385   94.6%
+  7300          482.60     7.49   2.4394   95.0%
+  7400          486.59    10.49   2.4609   95.2%
+  7500          494.28     9.29   2.5050   95.0%
+  7600          473.74     9.15   2.4037   94.7%
+  7700          473.04     8.61   2.3996   94.9%
+  7800          476.26    16.73   2.4104   95.3%
+  7900          492.95     9.51   2.4910   95.1%
+  8000          482.85     9.78   2.4522   94.6%
+  8100          496.14    14.95   2.5082   94.2%
+  8200          493.49    13.64   2.4896   95.4%
+  8300          497.53     8.31   2.5144   95.3%
+  8400          487.13     9.73   2.4677   94.5%
+  8500          475.78     7.41   2.4129   94.4%
+  8600          471.45    13.28   2.3968   93.9%
+  8700          483.47    10.74   2.4436   94.8%
+  8800          491.94    10.92   2.4839   95.6%
+  8900          489.44     9.87   2.4774   95.1%
+  9000          484.49    10.62   2.4516   95.0%
+  9100          491.22    10.89   2.4769   95.9%
+  9200          485.35     7.47   2.4536   94.8%
+  9300          482.87    11.66   2.4377   95.0%
+  9400          469.10    12.95   2.3802   94.8%
+  9500          486.83    11.18   2.4651   94.8%
+  9600          490.00     6.01   2.4780   95.2%
+  9700          483.36    12.28   2.4493   94.6%
+  9800          487.56    13.75   2.4668   95.0%
+  9900          501.87    11.08   2.5369   95.3%
+  10000         494.17    11.36   2.4921   95.3%
+  10100         486.88    12.61   2.4540   95.8%
+  10200         491.96     9.12   2.4870   95.3%
+  10300         484.78    13.57   2.4475   95.9%
+  10400         482.84    15.82   2.4390   95.4%
+  10500         497.22    13.22   2.5100   95.2%
+  10600         485.15     8.52   2.4488   95.4%
+  10700         506.52    15.50   2.5546   94.8%
+  10800         495.62    13.05   2.4979   95.8%
+  10900         494.49    12.48   2.5026   95.3%
+  11000         485.56     8.98   2.4557   95.0%
+  11100         478.12    11.30   2.4217   95.1%
+  11200         483.03     6.18   2.4428   95.8%
+  11300         476.11    10.38   2.4002   96.1%
+  11400         477.40     9.62   2.4141   95.5%
+  11500         488.92    12.52   2.4737   95.1%
+  11600         492.04     9.44   2.4897   94.6%
+  11700         490.48    14.20   2.4778   94.9%
+  11800         489.04     7.39   2.4736   94.7%
+  11900         486.96    21.23   2.4639   95.6%
+  12000         475.99     8.33   2.4048   95.5%
+  12100         506.91     9.38   2.5655   95.0%  <- best
+  12200         478.75    11.16   2.4247   95.2%
+  12300         476.60    12.61   2.4107   95.9%
+  12400         488.25     4.84   2.4644   95.5%
+  12500         481.74    13.02   2.4310   96.0%
+  12600         481.96     9.88   2.4376   95.5%
+  12700         492.53    12.36   2.4883   95.8%
+  12800         489.13    10.61   2.4713   95.1%
+  12900         498.22     9.19   2.5071   96.1%
+  13000         492.15     7.57   2.4761   96.4%
+  13100         495.48    11.70   2.5027   95.0%
+  13200         484.51    11.55   2.4492   96.1%
+  13300         480.75    11.03   2.4255   95.9%
+  13400         488.14    10.29   2.4616   95.7%
+  13500         480.26     6.13   2.4236   95.8%
+  13600         477.97    10.63   2.4237   95.5%
+  13700         497.04    12.78   2.5067   95.4%
+  13800         478.02    13.80   2.4161   95.7%
+  13900         492.06    10.36   2.4858   95.1%
+  14000         494.93    14.73   2.5048   95.1%
+  14100         498.79    17.21   2.5234   95.3%
+  14200         487.59    14.75   2.4629   95.7%
+  14300         497.17    17.45   2.5118   95.2%
+  14400         479.97    10.18   2.4257   95.8%
+  14500         492.79    11.61   2.4889   95.7%
+  14600         491.63    12.47   2.4789   96.0%
+  14700         488.53    10.50   2.4707   95.6%
+  14800         480.11     5.32   2.4318   95.1%
+  14900         500.01     9.88   2.5264   94.9%
+  15000         492.02     8.78   2.4930   94.7%
+  15100         489.80    10.14   2.4735   95.0%
+  15200         481.98    19.34   2.4422   94.9%
+  15300         473.32    10.10   2.3991   95.3%
+  15400         482.00    15.40   2.4349   94.8%
+  15500         481.46    12.09   2.4369   95.0%
+  15600         487.16    13.93   2.4603   95.5%
+  15700         482.62    12.60   2.4392   96.0%
+  15800         490.30     8.82   2.4728   95.5%
+  15900         490.24    16.19   2.4718   96.3%
+  16000         496.48    13.36   2.5027   95.5%
+  16100         491.67    11.64   2.4796   96.3%
+  16200         486.94    13.31   2.4580   95.4%
+  16300         489.50     5.48   2.4737   95.0%
+  16400         480.68     8.46   2.4275   95.6%
+  16500         486.75    12.11   2.4614   95.6%
+  16600         488.67     7.50   2.4744   95.5%
+  16700         483.82    12.69   2.4486   95.4%
+  16800         492.83    14.08   2.4865   95.5%
+  16900         489.00    13.84   2.4640   95.9%
+  17000         493.04    12.28   2.4914   95.8%
+  17100         498.10     9.05   2.5107   95.9%
+  17200         483.06    13.17   2.4374   96.1%
+  17300         492.22    15.61   2.4848   95.4%
+  17400         485.92    18.43   2.4557   95.7%
+  17500         482.79    10.39   2.4324   95.6%
+  17600         493.42    13.82   2.4868   96.1%
+  17700         490.00    13.23   2.4642   96.4%
+  17800         469.05    12.93   2.3749   96.2%
+  17900         491.31     9.05   2.4802   95.6%
+  18000         486.56    12.81   2.4572   95.3%
+  18100         476.85    11.30   2.4096   95.5%
+  18200         480.22     4.18   2.4212   95.6%
+  18300         491.11    13.61   2.4836   95.4%
+  18400         475.78    11.44   2.4017   95.5%
+  18500         495.62     7.87   2.5059   94.9%
+  18600         491.15    10.18   2.4745   96.0%
+  18700         490.13    21.59   2.4726   95.8%
+  18800         484.73    11.64   2.4451   95.8%
+  18900         499.72     8.66   2.5177   96.0%
+  19000         485.46    15.68   2.4544   95.6%
+  19100         498.39    10.71   2.5114   95.6%
+  19200         488.71    13.08   2.4626   95.8%
+  19300         490.28     8.36   2.4731   95.4%
+  19400         499.08    12.52   2.5140   96.3%
+  19500         483.81    14.49   2.4467   95.2%
+  19600         500.16    16.58   2.5198   95.7%
+  19700         475.00     8.77   2.4003   96.0%
+  19800         484.83    10.88   2.4486   95.4%
+  19900         493.39    13.95   2.4889   95.7%
+  20000         492.24    11.03   2.4845   95.5%
+  best          489.63     8.88   2.4790   94.9%
+
+  same checkpoints re-scored at other lambda_D
+  ckpt           l=1.5        l=3        l=5       l=10       l=20
+  0             295.99     225.27     130.96    -104.79    -576.30
+  100           372.37     340.84     298.79     193.66     -16.58
+  200           405.49     370.55     323.97     207.53     -25.36
+  300           426.21     396.02     355.76     255.12      53.82
+  400           429.99     404.25     369.93     284.12     112.52
+  500           434.69     409.40     375.69     291.40     122.82
+  600           414.80     395.99     370.93     308.26     182.92
+  700           445.37     424.25     396.09     325.69     184.89
+  800           426.56     403.86     373.61     297.97     146.68
+  900           429.71     412.85     390.36     334.15     221.72
+  1000          434.71     421.66     404.25     360.73     273.70
+  1100          455.29     441.79     423.79     378.80     288.83
+  1200          462.16     446.50     425.61     373.40     268.97
+  1300          465.04     449.90     429.72     379.26     278.35
+  1400          466.30     450.80     430.14     378.49     275.18
+  1500          449.41     435.69     417.41     371.69     280.25
+  1600          463.80     449.03     429.33     380.08     281.57
+  1700          468.50     455.57     438.32     395.21     308.99
+  1800          474.06     459.92     441.07     393.93     299.67
+  1900          479.38     467.92     452.65     414.46     338.08
+  2000          467.83     457.22     443.08     407.71     336.97
+  2100          479.37     467.49     451.66     412.09     332.94
+  2200          476.48     466.47     453.12     419.75     353.00
+  2300          464.21     455.12     443.00     412.69     352.07
+  2400          466.07     455.98     442.52     408.87     341.57
+  2500          468.32     458.61     445.66     413.29     348.55
+  2600          463.44     452.76     438.51     402.89     331.65
+  2700          486.16     476.99     464.76     434.18     373.03
+  2800          472.77     463.74     451.70     421.60     361.40
+  2900          466.87     459.50     449.66     425.08     375.91
+  3000          474.20     463.98     450.34     416.25     348.07
+  3100          476.87     468.15     456.53     427.47     369.35
+  3200          478.35     470.81     460.76     435.63     385.38
+  3300          481.41     473.90     463.88     438.83     388.74
+  3400          478.49     470.89     460.76     435.43     384.77
+  3500          485.09     477.25     466.79     440.65     388.36
+  3600          469.15     461.03     450.21     423.16     369.05
+  3700          486.76     479.82     470.56     447.43     401.16
+  3800          468.81     462.62     454.37     433.75     392.50
+  3900          469.03     460.50     449.13     420.70     363.83
+  4000          475.78     467.82     457.20     430.65     377.55
+  4100          473.91     465.56     454.43     426.61     370.95
+  4200          474.41     465.67     454.00     424.84     366.52
+  4300          486.20     480.05     471.85     451.35     410.34
+  4400          492.92     485.44     475.47     450.54     400.67
+  4500          485.01     478.08     468.85     445.76     399.58
+  4600          466.97     460.37     451.56     429.54     385.49
+  4700          466.20     457.99     447.04     419.68     364.96
+  4800          490.62     481.79     470.01     440.57     381.69
+  4900          483.68     477.34     468.89     447.77     405.52
+  5000          489.69     482.36     472.60     448.18     399.34
+  5100          483.28     476.90     468.38     447.09     404.50
+  5200          490.83     483.56     473.87     449.63     401.16
+  5300          483.16     476.95     468.66     447.95     406.53
+  5400          487.44     481.12     472.71     451.66     409.57
+  5500          490.35     484.83     477.46     459.05     422.23
+  5600          469.34     461.51     451.08     424.99     372.81
+  5700          485.33     479.36     471.40     451.51     411.72
+  5800          489.94     481.77     470.89     443.68     389.25
+  5900          496.31     489.84     481.21     459.63     416.47
+  6000          472.75     464.69     453.96     427.12     373.45
+  6100          486.23     479.80     471.22     449.76     406.85
+  6200          494.65     489.69     483.07     466.52     433.43
+  6300          493.36     488.04     480.96     463.26     427.84
+  6400          488.63     483.68     477.09     460.60     427.63
+  6500          498.23     494.69     489.95     478.13     454.47
+  6600          481.16     475.54     468.04     449.30     411.83
+  6700          485.71     480.72     474.08     457.46     424.23
+  6800          491.92     486.94     480.28     463.65     430.39
+  6900          488.01     482.00     474.00     453.98     413.94
+  7000          477.13     470.49     461.63     439.50     395.24
+  7100          471.56     462.06     449.39     417.73     354.42
+  7200          480.35     473.00     463.20     438.70     389.70
+  7300          482.60     477.30     470.25     452.61     417.32
+  7400          486.59     481.01     473.57     454.97     417.76
+  7500          494.28     487.54     478.57     456.13     411.26
+  7600          473.74     466.74     457.40     434.05     387.35
+  7700          473.04     466.16     456.99     434.05     388.19
+  7800          476.26     470.45     462.70     443.33     404.58
+  7900          492.95     487.71     480.72     463.25     428.31
+  8000          482.85     475.26     465.13     439.82     389.18
+  8100          496.14     490.64     483.30     464.96     428.29
+  8200          493.49     489.05     483.14     468.36     438.81
+  8300          497.53     492.20     485.08     467.29     431.70
+  8400          487.13     480.71     472.16     450.77     408.00
+  8500          475.78     468.98     459.92     437.26     391.94
+  8600          471.45     463.53     452.98     426.60     373.84
+  8700          483.47     478.21     471.20     453.67     418.62
+  8800          491.94     487.11     480.66     464.55     432.33
+  8900          489.44     483.41     475.36     455.24     415.00
+  9000          484.49     478.67     470.90     451.48     412.64
+  9100          491.22     487.05     481.50     467.61     439.83
+  9200          485.35     479.97     472.79     454.86     419.00
+  9300          482.87     478.20     471.99     456.44     425.36
+  9400          469.10     462.15     452.88     429.71     383.37
+  9500          486.83     480.64     472.40     451.78     410.55
+  9600          490.00     484.39     476.92     458.24     420.88
+  9700          483.36     476.86     468.20     446.54     403.22
+  9800          487.56     481.77     474.06     454.76     416.17
+  9900          501.87     496.35     488.99     470.60     433.81
+  10000         494.17     489.92     484.25     470.08     441.73
+  10100         486.88     482.95     477.71     464.62     438.43
+  10200         491.96     486.53     479.28     461.15     424.89
+  10300         484.78     480.05     473.74     457.99     426.47
+  10400         482.84     477.87     471.25     454.69     421.57
+  10500         497.22     492.45     486.08     470.16     438.32
+  10600         485.15     480.55     474.41     459.05     428.35
+  10700         506.52     502.13     496.27     481.63     452.35
+  10800         495.62     491.65     486.35     473.12     446.66
+  10900         494.49     488.47     480.44     460.37     420.23
+  11000         485.56     479.98     472.54     453.93     416.70
+  11100         478.12     471.91     463.64     442.94     401.54
+  11200         483.03     477.51     470.15     451.75     414.95
+  11300         476.11     472.17     466.92     453.79     427.54
+  11400         477.40     471.99     464.78     446.75     410.68
+  11500         488.92     483.10     475.34     455.94     417.15
+  11600         492.04     486.13     478.25     458.55     419.15
+  11700         490.48     485.41     478.65     461.74     427.93
+  11800         489.04     483.35     475.76     456.80     418.87
+  11900         486.96     481.13     473.37     453.96     415.14
+  12000         475.99     471.03     464.41     447.87     414.78
+  12100         506.91     500.73     492.48     471.86     430.63
+  12200         478.75     472.56     464.31     443.68     402.42
+  12300         476.60     471.07     463.70     445.27     408.41
+  12400         488.25     483.61     477.43     461.97     431.07
+  12500         481.74     477.29     471.35     456.51     426.83
+  12600         481.96     476.40     468.99     450.45     413.39
+  12700         492.53     487.41     480.57     463.49     429.33
+  12800         489.13     483.98     477.12     459.98     425.69
+  12900         498.22     495.02     490.75     480.08     458.74
+  13000         492.15     489.06     484.95     474.68     454.14
+  13100         495.48     490.42     483.66     466.78     433.02
+  13200         484.51     479.17     472.05     454.25     418.65
+  13300         480.75     476.40     470.61     456.13     427.15
+  13400         488.14     483.96     478.39     464.47     436.63
+  13500         480.26     475.78     469.82     454.91     425.09
+  13600         477.97     471.20     462.17     439.60     394.46
+  13700         497.04     492.75     487.02     472.71     444.08
+  13800         478.02     472.83     465.90     448.58     413.94
+  13900         492.06     486.96     480.15     463.14     429.11
+  14000         494.93     488.90     480.86     460.75     420.54
+  14100         498.79     492.90     485.06     465.44     426.20
+  14200         487.59     482.61     475.96     459.34     426.10
+  14300         497.17     491.97     485.03     467.70     433.02
+  14400         479.97     474.80     467.90     450.66     416.16
+  14500         492.79     487.80     481.14     464.48     431.17
+  14600         491.63     487.47     481.92     468.06     440.34
+  14700         488.53     482.93     475.46     456.78     419.42
+  14800         480.11     473.87     465.54     444.71     403.06
+  14900         500.01     494.74     487.71     470.14     435.01
+  15000         492.02     485.43     476.64     454.67     410.73
+  15100         489.80     484.90     478.38     462.06     429.42
+  15200         481.98     475.51     466.88     445.32     402.20
+  15300         473.32     466.81     458.13     436.45     393.07
+  15400         482.00     477.03     470.39     453.80     420.62
+  15500         481.46     475.55     467.67     447.96     408.55
+  15600         487.16     482.26     475.72     459.38     426.69
+  15700         482.62     477.41     470.47     453.11     418.38
+  15800         490.30     486.05     480.38     466.21     437.87
+  15900         490.24     486.13     480.64     466.91     439.47
+  16000         496.48     492.41     486.98     473.42     446.29
+  16100         491.67     487.43     481.77     467.62     439.31
+  16200         486.94     482.27     476.04     460.48     429.35
+  16300         489.50     484.27     477.29     459.85     424.97
+  16400         480.68     475.87     469.45     453.40     421.30
+  16500         486.75     481.21     473.82     455.35     418.42
+  16600         488.67     482.47     474.20     453.53     412.20
+  16700         483.82     477.93     470.07     450.42     411.13
+  16800         492.83     488.35     482.39     467.46     437.62
+  16900         489.00     485.20     480.13     467.45     442.08
+  17000         493.04     487.79     480.80     463.32     428.35
+  17100         498.10     494.06     488.68     475.24     448.34
+  17200         483.06     478.64     472.76     458.04     428.61
+  17300         492.22     487.48     481.16     465.37     433.78
+  17400         485.92     480.70     473.74     456.33     421.52
+  17500         482.79     479.10     474.18     461.88     437.27
+  17600         493.42     489.49     484.25     471.14     444.91
+  17700         490.00     487.15     483.35     473.86     454.87
+  17800         469.05     463.11     455.19     435.38     395.78
+  17900         491.31     486.57     480.26     464.46     432.88
+  18000         486.56     481.67     475.14     458.84     426.24
+  18100         476.85     471.78     465.02     448.12     414.32
+  18200         480.22     476.21     470.86     457.49     430.74
+  18300         491.11     485.49     478.00     459.28     421.82
+  18400         475.78     471.23     465.16     449.98     419.62
+  18500         495.62     490.05     482.63     464.08     426.98
+  18600         491.15     487.38     482.36     469.82     444.73
+  18700         490.13     485.74     479.89     465.26     436.00
+  18800         484.73     480.44     474.71     460.41     431.80
+  18900         499.72     495.91     490.83     478.12     452.71
+  19000         485.46     480.04     472.82     454.75     418.61
+  19100         498.39     494.50     489.31     476.35     450.42
+  19200         488.71     484.89     479.79     467.06     441.59
+  19300         490.28     485.94     480.16     465.69     436.77
+  19400         499.08     495.35     490.39     477.98     453.16
+  19500         483.81     478.27     470.88     452.42     415.48
+  19600         500.16     496.38     491.33     478.70     453.46
+  19700         475.00     469.94     463.19     446.32     412.57
+  19800         484.83     479.93     473.41     457.09     424.46
+  19900         493.39     488.99     483.12     468.45     439.12
+  20000         492.24     487.57     481.34     465.79     434.67
+  best          489.63     483.46     475.23     454.66     413.51
+====================================================================================
+  A checkpoint that wins at 1.5 but loses at 3+ bought its reward by
+  shaving QoS margin the weak penalty barely prices.

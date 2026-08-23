@@ -12,6 +12,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from params import make_config
 from CSI.env import ISTNEnv
+from analysis.phase_oracle import irs_optimal_gain_mag
 
 CASES = [
     # [07-11 refresh] paper-anchor regimes (probe logs vstar_c1_ramp03 / vstar_c2_ramp05).
@@ -44,8 +45,7 @@ for name, ckpt, probe_l0, probe_serveall, cliff_bracket in CASES:
             if st % 20 == 0:
                 ch = env.channels
                 g_dir = np.abs(ch['g_SU_hat']) ** 2                       # (K,)
-                irs_co = ch['beta'] * np.conj(ch['g_SR_hat']) * N          # (M,) aligned
-                g_irs = (np.abs(irs_co[:, None]) ** 2) * np.abs(ch['g_RU_hat']) ** 2
+                g_irs = irs_optimal_gain_mag(ch) ** 2                      # (M,K) aligned
                 g_best = np.maximum(g_dir, g_irs.max(axis=0))              # (K,)
                 g_max = float(g_best.max())
                 l0_nom.append(np.log2(1 + g_max * cfg.P_S / cfg.sigma2))

@@ -1,0 +1,5 @@
+=== armed 2026-08-13 18:17:02 — waiting on pids 5953 (r364) and 5967 (r365) ===
+both finished, proceeding 2026-08-14 03:24:00
+  FIRED DNN C1 P_S=40  pid=7172  2026-08-14 03:24:00
+  FIRED DNN C1 P_S=70  pid=7178  2026-08-14 03:24:43
+params.py restored 2026-08-14 03:26:56   live: 8

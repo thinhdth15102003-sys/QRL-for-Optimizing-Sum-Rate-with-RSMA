@@ -70,6 +70,7 @@ from params import make_config
 from CSI.env import ISTNEnv
 from probe_critic_ceiling import make_checkpoint_policy
 from probe_assignment_oracle import _load_nets, _downstream, _eval, _coord_ascent
+from analysis.phase_oracle import oracle_phase_search, est_channels
 
 
 def _eval_consistent_phase(env, nets, phi, cfg, z_t, sigmas, D_k, lamD, phase_idx):
@@ -123,26 +124,32 @@ def _eval_consistent_phase(env, nets, phi, cfg, z_t, sigmas, D_k, lamD, phase_id
                 phase_idx=phase_idx.copy(), w_p=w_p.copy(), w_c_vec=w_c_vec.copy())
 
 
-def _eval_with_oracle_phase(env, nets, phi, cfg, z_t, sigmas, D_k, lamD):
+def _eval_with_oracle_phase(env, nets, phi, cfg, z_t, sigmas, D_k, lamD,
+                            n_sweeps=1):
     """
-    For assignment `phi`, brute-search L^M uniform-per-IRS phase patterns and
-    pick the one maximizing REWARD (= R_tot − λ_D · qp), with power+Ck re-run
-    CONSISTENTLY for each phase candidate (no power-phase mismatch).
+    For assignment `phi`, search the phase that maximises REWARD
+    (= R_tot − λ_D · qp), with power+Ck re-run CONSISTENTLY for each phase
+    candidate (no power-phase mismatch).
+
+    Seeded from the PER-ELEMENT closed-form oracle, plus the uniform-row
+    restarts this used to enumerate alone, plus per-element coordinate ascent
+    (`n_sweeps`, 0 to disable). Under per-element g_RU a uniform row does not
+    co-phase the elements, so uniform-only was a strict under-estimate.
 
     Returns best metric dict over all phase candidates.
     """
-    L = env.n_phase_levels
-    M, N = cfg.M, cfg.N
+    cache = {}
 
-    best = None
-    for combo in itertools.product(range(L), repeat=M):
-        ph = np.zeros((M, N), dtype=int)
-        for mm, lev in enumerate(combo):
-            ph[mm, :] = lev
+    def _score(ph):
         m = _eval_consistent_phase(env, nets, phi, cfg, z_t, sigmas, D_k, lamD, ph)
-        if m is not None and (best is None or m['reward'] > best['reward']):
-            best = m
-    return best
+        if m is None:
+            return None
+        cache[ph.tobytes()] = m
+        return m['reward']
+
+    best_p, _, _ = oracle_phase_search(est_channels(env.channels), phi, cfg,
+                                       _score, n_sweeps=n_sweeps)
+    return cache.get(best_p.tobytes())
 
 
 def run_ckpt(ckpt, cfg, args, lamD, D_k):
@@ -169,15 +176,16 @@ def run_ckpt(ckpt, cfg, args, lamD, D_k):
 
             # 1. live q + policy downstream
             m_live_pol = _eval(env, nets, phi_pol, cfg, z_t, sigmas, D_k, lamD)
-            # 2. live q + ORACLE downstream (brute phase, keep policy power/Ck)
-            m_live_opt = _eval_with_oracle_phase(env, nets, phi_pol, cfg, z_t, sigmas, D_k, lamD)
+            # 2. live q + ORACLE downstream (per-element phase search, keep policy power/Ck)
+            m_live_opt = _eval_with_oracle_phase(env, nets, phi_pol, cfg, z_t, sigmas,
+                                                 D_k, lamD, args.phase_sweeps)
             # 3. oracle q (coord-ascent on reward) + policy downstream
             m_orw_pol = _coord_ascent(env, nets, phi_pol, cfg, z_t, sigmas, D_k, lamD, M,
                                       'reward', args.passes)
             # 4. oracle q + ORACLE downstream
             if m_orw_pol is not None:
                 m_orw_opt = _eval_with_oracle_phase(env, nets, m_orw_pol['phi'], cfg, z_t,
-                                                    sigmas, D_k, lamD)
+                                                    sigmas, D_k, lamD, args.phase_sweeps)
             else:
                 m_orw_opt = None
 
@@ -210,6 +218,10 @@ def main():
     ap.add_argument('--warmup', type=int, default=5)
     ap.add_argument('--noise_avg', type=int, default=5)
     ap.add_argument('--passes', type=int, default=2)
+    ap.add_argument('--phase-sweeps', dest='phase_sweeps', type=int, default=1,
+                    help='per-element phase coordinate-ascent sweeps (0 = seed + '
+                         'uniform restarts only; each sweep costs |active|·N·(L-1) '
+                         'downstream re-runs)')
     ap.add_argument('--seed', type=int, default=20260603)
     ap.add_argument('--out', default='results/result_15/assignment_decomp.txt')
     args = ap.parse_args()

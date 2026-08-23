@@ -1,0 +1,24 @@
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    100      reward   453.81  R_tot 2.3215  QoS  88.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    200      reward   467.83  R_tot 2.3987  QoS  86.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    300      reward   466.75  R_tot 2.3754  QoS  87.6%
+
+====================================================================================
+  PICK CHECKPOINT · results/result_331 · env reward, greedy, policy's OWN C_k
+  2 episodes x 3 env seeds x 200 steps
+====================================================================================
+  ckpt          reward       sd    R_tot     QoS
+  100           453.81     4.11   2.3215   88.0%
+  200           467.83    11.81   2.3987   86.8%  <- best
+  300           466.75    10.56   2.3754   87.6%
+
+  same checkpoints re-scored at other lambda_D
+  ckpt           l=1.5        l=3        l=5       l=10       l=20
+  100           453.81     443.31     429.31     394.32     324.34
+  200           467.83     455.92     440.04     400.32     320.90
+  300           466.75     458.41     447.30     419.52     363.94
+====================================================================================
+  A checkpoint that wins at 1.5 but loses at 3+ bought its reward by
+  shaving QoS margin the weak penalty barely prices.

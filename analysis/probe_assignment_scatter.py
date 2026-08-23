@@ -14,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from infer import (load_agents, load_training_cfg, _compute_blocked,
+from infer import (load_agents, load_training_cfg, _compute_irs_favored,
                    _build_phase_state, _build_ck_state,
                    _get_active_irs, _get_active_irs_ids)
 from CSI.env import ISTNEnv
@@ -38,7 +38,7 @@ def eval_counts(run_dir, n_eps, n_steps=200, seed=42):
     for _ in range(n_eps):
         obs = env.reset()
         for _ in range(n_steps):
-            blocked = _compute_blocked(env)
+            blocked = _compute_irs_favored(env)
             s_t = actor.extract_state(obs, demand, blocked)
             phi, _, ainfo = actor.forward(s_t, greedy=True)
             z_t = ainfo['z_t']

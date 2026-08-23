@@ -1,0 +1,11 @@
+ARMED at 2026-08-07 17:59:17 KST; will fire at 2026-08-08 11:59:17
+FIRED at 2026-08-08 11:45:19 KST
+trainings alive at fire time: 7
+r322 last ep: 
+K        = 5      # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 3
+n_qubits = 8                                       # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+n_hidden_ae   = [16]  # PINNED for this VQC C1 chain        # ⭐ G4 UNIFIED: auto by K-tier
+train pid 4102
+params.py restored at 2026-08-08 11:46:38
+TRAIN EXITED at 2026-08-09 19:53:28

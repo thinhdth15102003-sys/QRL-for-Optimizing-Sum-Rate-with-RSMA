@@ -1,0 +1,4 @@
+START 2026-08-12 14:19:35
+  A dnn-c1-seed4 (pol-hidden 40)  pid=17983
+  B ppo-flat-c1-seed3  pid=18000
+DONE, params restored 2026-08-12 14:22:19

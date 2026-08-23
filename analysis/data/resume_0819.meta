@@ -1,0 +1,19 @@
+=== resume 2026-08-19 10:56:15 ===
+  FIRED C2 P_S=40  pid=569  eps=1800  <- results/result_404/checkpoints/ep_02900/agents
+  FIRED C2 P_S=60  pid=577  eps=1900  <- results/result_405/checkpoints/ep_02900/agents
+  FIRED C2 P_S=70  pid=582  eps=2000  <- results/result_406/checkpoints/ep_02900/agents
+  FIRED C2 single-z  pid=587  eps=600  <- results/result_407/checkpoints/ep_03100/agents
+  FIRED C2 nq=10  pid=592  eps=18700  <- results/result_408/checkpoints/ep_00400/agents
+  FIRED C2 nn-zz  pid=597  eps=15900  <- results/result_409/checkpoints/ep_03100/agents
+  FIRED C1 single-z  pid=611  eps=15500  <- results/result_410/checkpoints/ep_04500/agents
+  FIRED C2 full-zz  pid=616  eps=17100  <- results/result_411/checkpoints/ep_02900/agents
+--- after launch ---
+  pid 569 sid=569 dir=results/result_412
+  pid 577 sid=577 dir=results/result_413
+  pid 582 sid=582 dir=results/result_414
+  pid 587 sid=587 dir=results/result_415
+  pid 592 sid=592 dir=results/result_416
+  pid 597 sid=597 dir=results/result_417
+  pid 611 sid=611 dir=results/result_418
+  pid 616 sid=616 dir=results/result_419
+live: 8

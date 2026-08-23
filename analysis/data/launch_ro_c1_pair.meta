@@ -1,0 +1,19 @@
+=== launch ro_c1 pair 2026-08-20 11:10:58 ===
+  lock acquired 2026-08-20 11:10:58
+  K        = 5      # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  n_qubits = 8                                       # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+  n_hidden_ae   = [16]        # ⭐ G4 UNIFIED: auto by K-tier
+  FIRED C1 nn-zz  pid=3485  log=analysis/data/ro_c1_nnzz.log
+  FIRED C1 full-zz  pid=3494  log=analysis/data/ro_c1_fullzz.log
+  params.py restored 2026-08-20 11:13:53
+  K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  n_qubits = 12                                      # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+  n_hidden_ae   = _hyp['n_hidden_ae']        # ⭐ G4 UNIFIED: auto by K-tier
+--- after launch ---
+  results/result_420    8 qubits  
+  results/result_421    8 qubits  
+  results/result_414    8 qubits  
+  results/result_413    8 qubits  
+  live: 6

@@ -1,0 +1,18 @@
+=== waiter ro_c1_singlez2 armed 2026-08-18 13:56:59 ===
+  pid=913 sid=913
+  target K=5 M=1 n_qubits=8 n_hidden_ae=[16] readout=single-z
+  trigger [dir] results/result_396
+trigger fired 2026-08-18 13:56:59, queueing for params.py lock
+  lock acquired 2026-08-18 13:56:59
+  K        = 5     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  n_qubits = 8                                      # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+  n_hidden_ae   = [16]  # PINNED ro_c1_singlez2
+  FIRED ro_c1_singlez2  pid=934  2026-08-18 13:57:00
+  result dir = results/result_410
+  params.py restored 2026-08-18 13:59:23
+  K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  n_qubits = 12                                      # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+  n_hidden_ae   = _hyp['n_hidden_ae']        # ⭐ G4 UNIFIED: auto by K-tier
+  VERIFY results/result_410  nq=8 nlat=16 L=2 ae=[16] readout=single_z K=5 M=1

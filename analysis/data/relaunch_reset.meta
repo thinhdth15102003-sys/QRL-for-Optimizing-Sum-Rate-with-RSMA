@@ -1,0 +1,19 @@
+=== relaunch after reset 2026-08-15 15:48:35 ===
+  FIRED C2 P_S=40  pid=352  eps=14100  log=rr_c2_ps40.log  2026-08-15 15:48:35
+  FIRED C2 P_S=60  pid=374  eps=14200  log=rr_c2_ps60.log  2026-08-15 15:49:14
+  FIRED C2 P_S=70  pid=380  eps=14200  log=rr_c2_ps70.log  2026-08-15 15:49:52
+  FIRED C2 single-z  pid=386  eps=13800  log=rr_c2_singlez.log  2026-08-15 15:50:30
+  FIRED C1 P_S=60  pid=406  eps=1900  log=rr_c1_ps60.log  2026-08-15 15:51:08
+  FIRED C1 P_S=70  pid=412  eps=1700  log=rr_c1_ps70.log  2026-08-15 15:51:44
+  FIRED DNN C2 P_S=40  pid=445  eps=6100  log=rr_dnn_c2_ps40.log  2026-08-15 15:52:21
+  FIRED DNN C2 P_S=60  pid=462  eps=6100  log=rr_dnn_c2_ps60.log  2026-08-15 15:52:59
+--- after launch ---
+  pid 352  sid=352  dir=results/result_380  --actor-mode quantum --P-S 40 
+  pid 374  sid=374  dir=results/result_381  --actor-mode quantum --P-S 60 
+  pid 380  sid=380  dir=results/result_382  --actor-mode quantum --P-S 70 
+  pid 386  sid=386  dir=results/result_383  --actor-mode quantum 
+  pid 406  sid=406  dir=results/result_384  --actor-mode quantum --P-S 60 
+  pid 412  sid=412  dir=results/result_385  --actor-mode quantum --P-S 70 
+  pid 445  sid=445  dir=results/result_386  --actor-mode classical --P-S 40 
+  pid 462  sid=462  dir=results/result_387  --actor-mode classical --P-S 60 
+live: 8

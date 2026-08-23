@@ -1,0 +1,6 @@
+=== waiter ro_c2_fullzz2 armed 2026-08-18 13:56:49 ===
+  pid=895 sid=895
+  target K=10 M=2 n_qubits=8 n_hidden_ae=[32,16] readout=full-zz
+  trigger [log] analysis/data/flat_flat_c2_ps70b.log
+trigger fired 2026-08-18 13:56:49, queueing for params.py lock
+  lock acquired 2026-08-18 13:56:49

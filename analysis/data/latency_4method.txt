@@ -1,0 +1,35 @@
+====================================================================================
+  DECISION LATENCY — full four-head action · warm=30 timed=300 · seed 0
+  AO at its J-plateau setting: rounds=1 phase_sweeps=1 n_split=11
+  threads: OPENBLAS=1 OMP=1 CUDA=''
+====================================================================================
+  case  method  K,M       median ms      IQR  kernel evals  dec/core-s
+  ------------------------------------------------------------------------------
+  C1    AO      5,1          24.593    0.730           482        40.7
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C1    DNN     5,1           0.625    0.038           3.0      1600.4
+  C1    VQC     5,1                    -- no checkpoint --
+  C1    flat    5,1           0.438    0.045           3.0      2285.3
+  C2    AO      10,2         53.480    1.225           896        18.7
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C2    DNN     10,2          0.783    0.052           3.0      1277.3
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C2    VQC     10,2          2.513    0.098           3.0       398.0
+  C2    flat    10,2          0.582    0.100           3.0      1717.7
+  C3    AO      15,3        100.549    1.799          1496         9.9
+  C3    DNN     15,3                   -- no checkpoint --
+  C3    VQC     15,3                   -- no checkpoint --
+  C3    flat    15,3                   -- no checkpoint --
+====================================================================================
+  Ratio vs AO (median):
+    C1:  AO/DNN =   39.4x
+    C2:  AO/DNN =   68.3x   AO/VQC =   21.3x
+====================================================================================
+  CAVEATS to carry into the paper:
+   * VQC timing is a CLASSICAL STATEVECTOR SIMULATION. Real quantum
+     hardware at n_shots_eval would be far slower; this is not a
+     hardware-latency claim.
+   * Both pipelines are NumPy and dispatch-bound at these sizes, so
+     the ratio is not an artefact of one side being compiled.
+   * Kernel-eval counts are language-free; the milliseconds are not.
+====================================================================================

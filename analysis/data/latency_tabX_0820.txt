@@ -1,0 +1,32 @@
+====================================================================================
+  DECISION LATENCY — full four-head action · warm=30 timed=300 · seed 0
+  AO at its J-plateau setting: rounds=1 phase_sweeps=1 n_split=11
+  threads: OPENBLAS=1 OMP=1 CUDA=''
+====================================================================================
+  case  method  K,M       median ms      IQR  kernel evals  dec/core-s
+  ------------------------------------------------------------------------------
+  C1    AO      5,1          23.929    0.972           482        41.8
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C1    DNN     5,1           0.601    0.029           3.0      1663.0
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C1    VQC     5,1           1.942    0.146           3.0       514.8
+  C1    flat    5,1           0.419    0.053           3.0      2386.9
+  C2    AO      10,2         53.740    3.535           896        18.6
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C2    DNN     10,2          0.851    0.066           3.0      1175.8
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C2    VQC     10,2          2.778    0.200           3.0       360.0
+  C2    flat    10,2          0.658    0.116           3.0      1519.2
+====================================================================================
+  Ratio vs AO (median):
+    C1:  AO/DNN =   39.8x   AO/VQC =   12.3x
+    C2:  AO/DNN =   63.2x   AO/VQC =   19.3x
+====================================================================================
+  CAVEATS to carry into the paper:
+   * VQC timing is a CLASSICAL STATEVECTOR SIMULATION. Real quantum
+     hardware at n_shots_eval would be far slower; this is not a
+     hardware-latency claim.
+   * Both pipelines are NumPy and dispatch-bound at these sizes, so
+     the ratio is not an artefact of one side being compiled.
+   * Kernel-eval counts are language-free; the milliseconds are not.
+====================================================================================

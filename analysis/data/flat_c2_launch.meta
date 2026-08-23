@@ -1,0 +1,8 @@
+=== flat C2 launch 2026-08-14 13:49:29 ===
+K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  FIRED flat C2 seed 0  pid=9929  log=flat_c2_s0.log  2026-08-14 13:49:29
+  FIRED flat C2 seed 1  pid=9944  log=flat_c2_s1.log  2026-08-14 13:50:16
+  pid 9929  sid=9929  dir=
+  pid 9944  sid=9944  dir=
+flat live: 2   total: 8

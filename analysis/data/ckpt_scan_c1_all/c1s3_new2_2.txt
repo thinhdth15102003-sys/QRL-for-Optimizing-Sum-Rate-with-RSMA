@@ -1,0 +1,40 @@
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3800     reward   473.95  R_tot 2.4150  QoS  88.0%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3900     reward   475.60  R_tot 2.4323  QoS  86.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4000     reward   453.16  R_tot 2.3178  QoS  88.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4100     reward   467.05  R_tot 2.3806  QoS  87.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4200     reward   477.09  R_tot 2.4447  QoS  86.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4300     reward   481.42  R_tot 2.4498  QoS  87.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4400     reward   475.03  R_tot 2.4212  QoS  87.0%
+
+====================================================================================
+  PICK CHECKPOINT · results/result_334 · env reward, greedy, policy's OWN C_k
+  2 episodes x 3 env seeds x 200 steps
+====================================================================================
+  ckpt          reward       sd    R_tot     QoS
+  3800          473.95    11.18   2.4150   88.0%
+  3900          475.60     4.84   2.4323   86.6%
+  4000          453.16     6.29   2.3178   88.5%
+  4100          467.05     7.43   2.3806   87.1%
+  4200          477.09    10.79   2.4447   86.2%
+  4300          481.42    11.12   2.4498   87.9%  <- best
+  4400          475.03     5.02   2.4212   87.0%
+
+  same checkpoints re-scored at other lambda_D
+  ckpt           l=1.5        l=3        l=5       l=10       l=20
+  3800          473.95     464.89     452.81     422.62     362.24
+  3900          475.60     464.75     450.28     414.10     341.75
+  4000          453.16     442.76     428.89     394.23     324.90
+  4100          467.05     457.98     445.88     415.62     355.12
+  4200          477.09     465.25     449.46     409.98     331.03
+  4300          481.42     472.87     461.47     432.97     375.98
+  4400          475.03     465.81     453.52     422.79     361.33
+====================================================================================
+  A checkpoint that wins at 1.5 but loses at 3+ bought its reward by
+  shaving QoS margin the weak penalty barely prices.

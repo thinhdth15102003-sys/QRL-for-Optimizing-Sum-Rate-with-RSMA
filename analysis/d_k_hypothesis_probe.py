@@ -34,7 +34,7 @@ from train import (
     _build_ck_state,
     _get_active_irs,
     _get_active_irs_ids,
-    _compute_blocked,
+    _compute_irs_favored,
 )
 
 
@@ -53,7 +53,7 @@ def _rl_forward(env, actor, phase_net, power_net, ck_net, D_k):
     cfg = env.cfg
     K = cfg.K
     obs = env._get_obs()
-    blocked = _compute_blocked(env)
+    blocked = _compute_irs_favored(env)
     demand = np.full(K, D_k)
     s_t = actor.extract_state(obs, demand, blocked)
 

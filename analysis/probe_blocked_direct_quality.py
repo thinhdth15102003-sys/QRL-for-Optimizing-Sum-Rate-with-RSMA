@@ -123,13 +123,13 @@ def main():
                 best_irs_sq = 0.0
                 for m in active_irs:
                     angles = env.phase_model.index_to_phase(phase_idx[m])  # (N,)
-                    eff_phi = np.exp(1j * angles).sum()  # complex Σ exp
-                    # |h_irs| = |β·g_SR·eff_phi·g_RU[k]| — magnitudes
-                    h_irs_mag = (ch['beta'][m] *
-                                 np.abs(ch['g_SR_hat'][m]) *
-                                 np.abs(eff_phi) *
-                                 np.abs(ch['g_RU_hat'][m, k]))
-                    h_irs_sq = float(h_irs_mag ** 2)
+                    # PER-ELEMENT: h_irs = β·conj(g_SR)·Σ_n e^{jθ_n}·g_RU[m,n,k].
+                    # The phases now sit INSIDE the sum (each element has its own
+                    # channel), so this is exact — no |Σ e^{jθ}| magnitude proxy.
+                    h_irs = (ch['beta'][m] * np.conj(ch['g_SR_hat'][m])
+                             * np.sum(np.exp(1j * angles)
+                                      * ch['g_RU_hat'][m, :, k]))
+                    h_irs_sq = float(np.abs(h_irs) ** 2)
                     if h_irs_sq > best_irs_sq:
                         best_irs_sq = h_irs_sq
 

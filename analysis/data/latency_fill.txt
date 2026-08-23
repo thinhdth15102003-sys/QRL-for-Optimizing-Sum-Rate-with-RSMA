@@ -1,0 +1,30 @@
+====================================================================================
+  DECISION LATENCY — full four-head action · warm=30 timed=300 · seed 0
+  AO at its J-plateau setting: rounds=1 phase_sweeps=1 n_split=11
+  threads: OPENBLAS=1 OMP=1 CUDA=''
+====================================================================================
+  case  method  K,M       median ms      IQR  kernel evals  dec/core-s
+  ------------------------------------------------------------------------------
+  C1    AO      5,1          24.966    2.193           482        40.1
+  C1    DNN     5,1                    -- no checkpoint --
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C1    VQC     5,1           2.000    0.120           3.0       500.1
+  C1    flat    5,1                    -- no checkpoint --
+  C3    AO      15,3         98.457    4.094          1496        10.2
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  C3    DNN     15,3          1.076    0.177           3.0       929.1
+  C3    VQC     15,3                   -- no checkpoint --
+  C3    flat    15,3                   -- no checkpoint --
+====================================================================================
+  Ratio vs AO (median):
+    C1:  AO/VQC =   12.5x
+    C3:  AO/DNN =   91.5x
+====================================================================================
+  CAVEATS to carry into the paper:
+   * VQC timing is a CLASSICAL STATEVECTOR SIMULATION. Real quantum
+     hardware at n_shots_eval would be far slower; this is not a
+     hardware-latency claim.
+   * Both pipelines are NumPy and dispatch-bound at these sizes, so
+     the ratio is not an artefact of one side being compiled.
+   * Kernel-eval counts are language-free; the milliseconds are not.
+====================================================================================

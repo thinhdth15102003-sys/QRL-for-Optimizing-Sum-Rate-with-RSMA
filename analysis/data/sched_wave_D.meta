@@ -1,0 +1,11 @@
+=== wave D armed 2026-08-15 15:55:02 ===
+  pid=614 sid=614
+  waits for flat_c2_s3 and flat_c2_s4 to print 'done in'
+wave B runs finished, proceeding 2026-08-16 10:22:45
+n_qubits = 10                                       # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+n_hidden_ae   = [32, 16]  # PINNED C2        # ⭐ G4 UNIFIED: auto by K-tier
+  FIRED VQC C2 readout nn-zz  pid=5243  2026-08-16 10:22:45
+n_qubits = 10                                       # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+n_hidden_ae   = [32, 16]  # PINNED C2        # ⭐ G4 UNIFIED: auto by K-tier
+  FIRED VQC C2 readout full-zz  pid=5261  2026-08-16 10:24:15
+params.py restored 2026-08-16 10:25:44

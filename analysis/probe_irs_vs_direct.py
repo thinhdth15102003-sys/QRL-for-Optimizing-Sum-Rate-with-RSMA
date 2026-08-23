@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from params import make_config
 from CSI.env import ISTNEnv
+from analysis.phase_oracle import irs_optimal_gain_mag
 
 N_SAMPLES = 300          # number of fresh spawns (resets) to average over
 SEED      = 20260530
@@ -52,9 +53,8 @@ def main():
         env.reset()
         ch = env.channels
         gd  = np.abs(ch['g_SU_hat']) ** 2                       # (K,) direct gain
-        # IRS-optimal gain per (m,k): (beta·|g_SR|·N·|g_RU|)^2
-        coeff = ch['beta'][:, None] * np.abs(ch['g_SR_hat'])[:, None] * N  # (M,1)
-        gi_mk = (coeff * np.abs(ch['g_RU_hat'])) ** 2           # (M,K)
+        # IRS-optimal gain per (m,k): (beta·|g_SR|·Σ_n|g_RU[m,n,k]|)^2
+        gi_mk = irs_optimal_gain_mag(ch) ** 2                   # (M,K)
         gi    = gi_mk.max(axis=0)                                # (K,) best IRS per user
         gain_dir_all.append(gd)
         gain_irs_all.append(gi)

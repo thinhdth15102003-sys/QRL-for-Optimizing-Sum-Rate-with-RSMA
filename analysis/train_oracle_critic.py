@@ -79,7 +79,12 @@ def _state_vec(env, cfg):
     g_sr = obs['g_SR']; g_ru = obs['g_RU']; g_su = obs['g_SU']
     M, K = cfg.M, cfg.K
     g_sr_mag = np.abs(g_sr)
-    g_ru_mag = np.abs(g_ru)
+    g_ru_mag = np.abs(g_ru)                       # (M,N,K) per-element
+    if g_ru_mag.ndim == 3:
+        # mirror RL/quantum_actor.extract_state: the coherent sum over the N
+        # elements is the best achievable IRS-path amplitude, so it is the
+        # routing feature. Keep these two in sync — this is a hand copy.
+        g_ru_mag = g_ru_mag.sum(axis=1)           # (M,K)
     a_mat    = (g_sr_mag[:, None] * g_ru_mag).T   # (K, M)
     g_su_mag = np.abs(g_su)
     demand   = np.full(K, cfg.D_k_bps_hz)

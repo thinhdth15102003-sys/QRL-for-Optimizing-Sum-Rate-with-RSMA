@@ -1,0 +1,10 @@
+RELAUNCH-8 START 2026-08-13 11:18:22
+  A1 C2 P_S=40   from r340/ep_01200  pid=467
+  A2 C2 P_S=60   from r344/ep_01200  pid=485
+  A3 C2 P_S=70   from r341/ep_01200  pid=558
+  A4 C2 single-z from r345/ep_01300  pid=567
+  B1 C1 P_S=60   from r343/ep_01900  pid=594
+  B2 C1 P_S=70   from r342/ep_01700  pid=603
+  C1 DNN C1 s4   from r346/ep_12300  pid=629
+  C2 PPO-flat C1 s4  FRESH (no resume support)  pid=638
+RELAUNCH-8 DONE, params restored 2026-08-13 11:27:23

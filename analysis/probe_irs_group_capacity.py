@@ -6,8 +6,11 @@ at about how many does the whole group's QoS/per-user-rate start to degrade?"
 
 This isolates the STRUCTURAL multi-user-IRS-sharing limit from the agent's
 learning quality by using ORACLE sub-actors:
-  • phase  : closed-form oracle (analysis/phase_oracle.oracle_phase_idx) — all N
-             elements aligned, |Σφ| = N (best achievable IRS gain for the group).
+  • phase  : per-element oracle (analysis/phase_oracle.oracle_phase_idx) — each
+             element co-phased individually. ⚠ post per-element refactor this can
+             only fully align ONE user; with n>1 sharing the IRS the oracle trades
+             users off, so part of the degradation below is now PHASE CONFLICT
+             (impossible under the old scalar-g_RU model, where |Σφ|=N for all).
   • routing: oracle "best-n" — the n users with the highest IRS-over-direct gain
              margin are the ones placed on the IRS (what a perfect Q-head would do).
   • power  : reference equal split (AllIRSPolicy convention) — 80% private / K,
@@ -39,7 +42,7 @@ import numpy as np
 from params import make_config
 from CSI.env import ISTNEnv
 from CSI.rate import RateComputer
-from analysis.phase_oracle import oracle_phase_idx
+from analysis.phase_oracle import oracle_phase_idx, irs_optimal_gain_mag
 
 
 def _irs_margin(ch, cfg):
@@ -47,8 +50,7 @@ def _irs_margin(ch, cfg):
     (what an oracle Q-head would route on). Returns (K,) ratio (linear)."""
     N = cfg.N
     g_dir = np.abs(ch['g_SU_hat']) ** 2                              # (K,)
-    coeff = ch['beta'][0] * np.abs(ch['g_SR_hat'][0]) * N            # scalar
-    g_irs = (coeff * np.abs(ch['g_RU_hat'][0])) ** 2                 # (K,) best IRS_1
+    g_irs = irs_optimal_gain_mag(ch)[0] ** 2                         # (K,) best IRS_1
     return g_irs / (g_dir + 1e-30)
 
 

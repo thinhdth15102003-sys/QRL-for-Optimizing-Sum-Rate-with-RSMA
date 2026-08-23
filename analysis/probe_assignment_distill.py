@@ -130,9 +130,13 @@ def main():
     ap.add_argument('--val_frac', type=float, default=0.25)
     ap.add_argument('--seed', type=int, default=20260603)
     ap.add_argument('--out', default='results/result_11/assignment_distill.txt')
+    ap.add_argument('--R-LoS', dest='r_los', type=float, default=None,
+                    help='Override probe-env R_LoS (km); default = params.py. Set to the '
+                         'ckpt native stage (e.g. 0.5) so the oracle-policy gap is meaningful.')
     args = ap.parse_args()
 
-    cfg = make_config(); K, M = cfg.K, cfg.M; D_k = cfg.D_k_bps_hz
+    cfg = make_config(**({'R_LoS_km': args.r_los} if args.r_los is not None else {}))
+    K, M = cfg.K, cfg.M; D_k = cfg.D_k_bps_hz
     lamD = float(getattr(P, 'lambda_D', 1.5)); n_cls = M + 1
     print("=" * 78)
     print(f"  ASSIGNMENT DISTILLATION  ·  ckpt={args.ckpt}")

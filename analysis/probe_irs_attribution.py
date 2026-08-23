@@ -50,6 +50,8 @@ import params as P
 from params import make_config
 from CSI.env import ISTNEnv
 from probe_critic_ceiling import make_checkpoint_policy
+from analysis.phase_oracle import (oracle_phase_search, est_channels,
+                                   coherent_gain_quality)
 
 
 def _eval_action(env, assignment, phase_idx, w_p, w_c_vec, C_k,
@@ -110,6 +112,9 @@ def main():
     ap.add_argument('--steps', type=int, default=30)
     ap.add_argument('--warmup', type=int, default=5)
     ap.add_argument('--noise_avg', type=int, default=8)
+    ap.add_argument('--phase-sweeps', dest='phase_sweeps', type=int, default=1,
+                    help='per-element phase coordinate-ascent sweeps for Test C '
+                         '(0 = seed + uniform restarts only)')
     ap.add_argument('--seed', type=int, default=20260603)
     ap.add_argument('--out', default='results/result_11/irs_attribution_ep600.txt')
     args = ap.parse_args()
@@ -205,33 +210,41 @@ def main():
                 R_i, Q_i = R0, Q0
             Rirs.append(R_i); Qirs.append(Q_i)
 
-            # ── Test C: ORACLE PHASE (uniform-level per IRS, brute-force 4^M) ──
-            # Search over (level_0, ..., level_{M-1}) ∈ {0,1,2,3}^M, pick max R_tot
-            # with policy's assignment/power/Ck. Σ_n φ_n is maximised at N for any uniform
-            # level (just different rotation); the rotation choice matters per-user.
-            n_lev = env.n_phase_levels
-            best_R = -np.inf; best_phase = phase_pol; best_align = 0.0
-            for combo in itertools.product(range(n_lev), repeat=M):
-                ph_oracle = np.zeros((M, N), dtype=int)
-                for m, lev in enumerate(combo):
-                    ph_oracle[m, :] = lev
-                R_c, _, Q_c, _ = _eval_action(env, phi_pol, ph_oracle, w_p_pol, w_c_pol,
+            # ── Test C: ORACLE PHASE (per-element search, max R_tot) ──
+            # Seeded from the per-element closed form, plus the uniform-row
+            # restarts this used to enumerate alone, plus per-element coordinate
+            # ascent. Under per-element g_RU a uniform row does NOT co-phase the
+            # elements, so uniform-only was a strict UNDER-estimate of the ceiling.
+            _cache = {}
+
+            def _score_R(ph):
+                R_c, _, Q_c, _ = _eval_action(env, phi_pol, ph, w_p_pol, w_c_pol,
                                               C_k_pol, active_pol_ids, sigmas, D_k)
-                if R_c > best_R:
-                    best_R, best_Q, best_phase = R_c, Q_c, ph_oracle
+                _cache[ph.tobytes()] = (R_c, Q_c)
+                return R_c
+
+            best_phase, best_R, _ = oracle_phase_search(
+                est_channels(env.channels), phi_pol, cfg, _score_R,
+                n_sweeps=args.phase_sweeps)
+            best_R, best_Q = _cache[best_phase.tobytes()]
             Rorc.append(best_R); Qorc.append(best_Q)
 
             # alignment of policy vs oracle (sanity)
             if len(active_pol_ids) > 0:
                 def _al(ph_idx):
-                    ph_rad = env.phase_model.index_to_phase(ph_idx)
-                    rbase = 1.0 / np.sqrt(N)
-                    al = []
+                    # Coherent-combining efficiency, normalised by the PER-INSTANCE
+                    # random-phase floor. Replaces |Σ_n e^{jθ_n}|/N, which measured
+                    # element AGREEMENT — meaningful only under scalar g_RU, since
+                    # per-element the elements should legitimately disagree.
+                    est, al = est_channels(env.channels), []
                     for mid in active_pol_ids:
                         m0 = int(mid) - 1
-                        if 0 <= m0 < M:
-                            q = float(np.abs(np.exp(1j * ph_rad[m0]).sum()) / N)
-                            al.append((q - rbase) / (1.0 - rbase))
+                        if not (0 <= m0 < M):
+                            continue
+                        q, qr, _, _ = coherent_gain_quality(est, phi_pol, ph_idx,
+                                                            cfg, m0)
+                        if q.size:
+                            al.extend(((q - qr) / np.maximum(1.0 - qr, 1e-12)).tolist())
                     return float(np.mean(al)) if al else float('nan')
                 phase_alignment_pol.append(_al(phase_pol))
                 phase_alignment_orc.append(_al(best_phase))

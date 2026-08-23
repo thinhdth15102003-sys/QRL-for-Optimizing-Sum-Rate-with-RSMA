@@ -1,0 +1,28 @@
+=== waiter VQC C2 depth armed 2026-08-20 18:04:05 pid=5513 sid=5513 ===
+  triggers: pid 4977 (r424, flat C2 N=16) -> L=1 ; pid 5098 (r425, flat C2 N=32) -> L=2
+  waiting on pid 4977 for L=1 ...
+  trigger pid 4977 exited 2026-08-21 06:24:18
+  lock acquired for L=1 2026-08-21 06:24:18
+  [L=1] K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  [L=1] M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  [L=1] n_qubits = 8                                       # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+  [L=1] N = 24    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+  [L=1] n_hidden_ae   = [32,16]
+  [L=1] n_var_layers  = 1
+  FIRED VQC C2 L=1  pid=8095  log=analysis/data/vqc_c2_L1.log
+  params.py restored 2026-08-21 06:25:56
+  waiting on pid 5098 for L=2 ...
+  trigger pid 5098 exited 2026-08-21 08:25:54
+  lock acquired for L=2 2026-08-21 08:25:54
+  [L=2] K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  [L=2] M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  [L=2] n_qubits = 8                                       # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+  [L=2] N = 24    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+  [L=2] n_hidden_ae   = [32,16]
+  [L=2] n_var_layers  = 2
+  FIRED VQC C2 L=2  pid=8317  log=analysis/data/vqc_c2_L2.log
+  params.py restored 2026-08-21 08:27:35
+--- verify (expect n_q=8, L as fired, core = 48+16L) ---
+  results/result_427  QC     : 16-dim → 8 qubits (H+U_enc+U_var×2+2×CZ-bridge) → 26-dim+2×ZZ-cross(B4)  (o_hat)
+  results/result_426  QC     : 16-dim → 8 qubits (H+U_enc+U_var×1+2×CZ-bridge) → 26-dim+2×ZZ-cross(B4)  (o_hat)
+  waiter done 2026-08-21 08:29:47

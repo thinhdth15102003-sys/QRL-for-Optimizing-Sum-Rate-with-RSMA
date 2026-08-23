@@ -38,18 +38,34 @@ import params as P
 from params import make_config
 from CSI.env import ISTNEnv
 from probe_critic_ceiling import make_checkpoint_policy
+from analysis.phase_oracle import oracle_phase_search, est_channels
 
 
 def _load_nets(ckpt_dir):
     if os.path.isdir(os.path.join(ckpt_dir, 'agents')) and \
        not os.path.isfile(os.path.join(ckpt_dir, 'actor_config.json')):
         ckpt_dir = os.path.join(ckpt_dir, 'agents')
-    from RL import QuantumActor, PhaseMLP, PowerMLP, CkMLP
-    actor    = QuantumActor.from_dir(ckpt_dir, seed=0)
+    import json
+    from RL import QuantumActor, ClassicalActor, PhaseMLP, PowerMLP, CkMLP
+    # Auto-detect actor type: classical DNN baseline writes mode='classical' in
+    # actor_config.json (quantum omits it) — mirror make_checkpoint_policy so the
+    # A1/A2 DNN representation probe loads a ClassicalActor instead of crashing in
+    # QuantumActor.from_dir. Both expose forward()->info['z_t'] identically.
+    _mode = 'quantum'
+    _acfg = os.path.join(ckpt_dir, 'actor_config.json')
+    if os.path.isfile(_acfg):
+        try:
+            _mode = json.load(open(_acfg)).get('mode', 'quantum')
+        except Exception:
+            _mode = 'quantum'
+    if _mode == 'classical':
+        actor = ClassicalActor.from_dir(ckpt_dir, seed=0)
+    else:
+        actor = QuantumActor.from_dir(ckpt_dir, seed=0)
+        actor.n_shots = getattr(P, 'n_shots_train', 1500)
     phase_net = PhaseMLP.from_dir(ckpt_dir, seed=0)
     power_net = PowerMLP.from_dir(ckpt_dir, seed=0)
     ck_net    = CkMLP.from_dir(ckpt_dir, seed=0)
-    actor.n_shots = getattr(P, 'n_shots_train', 1500)
     return actor, (phase_net, phase_net, power_net, ck_net)  # phase twice placeholder
 
 
@@ -162,18 +178,27 @@ def run_ckpt(ckpt, cfg, args, lamD, D_k):
                                   'R_tot', args.passes)
             if any(x is None for x in [m_samp, m_greedy, m_orw, m_ort]):
                 continue
-            # oracle-rew assignment + oracle 4^M uniform phase
-            best_ph = m_orw['phase_idx']; best_R = m_orw['R_tot']
+            # oracle-rew assignment + ORACLE PHASE maximising R_tot.
+            # Per-element search: seeded from the closed-form oracle, plus the
+            # uniform-row restarts this used to enumerate alone, plus per-element
+            # coordinate ascent. Uniform-only was exhaustive under the old scalar
+            # g_RU; with (M,N,K) it is a strict under-estimate of the ceiling.
+            # The live m_orw phase is also offered as a seed, so this can never
+            # score below m_orw itself.
             phi_orw = m_orw['phi']
-            for combo in itertools.product(range(env.n_phase_levels), repeat=M):
-                ph = np.zeros((M, cfg.N), dtype=int)
-                for mm, lev in enumerate(combo):
-                    ph[mm, :] = lev
-                mm_ = _eval(env, nets, phi_orw, cfg, z_t, sigmas, D_k, lamD, phase_override=ph)
-                if mm_ and mm_['R_tot'] > best_R:
-                    best_R = mm_['R_tot']; m_orw_oph = mm_
-                    best_ph = ph
-            m_orw_oph = _eval(env, nets, phi_orw, cfg, z_t, sigmas, D_k, lamD, phase_override=best_ph)
+
+            def _score_Rtot(ph):
+                mm_ = _eval(env, nets, phi_orw, cfg, z_t, sigmas, D_k, lamD,
+                            phase_override=ph)
+                return mm_['R_tot'] if mm_ else None
+
+            best_ph, best_R, _ = oracle_phase_search(
+                est_channels(env.channels), phi_orw, cfg, _score_Rtot,
+                n_sweeps=args.phase_sweeps)
+            if m_orw['R_tot'] > best_R:                 # keep the live phase if better
+                best_ph = m_orw['phase_idx']
+            m_orw_oph = _eval(env, nets, phi_orw, cfg, z_t, sigmas, D_k, lamD,
+                              phase_override=best_ph)
 
             for key, m in [('samp', m_samp), ('greedy', m_greedy), ('orw', m_orw),
                            ('ort', m_ort), ('orw_oph', m_orw_oph)]:
@@ -201,6 +226,9 @@ def main():
     ap.add_argument('--warmup', type=int, default=5)
     ap.add_argument('--noise_avg', type=int, default=5)
     ap.add_argument('--passes', type=int, default=2)
+    ap.add_argument('--phase-sweeps', dest='phase_sweeps', type=int, default=1,
+                    help='per-element phase coordinate-ascent sweeps for the '
+                         'oracle-phase row (0 = seed + uniform restarts only)')
     ap.add_argument('--seed', type=int, default=20260603)
     ap.add_argument('--out', default='results/result_11/assignment_oracle.txt')
     args = ap.parse_args()

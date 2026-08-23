@@ -1,0 +1,15 @@
+=== waiter flat_c2_ps40 armed 2026-08-16 19:13:15 ===
+  pid=12824 sid=12824
+  target K=10 M=2 P_S=40 lr=1e-4 episodes=40000
+  trigger [log] analysis/data/flat_c1_ps40.log
+trigger fired 2026-08-16 23:37:27, queueing for params.py lock
+  lock acquired 2026-08-16 23:37:27
+  K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  P_S_dBm  = 40.0  # PINNED flat flat_c2_ps40
+  FIRED flat_c2_ps40  pid=14449  2026-08-16 23:37:27
+  params.py restored 2026-08-16 23:40:05
+  K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  P_S_dBm  = _hyp['P_S_dBm']
+  VERIFY results/result_400  K=10 M=2 N=24 P_S=40.0 mode=flat lr=0.0001 eps=40000

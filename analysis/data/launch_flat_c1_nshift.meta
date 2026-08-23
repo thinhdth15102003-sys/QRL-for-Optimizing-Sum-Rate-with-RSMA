@@ -1,0 +1,18 @@
+=== launch flat C1 N-shift 2026-08-20 11:42:46 ===
+  lock acquired 2026-08-20 11:42:46
+  [N=16] K        = 5      # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  [N=16] M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  [N=16] N = 16    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+  FIRED flat C1 N=16  pid=3704  log=analysis/data/flat_c1_n16.log
+  [N=32] K        = 5      # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  [N=32] M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  [N=32] N = 32    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+  FIRED flat C1 N=32  pid=3750  log=analysis/data/flat_c1_n32.log
+  params.py restored 2026-08-20 11:45:25
+  K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  N = 24    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+--- verify ---
+  N=16 expects d_s=198
+  N=32 expects d_s=358
+  live train_flat: 2

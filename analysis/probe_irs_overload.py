@@ -33,15 +33,14 @@ import numpy as np
 from params import make_config
 from CSI.env import ISTNEnv
 from CSI.rate import RateComputer
-from analysis.phase_oracle import oracle_phase_idx
+from analysis.phase_oracle import oracle_phase_idx, irs_optimal_gain_mag
 
 
 def _irs_margin(ch, cfg):
     """Per-user IRS(m=1)-optimal gain / direct gain (estimated channels)."""
     N = cfg.N
     g_dir = np.abs(ch['g_SU_hat']) ** 2
-    coeff = ch['beta'][0] * np.abs(ch['g_SR_hat'][0]) * N
-    g_irs = (coeff * np.abs(ch['g_RU_hat'][0])) ** 2
+    g_irs = irs_optimal_gain_mag(ch)[0] ** 2
     return g_irs / (g_dir + 1e-30)
 
 

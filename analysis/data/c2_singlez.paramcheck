@@ -1,0 +1,4 @@
+K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+n_qubits = 8                                       # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+n_hidden_ae   = [32, 16]  # PINNED C2        # ⭐ G4 UNIFIED: auto by K-tier

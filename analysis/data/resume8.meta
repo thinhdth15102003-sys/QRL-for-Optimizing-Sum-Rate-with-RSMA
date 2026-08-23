@@ -1,0 +1,19 @@
+=== resume8  2026-08-14 05:55:43 ===
+  FIRED C2 P_S=40  pid=7530  eps=18300  log=rs_c2_ps40.log  2026-08-14 05:55:43
+  FIRED C2 P_S=60  pid=7546  eps=18400  log=rs_c2_ps60.log  2026-08-14 05:56:26
+  FIRED C2 P_S=70  pid=7570  eps=18400  log=rs_c2_ps70.log  2026-08-14 05:57:13
+  FIRED C2 single-z  pid=7576  eps=18300  log=rs_c2_singlez.log  2026-08-14 05:57:56
+  FIRED C1 P_S=60  pid=7582  eps=7700  log=rs_c1_ps60.log  2026-08-14 05:58:39
+  FIRED C1 P_S=70  pid=7602  eps=7600  log=rs_c1_ps70.log  2026-08-14 05:59:23
+  FIRED DNN P_S=40  pid=7619  eps=14900  log=rs_dnn_ps40.log  2026-08-14 06:00:10
+  FIRED DNN P_S=70  pid=7626  eps=14800  log=rs_dnn_ps70.log  2026-08-14 06:00:53
+--- ppid check (1 = detached from the launcher) ---
+  pid 7530  ppid=7527  dir=results/result_368
+  pid 7546  ppid=7527  dir=results/result_369
+  pid 7570  ppid=7527  dir=results/result_370
+  pid 7576  ppid=7527  dir=results/result_371
+  pid 7582  ppid=7527  dir=results/result_372
+  pid 7602  ppid=7527  dir=results/result_373
+  pid 7619  ppid=7527  dir=results/result_374
+  pid 7626  ppid=7527  dir=results/result_375
+live: 8

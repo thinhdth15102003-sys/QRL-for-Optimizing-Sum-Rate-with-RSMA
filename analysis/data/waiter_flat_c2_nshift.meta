@@ -1,0 +1,20 @@
+=== waiter flat C2 N-shift armed 2026-08-20 14:24:44 pid=4391 sid=4391 ===
+  triggers: pid 3704 (r422, C1 N=16) -> C2 N=16 ; pid 3750 (r423, C1 N=32) -> C2 N=32
+  waiting on pid 3704 for C2 N=16 ...
+  trigger pid 3704 exited 2026-08-20 17:02:46
+  lock acquired for N=16 2026-08-20 17:02:46
+  [C2 N=16] K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  [C2 N=16] M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  [C2 N=16] N = 16    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+  FIRED flat C2 N=16  pid=4977  log=analysis/data/flat_c2_n16.log
+  params.py restored 2026-08-20 17:04:04
+  waiting on pid 3750 for C2 N=32 ...
+  trigger pid 3750 exited 2026-08-20 17:27:37
+  lock acquired for N=32 2026-08-20 17:27:37
+  [C2 N=32] K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  [C2 N=32] M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  [C2 N=32] N = 32    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+  FIRED flat C2 N=32  pid=5098  log=analysis/data/flat_c2_n32.log
+  params.py restored 2026-08-20 17:28:57
+--- verify ---
+  waiter done 2026-08-20 17:30:36

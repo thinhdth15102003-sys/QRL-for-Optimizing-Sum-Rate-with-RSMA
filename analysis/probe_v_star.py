@@ -221,21 +221,29 @@ def hill_climb(a0, ch, cfg, rate, score_fn, power, Dk, eps, max_passes=5):
 
 
 def exact_phase_scan(a, ch, cfg, rate, score_fn, power, Dk, eps):
-    """Per-IRS exhaustive level scan with a GLOBAL objective. Exact given the
-    assignment+power: a user's rates depend only on its own group's Φ (scalar
-    model) → per-IRS choices are separable. One pass suffices."""
+    """Per-IRS level scan with a GLOBAL objective. Per-IRS choices are separable
+    given assignment+power (a user's rates depend only on its own group's Φ), so
+    one pass suffices.
+
+    Seeded from the PER-ELEMENT closed-form oracle, then compared against the L
+    uniform-phase rows; the incumbent seed is always scored, so the result can
+    only improve on it. NOT exhaustive under per-element g_RU — the true space is
+    L^N per IRS. Full per-element ascent is skipped here on cost grounds (this
+    probe already scans a large assignment set); use
+    analysis.oracle_alloc.multiuser_phase_idx when the tighter ceiling matters."""
     L = len(cfg.phase_levels)
     sf, b, dist = power
     active = sorted(set(int(x) for x in a if x > 0))
     pidx = oracle_phase_idx(_est(ch), np.asarray(a, dtype=int), cfg).copy()
     for m in active:
-        best_v, best_l = -np.inf, int(pidx[m - 1, 0])
+        best_row = pidx[m - 1].copy()
+        best_v = score_fn(_cand_at(a, pidx, ch, cfg, rate, sf, b, dist, Dk, eps))
         for l in range(L):
             trial = pidx.copy(); trial[m - 1, :] = l
             v = score_fn(_cand_at(a, trial, ch, cfg, rate, sf, b, dist, Dk, eps))
             if v > best_v:
-                best_v, best_l = v, l
-        pidx[m - 1, :] = best_l
+                best_v, best_row = v, trial[m - 1].copy()
+        pidx[m - 1] = best_row
     return pidx
 
 
@@ -259,6 +267,91 @@ def rescore_noisy(cand, C_k, ch, cfg, rate, sig_list, Dk, eps):
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
+
+# Grids shared by main() and build_candidates() — module level so a caller can
+# reproduce the exact candidate set this probe searches.
+COARSE = [(0.0, 0.1, 'eq'), (0.0, 0.3, 'eq'), (2.0, 0.1, 'eq'),
+          (2.0, 0.3, 'eq'), (8.0, 0.1, 'eq'), (8.0, 0.3, 'eq')]
+FINE_S = [0.02, 0.05, 0.1, 0.2, 0.3, 0.4]
+FINE_B = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
+FINE_D = ['eq', 'prop']
+
+
+def build_candidates(ch, user_pos, irs_pos, cfg, rate, assignments, large):
+    """Every action the 4-var oracle searches for one state.
+
+    Extracted verbatim from main() so the Pareto-figure probe can search the
+    IDENTICAL candidate set instead of re-implementing it — a frontier drawn
+    from a different search than the one the paper cites would not be the same
+    object. main() calls this, so any drift breaks both at once.
+    """
+    K, M, Dk, eps = cfg.K, cfg.M, cfg.D_k_bps_hz, cfg.epsilon_qp
+    L = len(cfg.phase_levels)
+    if not large:
+        # ── stage 1: coarse power over ALL assignment×phase ──────
+        combos, stage1 = [], []
+        for a in assignments:
+            active = sorted(set(int(x) for x in a if x > 0))
+            levels = range(L) if active else [0]
+            for l in levels:
+                pidx = np.full((M, cfg.N), l, dtype=int)
+                Phi = phi_from_idx(pidx, cfg)
+                best = None
+                for (b, sf, dist) in COARSE:
+                    c = eval_candidate(a, Phi, pidx, ch, cfg, rate,
+                                       active, sf, b, dist, Dk, eps)
+                    stage1.append(c)
+                    if best is None or (c.sumR - 1.5 * c.pen_wf) > \
+                                       (best.sumR - 1.5 * best.pen_wf):
+                        best = c
+                combos.append((a, pidx, active, best))
+        by_rew = sorted(combos, key=lambda t: t[3].sumR - 1.5 * t[3].pen_wf,
+                        reverse=True)[:6]
+        by_rate = sorted(combos, key=lambda t: t[3].sumR, reverse=True)[:3]
+        by_met = sorted(combos, key=lambda t: (t[3].nmet_g, t[3].sumR),
+                        reverse=True)[:3]
+        pruned, seen = [], set()
+        for (a, pidx, active, _) in by_rew + by_rate + by_met:
+            key = (tuple(a), int(pidx[0, 0]) if M else 0)
+            if key not in seen:
+                seen.add(key); pruned.append((a, pidx, active))
+        cands = list(stage1)
+    else:
+        a_heur = np.asarray(_oracle_assignment(ch, user_pos, irs_pos), dtype=int)
+        climbs = [
+            (lambda c: c.sumR,                  (0.05, 8.0, 'eq')),
+            (lambda c: c.sumR - 1.5 * c.pen_wf, (0.1, 2.0, 'eq')),
+            (lambda c: c.sumR - 8.0 * c.pen_wf, (0.2, 0.0, 'eq')),
+        ]
+        finals = {tuple(a_heur)}
+        for fn, pw in climbs:
+            finals.add(tuple(hill_climb(a_heur, ch, cfg, rate, fn, pw,
+                                        Dk, eps, max_passes=12)))
+        pruned, seenp = [], set()
+        for at in finals:
+            a = np.array(at, dtype=int)
+            active = sorted(set(int(x) for x in a if x > 0))
+            for fn, pw in [(lambda c: c.sumR, (0.05, 8.0, 'eq')),
+                           (lambda c: c.sumR - 8.0 * c.pen_wf, (0.2, 0.0, 'eq'))]:
+                pidx = exact_phase_scan(a, ch, cfg, rate, fn, pw, Dk, eps)
+                key = (at, np.ascontiguousarray(pidx, dtype=np.int64).tobytes())
+                if key not in seenp:
+                    seenp.add(key); pruned.append((a, pidx, active))
+        cands = []
+
+    # ── stage 2: fine power grid on pruned set ───────────────────
+    for (a, pidx, active) in pruned:
+        Phi = phi_from_idx(pidx, cfg)
+        for sf in FINE_S:
+            for b in FINE_B:
+                for dist in FINE_D:
+                    cands.append(eval_candidate(a, Phi, pidx, ch, cfg, rate,
+                                                active, sf, b, dist, Dk, eps))
+        # winner-take-all endpoint: all power → 1 private stream
+        cands.append(eval_candidate(a, Phi, pidx, ch, cfg, rate,
+                                    active, 0.0, None, 'eq', Dk, eps))
+    return cands
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -341,78 +434,8 @@ def main():
                 sig_list = [env.channel_model.sample_noise_sigma2()
                             for _ in range(args.noise_draws)]
 
-                if not large:
-                    # ── stage 1: coarse power over ALL assignment×phase ──────
-                    combos = []      # (a, pidx, active, best coarse cands)
-                    stage1 = []
-                    for a in assignments:
-                        active = sorted(set(int(x) for x in a if x > 0))
-                        levels = range(L) if active else [0]
-                        for l in levels:
-                            pidx = np.full((M, cfg.N), l, dtype=int)
-                            Phi = phi_from_idx(pidx, cfg)
-                            best = None
-                            for (b, sf, dist) in coarse:
-                                c = eval_candidate(a, Phi, pidx, ch, cfg, rate,
-                                                   active, sf, b, dist, Dk, eps)
-                                stage1.append(c)
-                                if best is None or (c.sumR - 1.5 * c.pen_wf) > \
-                                                   (best.sumR - 1.5 * best.pen_wf):
-                                    best = c
-                            combos.append((a, pidx, active, best))
-                    # prune: union of top by reward@1.5 / sumR / nmet
-                    by_rew = sorted(combos, key=lambda t: t[3].sumR - 1.5 * t[3].pen_wf,
-                                    reverse=True)[:6]
-                    by_rate = sorted(combos, key=lambda t: t[3].sumR, reverse=True)[:3]
-                    by_met = sorted(combos, key=lambda t: (t[3].nmet_g, t[3].sumR),
-                                    reverse=True)[:3]
-                    pruned, seen = [], set()
-                    for (a, pidx, active, _) in by_rew + by_rate + by_met:
-                        key = (tuple(a), int(pidx[0, 0]) if M else 0)
-                        if key not in seen:
-                            seen.add(key); pruned.append((a, pidx, active))
-                    cands = list(stage1)
-                else:
-                    # ── LOCAL-SEARCH mode (large (M+1)^K, e.g. Case 2) ────────
-                    # 1-flip hill-climbs from the heuristic oracle assignment
-                    # under 3 objectives (rate / reward@1.5 / reward@8-QoS),
-                    # then exact per-IRS phase scans on the final assignments.
-                    a_heur = np.asarray(_oracle_assignment(
-                        ch, env.user_pos, env.irs_pos), dtype=int)
-                    climbs = [
-                        (lambda c: c.sumR,                  (0.05, 8.0, 'eq')),
-                        (lambda c: c.sumR - 1.5 * c.pen_wf, (0.1, 2.0, 'eq')),
-                        (lambda c: c.sumR - 8.0 * c.pen_wf, (0.2, 0.0, 'eq')),
-                    ]
-                    finals = {tuple(a_heur)}
-                    for fn, pw in climbs:
-                        finals.add(tuple(hill_climb(a_heur, ch, cfg, rate, fn,
-                                                    pw, Dk, eps, max_passes=12)))
-                    pruned, seenp = [], set()
-                    for at in finals:
-                        a = np.array(at, dtype=int)
-                        active = sorted(set(int(x) for x in a if x > 0))
-                        for fn, pw in [(lambda c: c.sumR, (0.05, 8.0, 'eq')),
-                                       (lambda c: c.sumR - 8.0 * c.pen_wf,
-                                        (0.2, 0.0, 'eq'))]:
-                            pidx = exact_phase_scan(a, ch, cfg, rate, fn, pw, Dk, eps)
-                            key = (at, tuple(pidx[:, 0]))
-                            if key not in seenp:
-                                seenp.add(key); pruned.append((a, pidx, active))
-                    cands = []
-
-                # ── stage 2: fine power grid on pruned set ───────────────────
-                for (a, pidx, active) in pruned:
-                    Phi = phi_from_idx(pidx, cfg)
-                    for sf in fine_s:
-                        for b in fine_b:
-                            for dist in fine_d:
-                                cands.append(eval_candidate(a, Phi, pidx, ch, cfg,
-                                                            rate, active, sf, b,
-                                                            dist, Dk, eps))
-                    # winner-take-all endpoint: all power → 1 private stream
-                    cands.append(eval_candidate(a, Phi, pidx, ch, cfg, rate,
-                                                active, 0.0, None, 'eq', Dk, eps))
+                cands = build_candidates(ch, env.user_pos, env.irs_pos,
+                                         cfg, rate, assignments, large)
 
                 # ── selections + noisy re-eval (cached) ──────────────────────
                 cache = {}

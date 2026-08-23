@@ -1,0 +1,48 @@
+shared env from results/result_382/checkpoints/ep_02900  ->  K=10 M=2 P_S=70.0 dBm  D_k=0.0500  lambda_D=1.50
+200 states x 3 seeds, greedy, decide on g-hat / score on true g, own C_k
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  arm base   <- results/result_289
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  arm vqc70  <- results/result_382/checkpoints/ep_02900
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+  arm dnn70  <- results/result_389/checkpoints/ep_04500
+
+==============================================================================
+  RATE vs QoS
+==============================================================================
+  arm           R_tot      QoS   IRS-use     J(1.5)
+  base         1.8439    91.9%     70.0%     1.7936
+  vqc70        2.2350    86.3%     70.0%     2.1929
+  dnn70        2.2429    84.6%     70.0%     2.1909
+
+==============================================================================
+  SERVICE  ·  share of user-slots by R_k / D_k
+==============================================================================
+  band              base     vqc70     dnn70
+  >1.10            85.7%     75.6%     72.4%
+  1.00-1.10         6.2%     10.7%     12.2%
+  0.90-1.00         4.3%      7.4%      7.8%
+  0.70-0.90         3.0%      5.7%      6.9%
+  0.50-0.70         0.5%      0.6%      0.6%
+  <0.50             0.3%      0.0%      0.0%
+
+  stat              base     vqc70     dnn70
+  median           1.469     1.326     1.295
+  p05              0.936     0.877     0.854
+  p25              1.218     1.104     1.080
+  min              0.034     0.420     0.410
+  med|fail         0.905     0.910     0.902
+  p05|fail         0.561     0.706     0.710
+  mean|serv        3.938     5.038     5.140
+
+==============================================================================
+  J re-scored at other lambda_D
+==============================================================================
+  arm            l=1.5        l=3        l=5       l=10       l=20
+  base           1.794      1.743      1.676      1.509      1.173
+  vqc70          2.193      2.151      2.095      1.955      1.674
+  dnn70          2.191      2.139      2.069      1.896      1.549
+==============================================================================
+  SHAVING reads as: failures bunched in 0.90-1.00, med|fail near 1,
+  and mean|serv near 1. STARVING reads as: mass below 0.70, med|fail low,
+  and mean|serv well above 1 where the freed power went.

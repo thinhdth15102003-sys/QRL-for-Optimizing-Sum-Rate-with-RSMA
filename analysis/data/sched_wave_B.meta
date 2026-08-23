@@ -1,0 +1,7 @@
+=== wave B armed 2026-08-15 15:54:58 ===
+  pid=593 sid=593  waiting on 406 (r384) 412 (r385)
+r384/r385 finished, proceeding 2026-08-16 02:15:37
+  FIRED flat C2 seed 3  pid=3580  2026-08-16 02:15:37
+  FIRED flat C2 seed 4  pid=3596  2026-08-16 02:16:14
+  pid 3580 sid=3580 dir=
+  pid 3596 sid=3596 dir=

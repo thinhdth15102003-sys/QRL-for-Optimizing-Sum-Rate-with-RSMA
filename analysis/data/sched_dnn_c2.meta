@@ -1,0 +1,8 @@
+=== armed 2026-08-14 14:03:31 ===
+  waiter pid=10390  ppid=10388  sid=10390
+  waiting on 9929 (r376 flat s0) and 9944 (r377 flat s1)
+both flat runs finished, proceeding 2026-08-15 03:36:23
+  FIRED DNN C2 P_S=40  pid=14205  log=dnn_c2_ps40.log  2026-08-15 03:36:23
+  FIRED DNN C2 P_S=60  pid=14211  log=dnn_c2_ps60.log  2026-08-15 03:37:11
+  pid 14205  sid=14205  dir=results/result_378
+  pid 14211  sid=14211  dir=results/result_379

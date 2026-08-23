@@ -1,0 +1,4 @@
+=== waiter ro_c1_singlez armed 2026-08-17 13:46:46 ===
+  pid=16897 sid=16897
+  target K=5 M=1 n_qubits=8 n_hidden_ae=[16] readout=single-z
+  trigger [dir] results/result_396

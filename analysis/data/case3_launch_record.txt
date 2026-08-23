@@ -1,0 +1,27 @@
+================================================================================
+  CASE-3 (K15/M3) AUTONOMOUS LAUNCH RECORD — 2026-07-20 (Claude wake, user-authorized)
+================================================================================
+params.py SET to K=15 M=3 (auto-derive: N24, P_S50, nq12, n_var_layers5, hidden_ae[256,128,64],
+spawn 1/1, R_LoS0.2). ⚠ params.py LEFT at K15/M3 — reset to K10/M2 for Case-2 work.
+
+LAUNCHED (both running, background, PowerShell Start-Process -WindowStyle Hidden wsl.exe):
+  DNN (scout, launched first): PID varies — scripts/scratchpad case3_dnn.sh
+  VQC:                          scripts/scratchpad case3_vqc.sh
+  Recipe (BOTH, only --actor-mode differs):
+    --actor-mode {classical|quantum} --oracle-warmup
+    --phase-warmup-episodes 16 --phase-warmup-epochs 4000 --phase-warmup-target 95
+    --power-fairness 0.5 --R-LoS 0.2 --episodes 2000 --seed 0
+  Logs:  analysis/data/case3_dnn.log · analysis/data/case3_vqc.log  (python -u, live)
+
+⚠⚠ FEASIBILITY FLAG (DNN scout revealed at launch):
+  Servable users (best link ≥ D_k) = 0.0% @ Case-3 R_LoS0.2 (blocked 65.7%, K15 equal-power floor).
+  This is the KNOWN Case-3 structural hardness (doc IRS-Group-Capacity: RSMA-sharing cap, oracle
+  ceiling ~52%, agent ~23%) — NOT a misconfig, but VERY hard. λ_D=1.5 will punish unavoidable
+  failures. → ASSESS early: if QoS stays ~0 after warmup+~100 PPO ep, consider (a) higher R_LoS
+  (0.3), (b) lower D_k, (c) higher P_S, or (d) accept low-QoS Case-3 result per doc.
+
+MONITOR:   wsl bash -c "tail -30 '/mnt/c/Project/IRS-assisted RSMA Quantum-RL/analysis/data/case3_dnn.log'"
+           (same for case3_vqc.log)
+KILL:      wsl bash -c "ps aux | grep train.py | grep -v grep"  → note PIDs → kill <pid>
+NEW result dirs will appear under results/result_N (check newest 2).
+RECIPE BEST-EFFORT — Case-3 never trained before; power-fairness 0.5 is a first test (user said).

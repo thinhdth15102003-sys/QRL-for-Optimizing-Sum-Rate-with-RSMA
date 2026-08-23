@@ -35,7 +35,7 @@ import numpy as np
 from params import make_config
 from CSI.env import ISTNEnv
 from CSI.rate import RateComputer
-from analysis.phase_oracle import oracle_phase_idx
+from analysis.phase_oracle import oracle_phase_idx, irs_optimal_gain_mag
 
 
 def _force_all_in_building0(env):
@@ -52,8 +52,7 @@ def _eval_split(ch, cfg, rate, n_irs, select, rng):
     Returns dict of metrics for this split."""
     K, M, N = cfg.K, cfg.M, cfg.N
     g_dir = np.abs(ch['g_SU_hat']) ** 2
-    coeff = ch['beta'][0] * np.abs(ch['g_SR_hat'][0]) * N
-    g_irs = (coeff * np.abs(ch['g_RU_hat'][0])) ** 2
+    g_irs = irs_optimal_gain_mag(ch)[0] ** 2                 # (K,) IRS_1 ceiling
     margin = g_irs / (g_dir + 1e-30)
     order = np.argsort(-margin) if select == 'best' else rng.permutation(K)
     irs_users = np.sort(order[:n_irs])

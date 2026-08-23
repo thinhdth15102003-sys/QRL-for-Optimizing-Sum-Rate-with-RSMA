@@ -15,12 +15,13 @@ Three targets, all consistent with CSI/rate.py:
                     group's #met. Closed-form. This is exactly "fill the weak users",
                     the thing the live CkMLP keeps failing to learn.
 
-  multiuser_phase_idx — the per-IRS-scalar channel model makes the phase a single L-way
-                    choice per IRS (eff_phi[m]=N·e^{jθ_m}). Because a user's effective
-                    channel on IRS m depends ONLY on Φ[m], the groups are INDEPENDENT
-                    given the assignment, so the per-IRS #met-maximising level can be found
-                    by EXACT brute force over the L levels — strictly better than the
-                    dominant-user heuristic in analysis/phase_oracle.oracle_phase_idx.
+  multiuser_phase_idx — a user's effective channel on IRS m depends ONLY on Φ[m], so the
+                    groups stay INDEPENDENT given the assignment and each IRS is optimised
+                    alone. Under PER-ELEMENT g_RU the per-IRS choice is L^N, not L, so this
+                    is no longer exhaustive: it seeds from the per-element closed form
+                    (analysis/phase_oracle.oracle_phase_idx, which maximises coherent gain)
+                    and coordinate-ascends on the #met objective, always scoring the
+                    incumbent so it can only improve on that seed.
 
   greedy_power_ck — coordinate-ascent over the private/common split + per-user private
                     power (move a quantum from the most-surplus met user to the closest
@@ -111,29 +112,67 @@ def met_under_recipe(assignment, Phi, ch, cfg, rate, w_p, w_c_vec, active, Dk,
     return met, R_p
 
 
-# ── exact multi-user phase oracle (per-IRS brute force) ──────────────────────
+# ── multi-user phase oracle on the #met objective (per-element) ──────────────
 
 def multiuser_phase_idx(assignment, ch, cfg, rate, active, Dk, w_p, w_c_vec,
-                        sigma2=None):
-    """Per active IRS pick the L-level maximising THAT group's #met (oracle Ck),
-    power fixed. Exact: groups independent given assignment. Beats dominant-user."""
+                        sigma2=None, refine_sweeps: int = 1):
+    """
+    Per active IRS, maximise THAT group's #met (oracle Ck) with power fixed.
+    Groups are independent given the assignment, so each IRS is optimised alone.
+
+    Starts from the PER-ELEMENT closed-form oracle (which maximises coherent
+    gain, not #met), then improves it on the #met objective:
+      • candidate sweep over the L uniform-phase rows (cheap, L evals);
+      • per-element coordinate ascent, `refine_sweeps` passes (N·L evals each).
+    The incumbent is always scored, so the result can never be worse than the
+    per-element init.
+
+    ⚠ Pre-refactor this function OVERWROTE the whole row with one uniform level
+    (`pidx[mi,:] = l`) — correct only while g_RU was per-IRS scalar and every
+    element shared one optimal phase. Under per-element g_RU that discards the
+    alignment entirely; hence the rewrite.
+    """
     assignment = np.asarray(assignment, dtype=int)
     L = len(cfg.phase_levels)
     pidx = oracle_phase_idx(_est_channels(ch), assignment, cfg).copy()   # (M,N) init
+
+    def _n_met(trial, members):
+        met, _ = met_under_recipe(assignment, phi_from_idx(trial, cfg), ch, cfg,
+                                  rate, w_p, w_c_vec, active, Dk, sigma2, True)
+        return int(met[members].sum())
+
     for m in active:                                    # m is 1-based IRS gid
         mi = m - 1
         members = np.where(assignment == m)[0]
         if members.size == 0:
             continue
-        best_n, best_l = -1, int(pidx[mi, 0])
+
+        best_row = pidx[mi].copy()
+        best_n   = _n_met(pidx, members)                # score the incumbent
+
+        # ① uniform-phase candidates (the old search, kept as cheap restarts)
         for l in range(L):
             trial = pidx.copy(); trial[mi, :] = l
-            met, _ = met_under_recipe(assignment, phi_from_idx(trial, cfg), ch, cfg,
-                                      rate, w_p, w_c_vec, active, Dk, sigma2, True)
-            n = int(met[members].sum())
+            n = _n_met(trial, members)
             if n > best_n:
-                best_n, best_l = n, l
-        pidx[mi, :] = best_l
+                best_n, best_row = n, trial[mi].copy()
+        pidx[mi] = best_row
+
+        # ② per-element coordinate ascent on #met
+        for _ in range(refine_sweeps):
+            changed = False
+            for el in range(cfg.N):
+                cur = int(pidx[mi, el])
+                for l in range(L):
+                    if l == cur:
+                        continue
+                    trial = pidx.copy(); trial[mi, el] = l
+                    n = _n_met(trial, members)
+                    if n > best_n:
+                        best_n, pidx[mi, el] = n, l
+                        changed = True
+            if not changed:
+                break
     return pidx
 
 

@@ -1,0 +1,92 @@
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    1000     reward   544.55  R_tot 2.7904  QoS  90.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    2000     reward   549.74  R_tot 2.7753  QoS  93.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    3000     reward   552.01  R_tot 2.7784  QoS  94.6%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    4000     reward   550.53  R_tot 2.7727  QoS  94.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    5000     reward   550.10  R_tot 2.7682  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    6000     reward   550.98  R_tot 2.7763  QoS  94.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    7000     reward   551.56  R_tot 2.7787  QoS  94.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    8000     reward   552.16  R_tot 2.7763  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    9000     reward   552.47  R_tot 2.7818  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    10000    reward   554.20  R_tot 2.7895  QoS  94.5%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    11000    reward   551.40  R_tot 2.7736  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    12000    reward   552.99  R_tot 2.7854  QoS  94.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    13000    reward   554.92  R_tot 2.7957  QoS  94.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    14000    reward   551.43  R_tot 2.7740  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    15000    reward   553.67  R_tot 2.7858  QoS  94.9%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    16000    reward   550.14  R_tot 2.7653  QoS  95.3%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    17000    reward   554.37  R_tot 2.7873  QoS  95.1%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    18000    reward   551.33  R_tot 2.7724  QoS  95.2%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    19000    reward   554.74  R_tot 2.7901  QoS  94.8%
+  ⚙ power_fairness α_split/common=0.30 α_private=0.30 f=0.80 restored from hyperparameters.json
+    20000    reward   553.83  R_tot 2.7871  QoS  94.7%
+
+====================================================================================
+  PICK CHECKPOINT · results/result_364 · env reward, greedy, policy's OWN C_k
+  4 episodes x 3 env seeds x 200 steps
+====================================================================================
+  ckpt          reward       sd    R_tot     QoS
+  1000          544.55     4.03   2.7904   90.5%
+  2000          549.74     3.37   2.7753   93.6%
+  3000          552.01     1.00   2.7784   94.6%
+  4000          550.53     1.61   2.7727   94.3%
+  5000          550.10     4.60   2.7682   94.9%
+  6000          550.98     4.10   2.7763   94.3%
+  7000          551.56     6.28   2.7787   94.3%
+  8000          552.16     6.29   2.7763   94.9%
+  9000          552.47     5.95   2.7818   94.8%
+  10000         554.20     7.50   2.7895   94.5%
+  11000         551.40     3.31   2.7736   94.8%
+  12000         552.99     5.73   2.7854   94.3%
+  13000         554.92     6.57   2.7957   94.1%  <- best
+  14000         551.43     6.03   2.7740   94.8%
+  15000         553.67     4.77   2.7858   94.9%
+  16000         550.14     4.22   2.7653   95.3%
+  17000         554.37     4.39   2.7873   95.1%
+  18000         551.33     3.74   2.7724   95.2%
+  19000         554.74     7.42   2.7901   94.8%
+  20000         553.83     5.39   2.7871   94.7%
+
+  same checkpoints re-scored at other lambda_D
+  ckpt           l=1.5        l=3        l=5       l=10       l=20
+  1000          544.55     531.02     512.98     467.88     377.67
+  2000          549.74     544.43     537.34     519.62     484.18
+  3000          552.01     548.33     543.43     531.18     506.68
+  4000          550.53     546.54     541.21     527.88     501.23
+  5000          550.10     546.56     541.85     530.06     506.49
+  6000          550.98     546.71     541.02     526.78     498.30
+  7000          551.56     547.39     541.83     527.92     500.12
+  8000          552.16     549.06     544.92     534.58     513.89
+  9000          552.47     548.59     543.41     530.47     504.59
+  10000         554.20     550.49     545.55     533.19     508.48
+  11000         551.40     548.08     543.65     532.58     510.43
+  12000         552.99     548.91     543.47     529.86     502.65
+  13000         554.92     550.70     545.07     531.00     502.86
+  14000         551.43     548.05     543.56     532.32     509.84
+  15000         553.67     550.19     545.55     533.94     510.72
+  16000         550.14     547.22     543.32     533.57     514.08
+  17000         554.37     551.29     547.18     536.90     516.34
+  18000         551.33     548.18     543.99     533.51     512.55
+  19000         554.74     551.45     547.07     536.12     514.22
+  20000         553.83     550.26     545.49     533.57     509.73
+====================================================================================
+  A checkpoint that wins at 1.5 but loses at 3+ bought its reward by
+  shaving QoS margin the weak penalty barely prices.

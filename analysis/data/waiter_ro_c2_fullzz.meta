@@ -1,0 +1,4 @@
+=== waiter ro_c2_fullzz armed 2026-08-17 13:48:37 ===
+  pid=17059 sid=17059
+  target K=10 M=2 n_qubits=8 n_hidden_ae=[32,16] readout=full-zz
+  trigger [log] analysis/data/flat_flat_c2_ps70b.log

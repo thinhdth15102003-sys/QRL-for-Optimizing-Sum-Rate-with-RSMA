@@ -34,6 +34,14 @@ import numpy as np
 import params as P
 from params import make_config
 from CSI.env import ISTNEnv
+from analysis.phase_oracle import coherent_gain_quality
+
+
+def _est_ch(ch):
+    """Env channels → the non-_hat keys coherent_gain_quality expects (ESTIMATED
+    CSI: the view the phase decision was made on)."""
+    return {'g_SR': ch['g_SR_hat'], 'g_RU': ch['g_RU_hat'],
+            'g_SU': ch['g_SU_hat'], 'beta': ch['beta']}
 
 
 def _advance(env):
@@ -45,8 +53,9 @@ def _advance(env):
 def eval_alignment(env, actor, phase_net, cfg, K, N, n_episodes, n_steps, seed, label):
     """Run greedy rollouts and compute mean alignment + IRS-beats-direct%."""
     from train import _build_phase_state, _get_active_irs
-    rand_floor = 1.0 / np.sqrt(N)
-    q_all, irs_win, irs_tot = [], 0, 0
+    # Random-phase reference is per-instance (√(π/4·Σ|c|²)/Σ|c|) now that element
+    # magnitudes differ; the old constant 1/√N assumed equal magnitudes.
+    q_all, qr_all, irs_win, irs_tot = [], [], 0, 0
     for ep in range(n_episodes):
         env.reset(seed=seed + ep)
         for _ in range(n_steps):
@@ -62,18 +71,20 @@ def eval_alignment(env, actor, phase_net, cfg, K, N, n_episodes, n_steps, seed, 
             phase_idx, _, _ = phase_net.forward(s_phase, active_irs, greedy=True)
             ch = env.channels
             for m in active_irs:
-                angles = env.phase_model.index_to_phase(phase_idx[m])
-                q = float(np.abs(np.exp(1j * np.asarray(angles)).sum()) / N)
-                q_all.append(q)
-                routed = np.where(phi == (m + 1))[0]
-                if routed.size:
-                    coeff = ch['beta'][m] * np.abs(ch['g_SR_hat'][m]) * (q * N)
-                    g_irs = (coeff * np.abs(ch['g_RU_hat'][m, routed])) ** 2
-                    g_dir = np.abs(ch['g_SU_hat'][routed]) ** 2
-                    irs_win += int(np.sum(g_irs > g_dir)); irs_tot += routed.size
+                # Coherent-combining efficiency (replaces the old |Σ_n e^{jθ_n}|/N
+                # element-agreement proxy, meaningless under per-element g_RU).
+                q_vec, qr_vec, h_irs, g_dir_c = coherent_gain_quality(
+                    _est_ch(ch), phi, phase_idx, cfg, m)
+                if q_vec.size:
+                    q_all.extend(q_vec.tolist())
+                    qr_all.extend(qr_vec.tolist())
+                    irs_win += int(np.sum(np.abs(h_irs) ** 2 > np.abs(g_dir_c) ** 2))
+                    irs_tot += q_vec.size
             _advance(env)
-    q_arr = np.asarray(q_all) if q_all else np.array([rand_floor])
-    a_arr = (q_arr - rand_floor) / (1.0 - rand_floor)
+    if not q_all:
+        return 0.0, 0.0, 0.0
+    q_arr, qr_arr = np.asarray(q_all), np.asarray(qr_all)
+    a_arr = (q_arr - qr_arr) / np.maximum(1.0 - qr_arr, 1e-12)
     qm, am = float(q_arr.mean()), float(a_arr.mean())
     beats = (100.0 * irs_win / irs_tot) if irs_tot else 0.0
     print(f"  [{label}] alignment={am*100:5.1f}%  q={qm:.3f}  IRS-beats-direct={beats:.1f}% ({irs_win}/{irs_tot})  N_samples={q_arr.size}")

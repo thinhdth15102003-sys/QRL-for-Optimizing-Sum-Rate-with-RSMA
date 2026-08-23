@@ -49,8 +49,10 @@ def main():
         max_load.append(max(counts))
 
         ch = env.channels
-        # full IRS link coeff per (m,k): beta_m * |g_SR[m]| * |g_RU[m,k]|  (N chung, bo qua)
-        coeff = ch["beta"][:, None] * np.abs(ch["g_SR_hat"])[:, None] * np.abs(ch["g_RU_hat"])  # (M,K)
+        # full IRS link coeff per (m,k): beta_m * |g_SR[m]| * Σ_n |g_RU[m,n,k]|
+        # (per-element coherent ceiling; the old form dropped N as a common factor,
+        #  which is no longer valid since the per-element sum varies with (m,k))
+        coeff = irs_optimal_gain_mag(ch)                                        # (M,K)
         for i in range(n_blocked):
             own = int(bld[i])
             others = [m for m in range(M) if m != own]

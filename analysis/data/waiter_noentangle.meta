@@ -1,0 +1,17 @@
+=== waiter no-entangle armed 2026-08-21 14:11:04 pid=9070 sid=9070 ===
+  trigger: pid 611 (r418, C1 single-z) -> VQC C2 no-entangle, 20000 ep
+  waiting on pid 611 ...
+  trigger pid 611 exited 2026-08-22 08:06:13
+  lock acquired 2026-08-22 08:06:13
+  K        = 10     # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+  M        = 2     # Case 1: 1 | Case 2: 2  | Case 3: 3
+  n_qubits = 8                                       # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+  N = 24    # reflection elements per IRS (unchanged across cases). [N=48 option raises Case 2
+  n_hidden_ae   = [32,16]
+  n_var_layers  = 3
+  FIRED VQC C2 no-entangle  pid=12370
+  params.py restored 2026-08-22 08:07:54
+--- verify (header MUST read NO-CZ(ablation), not +2xCZ-bridge) ---
+  results/result_428  QC     : 16-dim → 8 qubits (H+U_enc+U_var×3 NO-CZ(ablation)) → 26-dim+2×ZZ-cross(B4)  (o_hat)
+  results/result_418  QC     : 16-dim → 8 qubits (H+U_enc+U_var×2+1×CZ-bridge) → 8-dim  (o_hat)
+  waiter done 2026-08-22 08:10:07

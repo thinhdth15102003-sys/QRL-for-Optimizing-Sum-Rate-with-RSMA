@@ -8,10 +8,12 @@ Two parts (CPU; loads ckpt for part 2):
  (1) PHYSICAL  — per-user IRS-OPTIMAL gain vs DIRECT gain (blocked / non-blocked).
       Answers: at this R_LoS, do NON-BLOCKED users physically benefit from IRS?
       If direct >= IRS-opt for non-blocked users, routing them to IRS is WASTEFUL.
-      NOTE: in this channel model |Σφ| can hit its max N for ALL IRS users at once
-      (g_SR, g_RU are scalars) → NO multi-user phase tradeoff. So any group
-      degradation is from (a) non-blocked users put on a worse link and/or
-      (b) RSMA power-sharing among more IRS users — NOT a phase conflict.
+      NOTE (UPDATED post per-element refactor): g_RU is now (M,N,K), so each
+      element has its own channel and one phase setting can NOT co-phase every
+      IRS user at once — a real multi-user phase tradeoff now exists. Group
+      degradation may therefore come from (a) non-blocked users on a worse link,
+      (b) RSMA power-sharing, AND (c) phase conflict. The old claim that (c) was
+      impossible held only under the scalar g_RU model.
  (2) POLICY    — run the trained ckpt; decompose QoS-satisfaction by assignment
       (IRS/DIR × blk/non), count non-blocked users routed to IRS, and bin per-step
       by n_irs (#users on the single IRS) to see if the IRS GROUP's per-user rate
@@ -37,6 +39,7 @@ import numpy as np
 import params as P
 from params import make_config
 from CSI.env import ISTNEnv
+from analysis.phase_oracle import irs_optimal_gain_mag
 
 # Case-1 R_LoS=0.5 env — matches result_18 / result_20 hyperparameters.json
 # (Case 1 here used P_S=70 dBm, NOT the stale auto-derived 50).
@@ -52,8 +55,7 @@ def physical(cfg, n_samples=400, seed=20260530):
         env.reset()
         ch = env.channels
         gd = np.abs(ch['g_SU_hat']) ** 2                          # (K,) direct gain
-        coeff = ch['beta'][:, None] * np.abs(ch['g_SR_hat'])[:, None] * N  # (M,1)
-        gi = (coeff * np.abs(ch['g_RU_hat'])) ** 2                # (M,K) IRS-opt gain
+        gi = irs_optimal_gain_mag(ch) ** 2                         # (M,K) IRS-opt gain
         gi = gi.max(axis=0)                                        # best IRS per user
         gd_all.append(gd); gi_all.append(gi)
         blk_all.append(np.asarray(ch['su_blocked'], dtype=bool))

@@ -1,0 +1,14 @@
+=== relaunch8_small  2026-08-13 17:47:38 ===
+PHASE A (C2 VQC, nq=8, ae=[32,16])
+  FIRED C2 P_S=40  pid=5843  log=re8_c2_ps40.log  2026-08-13 17:47:38
+  FIRED C2 P_S=60  pid=5853  log=re8_c2_ps60.log  2026-08-13 17:48:20
+  FIRED C2 P_S=70  pid=5859  log=re8_c2_ps70.log  2026-08-13 17:49:02
+  FIRED C2 single-z  pid=5865  log=re8_c2_singlez.log  2026-08-13 17:49:44
+PHASE B (C1 VQC, nq=8, ae=[16], 10000 ep)
+  FIRED C1 P_S=60  pid=5911  log=re8_c1_ps60.log  2026-08-13 17:51:32
+  FIRED C1 P_S=70  pid=5932  log=re8_c1_ps70.log  2026-08-13 17:52:14
+PHASE C (C1 DNN, nq=12)
+  FIRED DNN C1 P_S=60  pid=5953  log=re8_dnn_c1_ps60.log  2026-08-13 17:54:00
+  FIRED DNN C1 seed 4  pid=5967  log=re8_dnn_c1_s4.log  2026-08-13 17:54:42
+params.py restored 2026-08-13 17:57:00
+live now: 8

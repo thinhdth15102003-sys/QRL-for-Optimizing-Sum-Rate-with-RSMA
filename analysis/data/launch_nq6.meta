@@ -1,0 +1,11 @@
+=== nq=6 launch 2026-08-16 14:06:46 ===
+note: params.py dirty (expected: nq + n_hidden_ae from wave C)
+n_qubits = 6                                        # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+n_hidden_ae   = [32, 16]  # PINNED C2        # ⭐ G4 UNIFIED: auto by K-tier
+  FIRED nq=6  pid=7474  2026-08-16 14:06:46
+  result dir = results/result_396
+  params.py restored to committed state:
+46:n_qubits = 12                                      # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+217:n_hidden_ae   = _hyp['n_hidden_ae']        # ⭐ G4 UNIFIED: auto by K-tier
+  VERIFY pending, no checkpoint yet -- re-check results/result_396 later
+live training procs: 8

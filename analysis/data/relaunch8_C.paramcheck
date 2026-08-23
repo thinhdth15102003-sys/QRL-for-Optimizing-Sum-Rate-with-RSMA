@@ -1,0 +1,7 @@
+K        = 5      # Case 1: 5 | Case 2: 10 | Case 3: 15   (K-flex: post-Q1 G8)
+M        = 1     # Case 1: 1 | Case 2: 2  | Case 3: 3
+n_qubits = 12                                      # ⭐ G4 UNIFIED default 12; override via QRL_NQ env (qubit sweep)
+n_hidden_ae   = _hyp['n_hidden_ae']        # ⭐ G4 UNIFIED: auto by K-tier
+n_hidden_phase = [64, 64]  # ⛔ NO CLI FLAG — Tables VI/VII were trained on THIS set; a run launched
+n_hidden_power = [64, 32]
+n_hidden_ck    = [64, 32]

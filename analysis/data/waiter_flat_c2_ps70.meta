@@ -1,0 +1,4 @@
+=== waiter flat_c2_ps70 armed 2026-08-16 19:13:25 ===
+  pid=12855 sid=12855
+  target K=10 M=2 P_S=70 lr=1e-4 episodes=40000
+  trigger [dir] results/result_383

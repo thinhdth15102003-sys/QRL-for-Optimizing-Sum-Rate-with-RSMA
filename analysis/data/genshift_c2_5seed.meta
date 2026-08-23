@@ -1,0 +1,12 @@
+=== C2 5-seed genshift 2026-08-14 14:33:36 ===
+  done dnn_s1  <- results/result_232/checkpoints/ep_11900  2026-08-14 14:37:20
+  done dnn_s0  <- results/result_231/checkpoints/ep_08700  2026-08-14 14:37:21
+  done dnn_s2  <- results/result_233/checkpoints/ep_16200  2026-08-14 14:37:23
+  done dnn_s3  <- results/result_236/checkpoints/ep_17800  2026-08-14 14:40:57
+  done dnn_s4  <- results/result_309/checkpoints/ep_19800  2026-08-14 14:41:48
+  done vqc_s0  <- results/result_278/checkpoints/ep_00100  2026-08-14 14:45:57
+  done vqc_s2  <- results/result_291/checkpoints/ep_13700  2026-08-14 14:53:59
+  done vqc_s1  <- results/result_320/checkpoints/ep_04000  2026-08-14 14:54:02
+  done vqc_s3  <- results/result_323/checkpoints/ep_13200  2026-08-14 15:02:25
+  done vqc_s4  <- results/result_324/checkpoints/ep_09800  2026-08-14 15:02:29
+aggregated 2026-08-14 15:02:29

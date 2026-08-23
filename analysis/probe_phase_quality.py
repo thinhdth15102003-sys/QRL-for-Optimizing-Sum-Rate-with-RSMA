@@ -35,6 +35,14 @@ import numpy as np
 import params as P
 from params import make_config
 from CSI.env import ISTNEnv
+from analysis.phase_oracle import coherent_gain_quality
+
+
+def _est_ch(ch):
+    """Map env channels to the non-_hat keys coherent_gain_quality expects.
+    ESTIMATED CSI — the view the phase decision was actually made on."""
+    return {'g_SR': ch['g_SR_hat'], 'g_RU': ch['g_RU_hat'],
+            'g_SU': ch['g_SU_hat'], 'beta': ch['beta']}
 
 
 def main():
@@ -65,14 +73,23 @@ def main():
     if os.path.isdir(os.path.join(ckpt, 'agents')) and \
        not os.path.isfile(os.path.join(ckpt, 'actor_config.json')):
         ckpt = os.path.join(ckpt, 'agents')
-    from RL import QuantumActor, PhaseMLP
+    import json as _json
+    from RL import QuantumActor, ClassicalActor, PhaseMLP
     from train import _build_phase_state, _get_active_irs
-    actor     = QuantumActor.from_dir(ckpt, seed=0)
+    # auto-detect actor type (classical runs write mode='classical'; quantum omits it)
+    _mode = _json.load(open(os.path.join(ckpt, 'actor_config.json'))).get('mode', 'quantum')
+    if _mode == 'classical':
+        actor = ClassicalActor.from_dir(ckpt, seed=0)
+    else:
+        actor = QuantumActor.from_dir(ckpt, seed=0)
     phase_net = PhaseMLP.from_dir(ckpt, seed=0)
-    actor.n_shots = P.n_shots_train
+    if _mode != 'classical':
+        actor.n_shots = P.n_shots_train
 
-    rand_floor = 1.0 / np.sqrt(N)          # expected coherence of random phases
-    q_all, irs_win, irs_tot = [], 0, 0
+    # Random-phase reference is now computed PER INSTANCE by
+    # coherent_gain_quality (√(π/4·Σ|c|²)/Σ|c|), since the per-element magnitudes
+    # differ. The old constant 1/√N assumed equal magnitudes across elements.
+    q_all, qr_all, irs_win, irs_tot = [], [], 0, 0
 
     for ep in range(args.episodes):
         env.reset(seed=args.seed + ep)
@@ -85,35 +102,41 @@ def main():
             active_irs = _get_active_irs(phi)                       # 0-based
             if len(active_irs) == 0:
                 _advance(env); continue
-            s_phase = _build_phase_state(env.channels, phi, cfg, info['z_t'])
+            # pass the net's own d_s so PRE-g_SU checkpoints get the legacy layout
+            s_phase = _build_phase_state(env.channels, phi, cfg, info['z_t'],
+                                         d_s=phase_net.d_s)
             phase_idx, _, _ = phase_net.forward(s_phase, active_irs, greedy=greedy)
 
             ch = env.channels
             for m in active_irs:                                    # 0-based IRS index
-                angles = env.phase_model.index_to_phase(phase_idx[m])   # (N,) rad
-                q = float(np.abs(np.exp(1j * np.asarray(angles)).sum()) / N)
-                q_all.append(q)
-                # live IRS gain vs direct for users routed to this IRS (gid = m+1)
-                routed = np.where(phi == (m + 1))[0]
-                if routed.size:
-                    coeff = ch['beta'][m] * np.abs(ch['g_SR_hat'][m]) * (q * N)
-                    g_irs = (coeff * np.abs(ch['g_RU_hat'][m, routed])) ** 2
-                    g_dir = np.abs(ch['g_SU_hat'][routed]) ** 2
-                    irs_win += int(np.sum(g_irs > g_dir)); irs_tot += routed.size
+                # Coherent-combining efficiency |Σ_n e^{jθ_n}c_n| / Σ_n|c_n|.
+                # ⚠ REPLACES the old |Σ_n e^{jθ_n}|/N, which measured whether the
+                # ELEMENTS AGREE — right only under scalar g_RU. Per-element they
+                # SHOULD disagree, so element spread says nothing about alignment.
+                q_vec, qr_vec, h_irs, g_dir_c = coherent_gain_quality(
+                    _est_ch(ch), phi, phase_idx, cfg, m)
+                if q_vec.size:
+                    q_all.extend(q_vec.tolist())
+                    qr_all.extend(qr_vec.tolist())
+                    irs_win += int(np.sum(np.abs(h_irs) ** 2
+                                          > np.abs(g_dir_c) ** 2))
+                    irs_tot += q_vec.size
             _advance(env)
 
-    q_all = np.asarray(q_all)
+    q_all, qr_all = np.asarray(q_all), np.asarray(qr_all)
     if q_all.size == 0:
         print("No active IRS in any step — agent routed everyone to direct. PhaseMLP unused."); return
-    a_all = (q_all - rand_floor) / (1.0 - rand_floor)              # alignment ratio
+    a_all = (q_all - qr_all) / np.maximum(1.0 - qr_all, 1e-12)     # alignment ratio
     qm, am = float(q_all.mean()), float(a_all.mean())
+    rand_floor = float(qr_all.mean())
 
     print("=" * 74)
     print(f"  PHASE-QUALITY (live PhaseMLP) · ckpt={args.ckpt}")
     print(f"  K={K} M={cfg.M} N={N} · {args.episodes}ep×{args.steps}step · "
-          f"{'greedy' if greedy else 'sampled'} · {q_all.size} active-IRS instances")
+          f"{'greedy' if greedy else 'sampled'} · {q_all.size} routed-user instances")
     print("=" * 74)
-    print(f"  coherence q = |Σφ|/N : mean={qm:.3f}  (random≈{rand_floor:.3f}, optimal=1.000)")
+    print(f"  coherent gain q = |Σ_n e^(jθ_n)c_n|/Σ_n|c_n| : mean={qm:.3f}  "
+          f"(random≈{rand_floor:.3f}, perfect co-phasing=1.000, 2-bit ceiling≈0.900)")
     print(f"  alignment a (0=rand,1=opt): mean={am*100:.1f}%  "
           f"[p25 {np.percentile(a_all,25)*100:.0f}%  p75 {np.percentile(a_all,75)*100:.0f}%]")
     if irs_tot:

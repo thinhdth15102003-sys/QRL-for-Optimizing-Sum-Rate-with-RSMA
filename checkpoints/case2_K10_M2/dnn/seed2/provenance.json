@@ -1,0 +1,10 @@
+{
+  "case": "Case 2",
+  "method": "DNN",
+  "seed": 2,
+  "run": "r233",
+  "checkpoint": "ep_16200",
+  "global_episode": null,
+  "source": "results/result_233/checkpoints/ep_16200/agents",
+  "note": "inference weights only; critic_* omitted"
+}

@@ -1,0 +1,14 @@
+{
+  "mode": "classical",
+  "K": 5,
+  "B": 1,
+  "n_latent": 24,
+  "enc_hidden": [
+    128
+  ],
+  "pol_hidden": [
+    256,
+    128
+  ],
+  "lr": 0.0001
+}

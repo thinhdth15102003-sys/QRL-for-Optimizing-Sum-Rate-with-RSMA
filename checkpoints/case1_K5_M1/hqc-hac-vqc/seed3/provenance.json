@@ -1,0 +1,10 @@
+{
+  "case": "Case 1",
+  "method": "VQC",
+  "seed": 3,
+  "run": "r266",
+  "checkpoint": "ep_04200",
+  "global_episode": 4200,
+  "source": "results/result_266/checkpoints/ep_04200/agents",
+  "note": "inference weights only; critic_* omitted"
+}

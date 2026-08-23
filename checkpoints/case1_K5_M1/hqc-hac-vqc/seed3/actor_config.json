@@ -1,0 +1,40 @@
+{
+  "n_qubits": 8,
+  "n_latent": 16,
+  "n_hidden_ae": [
+    16
+  ],
+  "n_hidden_post": [
+    256,
+    128
+  ],
+  "n_var_layers": 2,
+  "data_reuploading": true,
+  "B": 1,
+  "K": 5,
+  "d_s": 17,
+  "n_shots": 1500,
+  "lr_ae": 9.875625e-05,
+  "lr_qc": 9.875625e-05,
+  "lr_xi": 0.00029626874999999996,
+  "ae_pretrain_lr": 0.001,
+  "spsa_n_reps": 16,
+  "spsa_epsilon": 0.1,
+  "extra_cz_pairs": [
+    [
+      0,
+      7
+    ]
+  ],
+  "extra_zz_pairs": [
+    [
+      0,
+      7
+    ]
+  ],
+  "full_zz_pairs": [],
+  "readout_mode": "r1",
+  "softmax_head": true,
+  "softmax_beta_init": 1.0,
+  "no_ae": false
+}

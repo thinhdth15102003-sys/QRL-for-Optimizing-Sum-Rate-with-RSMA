@@ -1,0 +1,10 @@
+{
+  "case": "Case 1",
+  "method": "PPO-flat",
+  "seed": 0,
+  "run": "r301",
+  "checkpoint": "ep_06000",
+  "global_episode": null,
+  "source": "results/result_301/checkpoints/ep_06000/agents",
+  "note": "inference weights only; critic_* omitted"
+}

@@ -1,0 +1,16 @@
+{
+  "mode": "flat",
+  "K": 5,
+  "M": 1,
+  "N": 24,
+  "n_levels": 4,
+  "P_S": 100.0,
+  "hidden": [
+    512,
+    256
+  ],
+  "lr": 0.0003,
+  "power_fairness": 0.0,
+  "power_priv_frac": 0.8,
+  "power_fairness_priv": 0.0
+}

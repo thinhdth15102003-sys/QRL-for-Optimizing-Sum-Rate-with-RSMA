@@ -1,0 +1,8 @@
+{
+  "K": 10,
+  "M": 2,
+  "N": 24,
+  "quantization_bits": 2,
+  "P_S_dBm": 50.0,
+  "D_k_bps_hz": 0.05
+}
